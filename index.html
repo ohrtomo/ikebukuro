@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>東村山駅 50m 通知デモ</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;margin:1.5rem}
+    button{padding:.6rem 1rem;border-radius:8px;border:1px solid #ccc;background:#fff}
+    .on{background:#e6ffed;border-color:#7bd389}
+    .off{background:#fff;border-color:#ccc}
+    .status{margin-top:1rem;padding:1rem;border-radius:8px;background:#f7f7f7}
+  </style>
+</head>
+<body>
+  <h1>東村山駅から50m以内で通知するデモ</h1>
+  <p>ブラウザの位置情報と通知許可を使います。HTTPS（またはローカルのlocalhost）が必要です。</p>
+
+  <div>
+    <button id="startBtn" class="off">位置監視を開始</button>
+    <button id="stopBtn" class="off" disabled>停止</button>
+  </div>
+
+  <div class="status" id="status">
+    <div><strong>通知状態:</strong> <span id="notifPerm">未確認</span></div>
+    <div><strong>現在位置:</strong> <span id="coords">—</span></div>
+    <div><strong>東村山駅までの距離:</strong> <span id="distance">—</span> m</div>
+    <div><strong>最終通知:</strong> <span id="lastNotified">まだありません</span></div>
+  </div>
+
+  <script>
+    // 東村山駅中心座標 (Wikipediaより)
+    const target = { lat: 35.76056, lon: 139.46583 };
+    const RADIUS_METERS = 50; // 通知する半径
+
+    let watchId = null;
+    let hasNotified = false; // 近づいたとき一度だけ通知する（外に出たらリセット）
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const notifPermEl = document.getElementById('notifPerm');
+    const coordsEl = document.getElementById('coords');
+    const distanceEl = document.getElementById('distance');
+    const lastNotifiedEl = document.getElementById('lastNotified');
+
+    function updateNotifPermText() {
+      if (!('Notification' in window)) {
+        notifPermEl.textContent = 'このブラウザは通知に非対応です';
+        return;
+      }
+      notifPermEl.textContent = Notification.permission;
+    }
+
+    updateNotifPermText();
+
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      // 緯度経度（度）をラジアンに変換して距離(m)を返す
+      const toRad = x => x * Math.PI / 180;
+      const R = 6371000; // 地球半径 m
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    async function ensureNotificationPermission() {
+      if (!('Notification' in window)) return false;
+      if (Notification.permission === 'granted') return true;
+      if (Notification.permission === 'denied') return false;
+      const p = await Notification.requestPermission();
+      updateNotifPermText();
+      return p === 'granted';
+    }
+
+    function notifyUser(title, body) {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          const n = new Notification(title, { body });
+        } catch (e) {
+          alert(title + '\n' + body);
+        }
+      } else {
+        // フォールバック
+        alert(title + '\n' + body);
+      }
+      lastNotifiedEl.textContent = new Date().toLocaleString();
+    }
+
+    function handlePosition(pos) {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      coordsEl.textContent = lat.toFixed(6) + ', ' + lon.toFixed(6);
+      const d = Math.round(haversineDistance(lat, lon, target.lat, target.lon));
+      distanceEl.textContent = d;
+
+      if (d <= RADIUS_METERS) {
+        if (!hasNotified) {
+          hasNotified = true;
+          notifyUser('東村山駅に近づいています', `駅中心から${RADIUS_METERS}m以内に入りました（現在 ${d}m）`);
+        }
+      } else {
+        // 駅から離れたら通知フラグをリセット
+        if (hasNotified && d > RADIUS_METERS + 10) { // ヒステリシス
+          hasNotified = false;
+        }
+      }
+    }
+
+    function handleError(err) {
+      console.error(err);
+      alert('位置情報の取得でエラーが発生しました: ' + err.message);
+    }
+
+    startBtn.addEventListener('click', async () => {
+      if (!('geolocation' in navigator)) {
+        alert('このブラウザは位置情報取得に対応していません');
+        return;
+      }
+
+      const notifOk = await ensureNotificationPermission();
+      if (!notifOk) {
+        // 続行は可能（フォールバックは alert）
+        console.warn('通知が許可されていません（フォールバックで alert を使用します）');
+      }
+
+      // すでに監視中でなければ開始
+      if (watchId !== null) return;
+      watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 10_000
+      });
+
+      startBtn.disabled = true;
+      startBtn.className = 'on';
+      stopBtn.disabled = false;
+      stopBtn.className = 'off';
+    });
+
+    stopBtn.addEventListener('click', () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      startBtn.disabled = false;
+      startBtn.className = 'off';
+      stopBtn.disabled = true;
+      stopBtn.className = 'off';
+    });
+
+    // ページを離れて戻ったとき等に通知許可表示更新
+    document.addEventListener('visibilitychange', updateNotifPermText);
+  </script>
+</body>
+</html>
