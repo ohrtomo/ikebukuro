@@ -1,255 +1,120 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>東村山駅通知アプリ — HTML版</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" integrity="sha256-sA+e2Xb7f2vYh3gQvQq0GkGg0ZbQ2vR4f2Z7B4o6wR0=" crossorigin=""/>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>東村山駅 50m 音声通知デモ</title>
   <style>
-    body{font-family: -apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;margin:0;padding:12px;background:#f7fafc;color:#0f172a}
-    .wrap{max-width:1100px;margin:0 auto}
-    header{display:flex;align-items:center;gap:12px}
-    h1{font-size:1.25rem;margin:0}
-    .grid{display:grid;grid-template-columns:1fr;gap:12px}
-    @media(min-width:900px){.grid{grid-template-columns:360px 1fr}}
-    .card{background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(2,6,23,0.06)}
-    label{display:block;font-size:0.9rem;margin-top:8px}
-    input[type=text],select,textarea{width:100%;padding:8px;border-radius:6px;border:1px solid #e2e8f0}
-    button{padding:8px 12px;border-radius:8px;border:0;background:#2563eb;color:#fff;cursor:pointer}
-    button.warn{background:#ef4444}
-    #map{height:500px;border-radius:8px}
-    .station-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
-    .station-card{padding:8px;border:1px dashed #e6edf3;border-radius:6px;background:#fbfdff}
-    small{color:#475569}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;margin:1.5rem}
+    button{padding:.6rem 1rem;border-radius:8px;border:1px solid #ccc;background:#fff}
+    .on{background:#e6ffed;border-color:#7bd389}
+    .off{background:#fff;border-color:#ccc}
+    .status{margin-top:1rem;padding:1rem;border-radius:8px;background:#f7f7f7}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>東村山駅通知アプリ — HTML版</h1>
-    </header>
+  <h1>東村山駅から50m以内で音声通知するデモ</h1>
+  <p>ブラウザの位置情報を使います（HTTPSまたはlocalhostで実行）。</p>
 
-    <div class="grid" style="margin-top:12px">
-      <div class="card">
-        <h2 style="margin:0 0 8px 0">操作パネル</h2>
-        <label>路線
-          <select id="lineSelect"></select>
-        </label>
-        <label>検出半径 <span id="radiusVal">50</span> m
-          <input id="radiusRange" type="range" min="10" max="300" value="50">
-        </label>
-        <label>列車番号
-          <input id="trainNumber" type="text" placeholder="例: 123">
-        </label>
-        <label><input id="autoDetect" type="checkbox" checked> 列車番号から自動判定</label>
-        <label>列車種別
-          <select id="trainType"><option>普通</option><option>準急</option><option>急行</option><option>快速</option><option>不明</option></select>
-        </label>
-        <label>行先
-          <input id="destination" type="text" placeholder="行先を入力してください">
-        </label>
-        <label>テンプレート（{station} {note} 利用可）
-          <input id="template" type="text" value="{station}に接近しました。{note}">
-        </label>
-
-        <div style="margin-top:8px">
-          <button id="startBtn">位置監視開始</button>
-          <button id="stopBtn" class="warn" style="display:none">位置監視停止</button>
-          <button id="testBtn">テスト再生</button>
-        </div>
-
-        <div style="margin-top:10px">
-          <small>注: ブラウザに位置情報と音声合成の許可が必要です。実機（スマホやノートPC）での検証を推奨します。</small>
-        </div>
-      </div>
-
-      <div>
-        <div id="map" class="card"></div>
-
-        <div class="card" style="margin-top:12px">
-          <h3 style="margin:0">近接中 / 次駅候補</h3>
-          <ul id="nextStations"></ul>
-        </div>
-
-        <div class="card" style="margin-top:12px">
-          <h3 style="margin:0">アナウンス編集（緊急用）</h3>
-          <small>各駅のテキストを上書きできます。空欄ならテンプレートを使用。</small>
-          <div id="stationOverrides" class="station-list" style="margin-top:8px"></div>
-        </div>
-      </div>
-    </div>
+  <div>
+    <button id="startBtn" class="off">位置監視を開始</button>
+    <button id="stopBtn" class="off" disabled>停止</button>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js" integrity="sha256-o9N1j8gG0pGk9K7m5mH6Y7w6QZZ3l3QYt2QzQ6Yp1jw=" crossorigin=""></script>
+  <div class="status" id="status">
+    <div><strong>現在位置:</strong> <span id="coords">—</span></div>
+    <div><strong>東村山駅までの距離:</strong> <span id="distance">—</span> m</div>
+    <div><strong>最終お知らせ:</strong> <span id="lastNotified">まだありません</span></div>
+  </div>
+
   <script>
-    // 駅データ（ユーザー提供）
-    const STATIONS = {
-      "池袋線": [
-        { name: '池袋', lat: 35.728926, lon: 139.71038 },
-        { name: '椎名町', lat: 35.7266, lon: 139.694835 },
-        { name: '東長崎', lat: 35.730213, lon: 139.683005 },
-        { name: '江古田', lat: 35.737376, lon: 139.672756 },
-        { name: '桜台', lat: 35.738759, lon: 139.662415 },
-        { name: '練馬', lat: 35.73782, lon: 139.653566 },
-        { name: '中村橋', lat: 35.736798, lon: 139.637767 },
-        { name: '富士見台', lat: 35.735928, lon: 139.629993 },
-        { name: '練馬高野台', lat: 35.740541, lon: 139.616974 },
-        { name: '石神井公園', lat: 35.743554, lon: 139.607028 },
-        { name: '大泉学園', lat: 35.749539, lon: 139.586552 },
-        { name: '保谷', lat: 35.748328, lon: 139.567556 },
-        { name: 'ひばりヶ丘', lat: 35.7516222, lon: 139.5449125 },
-        { name: '東久留米', lat: 35.76032, lon: 139.533936 },
-        { name: '清瀬', lat: 35.772121, lon: 139.519909 },
-        { name: '秋津', lat: 35.778281, lon: 139.49675 },
-        { name: '所沢', lat: 35.786201, lon: 139.473916 },
-        { name: '西所沢', lat: 35.789264, lon: 139.456014 },
-        { name: '小手指', lat: 35.800579, lon: 139.438016 },
-        { name: '狭山ヶ丘', lat: 35.810453, lon: 139.416748 },
-        { name: '武蔵藤沢', lat: 35.821221, lon: 139.412572 },
-        { name: '稲荷山公園', lat: 35.845145, lon: 139.398404 },
-        { name: '入間市', lat: 35.841987, lon: 139.389541 },
-        { name: '仏子', lat: 35.837878, lon: 139.360037 },
-        { name: '元加治', lat: 35.840522, lon: 139.345744 },
-        { name: '飯能', lat: 35.851101, lon: 139.319063 },
-        { name: '東飯能', lat: 35.85267, lon: 139.325945 },
-        { name: '高麗', lat: 35.881752, lon: 139.304419 },
-        { name: '武蔵横手', lat: 35.885398, lon: 139.280806 },
-        { name: '東吾野', lat: 35.892087, lon: 139.260681 },
-        { name: '吾野', lat: 35.908485, lon: 139.226718 },
-        { name: '西吾野', lat: 35.926393, lon: 139.202195 },
-        { name: '正丸', lat: 35.938313, lon: 139.182099 },
-        { name: '芦ヶ久保', lat: 35.976896, lon: 139.136884 },
-        { name: '横瀬', lat: 35.985548, lon: 139.097818 },
-        { name: '西武秩父', lat: 35.989939, lon: 139.083473 },
-        { name: '御花畑', lat: 35.992413, lon: 139.083614 }
-      ],
-      "狭山線": [
-        { name: '下山口', lat: 35.779363, lon: 139.440833 },
-        { name: '西武球場前', lat: 35.770419, lon: 139.418793 }
-      ],
-      "有楽町線": [
-        { name: '小竹向原', lat: 35.743803, lon: 139.678572 },
-        { name: '新桜台', lat: 35.74077, lon: 139.6683 }
-      ]
-    };
+    // 東村山駅中心座標
+    const target = { lat: 35.76056, lon: 139.46583 };
+    const RADIUS_METERS = 50;
 
-    // utils
-    function toRad(d){return d*Math.PI/180}
-    function haversine(lat1,lon1,lat2,lon2){
-      const R=6371000;const dLat=toRad(lat2-lat1);const dLon=toRad(lon2-lon1);
-      const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-      return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    let watchId = null;
+    let hasNotified = false;
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const coordsEl = document.getElementById('coords');
+    const distanceEl = document.getElementById('distance');
+    const lastNotifiedEl = document.getElementById('lastNotified');
+
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      const toRad = x => x * Math.PI / 180;
+      const R = 6371000;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2)**2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon/2)**2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
     }
 
-    // state
-    let map, userMarker, userCircle, stationMarkers=[];
-    let watchId=null;
-    let announced = {}; // key -> timestamp
-    const announcedCooldown = 120000; // 2min
+    function speak(text) {
+      if ('speechSynthesis' in window) {
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = 'ja-JP';
+        speechSynthesis.speak(utter);
+      } else {
+        alert(text); // フォールバック
+      }
+    }
 
-    // DOM
-    const lineSelect=document.getElementById('lineSelect');
-    const radiusRange=document.getElementById('radiusRange');
-    const radiusVal=document.getElementById('radiusVal');
-    const startBtn=document.getElementById('startBtn');
-    const stopBtn=document.getElementById('stopBtn');
-    const testBtn=document.getElementById('testBtn');
-    const trainNumber=document.getElementById('trainNumber');
-    const trainType=document.getElementById('trainType');
-    const autoDetect=document.getElementById('autoDetect');
-    const destination=document.getElementById('destination');
-    const templateInput=document.getElementById('template');
-    const nextStations=document.getElementById('nextStations');
-    const stationOverrides=document.getElementById('stationOverrides');
+    function handlePosition(pos) {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      coordsEl.textContent = lat.toFixed(6) + ', ' + lon.toFixed(6);
+      const d = Math.round(haversineDistance(lat, lon, target.lat, target.lon));
+      distanceEl.textContent = d;
 
-    // 初期化
-    function initUI(){
-      Object.keys(STATIONS).forEach(k=>{
-        const opt=document.createElement('option');opt.value=k;opt.textContent=k;lineSelect.appendChild(opt);
+      if (d <= RADIUS_METERS) {
+        if (!hasNotified) {
+          hasNotified = true;
+          speak(`東村山駅に近づいています。駅中心から${RADIUS_METERS}メートル以内です。`);
+          lastNotifiedEl.textContent = new Date().toLocaleString();
+        }
+      } else {
+        if (hasNotified && d > RADIUS_METERS + 10) {
+          hasNotified = false;
+        }
+      }
+    }
+
+    function handleError(err) {
+      console.error(err);
+      alert('位置情報の取得でエラー: ' + err.message);
+    }
+
+    startBtn.addEventListener('click', () => {
+      if (!('geolocation' in navigator)) {
+        alert('このブラウザは位置情報に対応していません');
+        return;
+      }
+
+      if (watchId !== null) return;
+      watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 10000
       });
-      radiusRange.addEventListener('input',()=>{radiusVal.textContent=radiusRange.value; if(userCircle) userCircle.setRadius(Number(radiusRange.value));});
-      lineSelect.addEventListener('change',renderStations);
-      trainNumber.addEventListener('input',()=>{if(autoDetect.checked) detectFromNumber()});
-      autoDetect.addEventListener('change',()=>{if(autoDetect.checked) detectFromNumber()});
-      trainType.addEventListener('change',()=>{ if(trainType.value){autoDetect.checked=false;} });
-      startBtn.addEventListener('click',startWatch);
-      stopBtn.addEventListener('click',stopWatch);
-      testBtn.addEventListener('click',testAnnounce);
-      renderMap(); renderStations();
-    }
 
-    // Map
-    function renderMap(){
-      map = L.map('map').setView([35.7289,139.71],12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
-    }
+      startBtn.disabled = true;
+      startBtn.className = 'on';
+      stopBtn.disabled = false;
+    });
 
-    // 駅表示
-    function clearStationMarkers(){stationMarkers.forEach(m=>map.removeLayer(m)); stationMarkers=[]}
-    function renderStations(){
-      clearStationMarkers(); stationOverrides.innerHTML='';
-      const line=lineSelect.value; const list=STATIONS[line]||[];
-      list.forEach(st=>{
-        const m=L.marker([st.lat,st.lon]).addTo(map).bindPopup(st.name);
-        stationMarkers.push(m);
-
-        // override editor
-        const div=document.createElement('div');div.className='station-card';
-        const h=document.createElement('div');h.textContent=st.name;h.style.fontWeight='600';div.appendChild(h);
-        const ta=document.createElement('textarea');ta.rows=3;ta.placeholder='手動アナウンス（空欄でテンプレ使用）';ta.value=localStorage.getItem('ov_'+st.name) || '';
-        ta.addEventListener('input',()=>{localStorage.setItem('ov_'+st.name,ta.value)});
-        div.appendChild(ta);
-        const dist=document.createElement('div');dist.style.fontSize='12px';dist.style.marginTop='6px';dist.textContent='距離: ---';div.appendChild(dist);
-        stationOverrides.appendChild(div);
-        // attach element ref for distance update
-        st._distEl = dist; st._overrideEl = ta;
-      });
-    }
-
-    // watchPosition
-    function startWatch(){
-      if(!navigator.geolocation){alert('位置情報が使えません');return}
-      if(watchId!=null) return;
-      watchId = navigator.geolocation.watchPosition(pos=>{
-        const lat=pos.coords.latitude; const lon=pos.coords.longitude; const acc=pos.coords.accuracy;
-        if(!userMarker){ userMarker=L.marker([lat,lon]).addTo(map).bindPopup('現在地'); }
-        else userMarker.setLatLng([lat,lon]);
-        if(!userCircle){ userCircle=L.circle([lat,lon],{radius:Number(radiusRange.value)}).addTo(map);} else {userCircle.setLatLng([lat,lon]); userCircle.setRadius(Number(radiusRange.value));}
-        map.panTo([lat,lon]);
-        updateDistances(lat,lon);
-        checkProximity(lat,lon);
-      },err=>{alert('位置情報取得エラー:'+err.message)},{enableHighAccuracy:true,maximumAge:1000});
-      startBtn.style.display='none'; stopBtn.style.display='inline-block';
-    }
-    function stopWatch(){ if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null;} startBtn.style.display='inline-block'; stopBtn.style.display='none'; }
-
-    function updateDistances(lat,lon){ const list=STATIONS[lineSelect.value]||[]; list.forEach(st=>{ const d=Math.round(haversine(lat,lon,st.lat,st.lon)); if(st._distEl) st._distEl.textContent='距離: '+d+' m'; }); updateNextStations(lat,lon); }
-
-    function updateNextStations(lat,lon){ const list=STATIONS[lineSelect.value]||[]; if(list.length===0) return; // find nearest index
-      let minD=1e9, minIdx=0; list.forEach((st,i)=>{ const d=haversine(lat,lon,st.lat,st.lon); if(d<minD){minD=d;minIdx=i;} });
-      nextStations.innerHTML=''; const nxt=list.slice(minIdx+1,minIdx+6); if(nxt.length===0){ const prev=list.slice(Math.max(0,minIdx-5),minIdx).reverse(); prev.forEach(s=>{ const li=document.createElement('li'); li.textContent=s.name; nextStations.appendChild(li); }); } else { nxt.forEach(s=>{ const li=document.createElement('li'); li.textContent=s.name; nextStations.appendChild(li); }); }
-    }
-
-    // 近接チェック
-    function checkProximity(lat,lon){ const list=STATIONS[lineSelect.value]||[]; const now=Date.now(); list.forEach(st=>{ const d=haversine(lat,lon,st.lat,st.lon); if(d<=Number(radiusRange.value)){ const key=lineSelect.value+'_'+st.name; const last=announced[key]||0; if(now-last>announcedCooldown){ const note = localStorage.getItem('ov_'+st.name) || ''; const tpl = templateInput.value || '{station}に接近しました。{note}'; const text = note? note : tpl.replace('{station}',st.name).replace('{note}', (trainType.value+' '+destination.value).trim()); speak(text); announced[key]=now; } } }); }
-
-    // 音声
-    function speak(text){ if(!('speechSynthesis' in window)){alert('音声合成が使えません');return} window.speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang='ja-JP'; u.rate=1; u.onend=()=>{}; window.speechSynthesis.speak(u); }
-
-    // テスト
-    function testAnnounce(){ const text = (localStorage.getItem('ov_TEST') || templateInput.value).replace('{station}','テスト駅').replace('{note}',trainType.value+' '+destination.value); speak(text);} 
-
-    // 列車番号から簡易判定
-    function detectFromNumber(){ const num=trainNumber.value.trim(); if(!num) return; let type='普通'; if(/^[567]/.test(num)) type='快速'; if(/^[12]/.test(num)) type='準急'; if(/L/i.test(num)) type='急行'; trainType.value=type; }
-
-    // 初期呼び出し
-    initUI();
-
-    // 保存されたオーバーライドを読み込んで station rendering に反映する
-    // 既に renderStations が element を作っているのでロード後のリンクは textarea に保存される
-
-    // 追加: ページ閉じる前にwatch解除
-    window.addEventListener('beforeunload',()=>{ if(watchId!=null) navigator.geolocation.clearWatch(watchId); });
+    stopBtn.addEventListener('click', () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      startBtn.disabled = false;
+      startBtn.className = 'off';
+      stopBtn.disabled = true;
+    });
   </script>
 </body>
 </html>
