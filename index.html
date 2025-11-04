@@ -1,120 +1,284 @@
-<!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>東村山駅 50m 音声通知デモ</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;margin:1.5rem}
-    button{padding:.6rem 1rem;border-radius:8px;border:1px solid #ccc;background:#fff}
-    .on{background:#e6ffed;border-color:#7bd389}
-    .off{background:#fff;border-color:#ccc}
-    .status{margin-top:1rem;padding:1rem;border-radius:8px;background:#f7f7f7}
-  </style>
-</head>
-<body>
-  <h1>東村山駅から50m以内で音声通知するデモ</h1>
-  <p>ブラウザの位置情報を使います（HTTPSまたはlocalhostで実行）。</p>
+// 東村山駅通知アプリ — React single-file component
+// 実行方法（推奨）:
+// 1) Vite + React プロジェクトにこのファイルを貼るか、CodeSandboxに貼って実行してください。
+// 2) 必要なパッケージ: react, react-dom, leaflet, react-leaflet, tailwindcss(optional)
+//    もしくは CDN 版で index.html に読み込んでください。
+// 注意: 実機での Geolocation と SpeechSynthesis が必要です。モバイルまたはラップトップのブラウザで動作します。
 
-  <div>
-    <button id="startBtn" class="off">位置監視を開始</button>
-    <button id="stopBtn" class="off" disabled>停止</button>
-  </div>
+import React, { useEffect, useState, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Circle, Popup } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
-  <div class="status" id="status">
-    <div><strong>現在位置:</strong> <span id="coords">—</span></div>
-    <div><strong>東村山駅までの距離:</strong> <span id="distance">—</span> m</div>
-    <div><strong>最終お知らせ:</strong> <span id="lastNotified">まだありません</span></div>
-  </div>
+// 駅データ（ユーザー提供）
+const STATIONS = {
+  "池袋線": [
+    { name: '池袋', lat: 35.728926, lon: 139.71038 },
+    { name: '椎名町', lat: 35.7266, lon: 139.694835 },
+    { name: '東長崎', lat: 35.730213, lon: 139.683005 },
+    { name: '江古田', lat: 35.737376, lon: 139.672756 },
+    { name: '桜台', lat: 35.738759, lon: 139.662415 },
+    { name: '練馬', lat: 35.73782, lon: 139.653566 },
+    { name: '中村橋', lat: 35.736798, lon: 139.637767 },
+    { name: '富士見台', lat: 35.735928, lon: 139.629993 },
+    { name: '練馬高野台', lat: 35.740541, lon: 139.616974 },
+    { name: '石神井公園', lat: 35.743554, lon: 139.607028 },
+    { name: '大泉学園', lat: 35.749539, lon: 139.586552 },
+    { name: '保谷', lat: 35.748328, lon: 139.567556 },
+    { name: 'ひばりヶ丘', lat: 35.7516222, lon: 139.5449125 },
+    { name: '東久留米', lat: 35.76032, lon: 139.533936 },
+    { name: '清瀬', lat: 35.772121, lon: 139.519909 },
+    { name: '秋津', lat: 35.778281, lon: 139.49675 },
+    { name: '所沢', lat: 35.786201, lon: 139.473916 },
+    { name: '西所沢', lat: 35.789264, lon: 139.456014 },
+    { name: '小手指', lat: 35.800579, lon: 139.438016 },
+    { name: '狭山ヶ丘', lat: 35.810453, lon: 139.416748 },
+    { name: '武蔵藤沢', lat: 35.821221, lon: 139.412572 },
+    { name: '稲荷山公園', lat: 35.845145, lon: 139.398404 },
+    { name: '入間市', lat: 35.841987, lon: 139.389541 },
+    { name: '仏子', lat: 35.837878, lon: 139.360037 },
+    { name: '元加治', lat: 35.840522, lon: 139.345744 },
+    { name: '飯能', lat: 35.851101, lon: 139.319063 },
+    { name: '東飯能', lat: 35.85267, lon: 139.325945 },
+    { name: '高麗', lat: 35.881752, lon: 139.304419 },
+    { name: '武蔵横手', lat: 35.885398, lon: 139.280806 },
+    { name: '東吾野', lat: 35.892087, lon: 139.260681 },
+    { name: '吾野', lat: 35.908485, lon: 139.226718 },
+    { name: '西吾野', lat: 35.926393, lon: 139.202195 },
+    { name: '正丸', lat: 35.938313, lon: 139.182099 },
+    { name: '芦ヶ久保', lat: 35.976896, lon: 139.136884 },
+    { name: '横瀬', lat: 35.985548, lon: 139.097818 },
+    { name: '西武秩父', lat: 35.989939, lon: 139.083473 },
+    { name: '御花畑', lat: 35.992413, lon: 139.083614 }
+  ],
+  "狭山線": [
+    { name: '下山口', lat: 35.779363, lon: 139.440833 },
+    { name: '西武球場前', lat: 35.770419, lon: 139.418793 }
+  ],
+  "有楽町線": [
+    { name: '小竹向原', lat: 35.743803, lon: 139.678572 },
+    { name: '新桜台', lat: 35.74077, lon: 139.6683 }
+  ]
+};
 
-  <script>
-    // 東村山駅中心座標
-    const target = { lat: 35.76056, lon: 139.46583 };
-    const RADIUS_METERS = 50;
+// デフォルトテンプレート（音声）
+const DEFAULT_TEMPLATE = '{station}に接近しました。{note}';
 
-    let watchId = null;
-    let hasNotified = false;
+// 小さなユーティリティ: 緯度経度 -> メートル（ハーサイン）
+function haversineDist(lat1, lon1, lat2, lon2) {
+  const R = 6371000; // m
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const coordsEl = document.getElementById('coords');
-    const distanceEl = document.getElementById('distance');
-    const lastNotifiedEl = document.getElementById('lastNotified');
+// Leaflet マーカー用アイコン修正（デフォルトアイコンが壊れることがあるため）
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.3/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.3/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.3/images/marker-shadow.png'
+});
 
-    function haversineDistance(lat1, lon1, lat2, lon2) {
-      const toRad = x => x * Math.PI / 180;
-      const R = 6371000;
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat/2)**2 +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLon/2)**2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      return R * c;
+export default function TrainAlertApp() {
+  const [line, setLine] = useState('池袋線');
+  const [radius, setRadius] = useState(50); // m
+  const [position, setPosition] = useState(null);
+  const [watchId, setWatchId] = useState(null);
+  const [announced, setAnnounced] = useState({}); // stationName -> timestamp
+  const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
+  const [manualOverrides, setManualOverrides] = useState({}); // stationName -> text
+  const [trainNumber, setTrainNumber] = useState('');
+  const [trainType, setTrainType] = useState('不明');
+  const [destination, setDestination] = useState('');
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [autoDetect, setAutoDetect] = useState(true);
+  const [mapKey, setMapKey] = useState(0);
+  const speechRef = useRef(null);
+  const announcedCooldown = 120000; // 2分内に再アナウンスしない
+
+  // 簡易：列車番号から種別/行先を判別（完全ではないので手動変更可）
+  useEffect(() => {
+    if (!trainNumber || !autoDetect) return;
+    // ここは運用者があとで編集できるように単純ルールにしている
+    const num = trainNumber.trim();
+    let type = '普通';
+    if (/^5|^6|^7/.test(num)) type = '快速';
+    if (/^1|^2/.test(num)) type = '準急';
+    if (/L/i.test(num)) type = '急行';
+    // example: 目的地を推測する余地があればここに実装
+    setTrainType(type);
+  }, [trainNumber, autoDetect]);
+
+  // 音声合成ユーティリティ
+  function speak(text) {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ja-JP';
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    u.onstart = () => setIsSpeaking(true);
+    u.onend = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(u);
+    speechRef.current = u;
+  }
+
+  // 位置監視開始
+  const startWatch = () => {
+    if (!('geolocation' in navigator)) {
+      alert('位置情報が利用できません。ブラウザの設定を確認してください。');
+      return;
     }
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        setPosition({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy });
+      },
+      (err) => {
+        console.error(err);
+        alert('位置情報取得エラー: ' + err.message);
+      },
+      { enableHighAccuracy: true, maximumAge: 1000 }
+    );
+    setWatchId(id);
+  };
+  const stopWatch = () => {
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    setWatchId(null);
+  };
 
-    function speak(text) {
-      if ('speechSynthesis' in window) {
-        const utter = new SpeechSynthesisUtterance(text);
-        utter.lang = 'ja-JP';
-        speechSynthesis.speak(utter);
-      } else {
-        alert(text); // フォールバック
-      }
-    }
-
-    function handlePosition(pos) {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-      coordsEl.textContent = lat.toFixed(6) + ', ' + lon.toFixed(6);
-      const d = Math.round(haversineDistance(lat, lon, target.lat, target.lon));
-      distanceEl.textContent = d;
-
-      if (d <= RADIUS_METERS) {
-        if (!hasNotified) {
-          hasNotified = true;
-          speak(`東村山駅に近づいています。駅中心から${RADIUS_METERS}メートル以内です。`);
-          lastNotifiedEl.textContent = new Date().toLocaleString();
+  // 近接チェック（位置更新時に走る）
+  useEffect(() => {
+    if (!position) return;
+    const stations = STATIONS[line] || [];
+    const now = Date.now();
+    // すべての駅に対して距離を計算し、半径内のものをアナウンス候補にする
+    stations.forEach((st) => {
+      const d = haversineDist(position.lat, position.lon, st.lat, st.lon);
+      if (d <= radius) {
+        const key = `${line}_${st.name}`;
+        const last = announced[key] || 0;
+        if (now - last > announcedCooldown) {
+          // アナウンス文: オーバーライドがあればそれを使用
+          const note = manualOverrides[st.name] || '';
+          const text = manualOverrides[st.name]
+            ? manualOverrides[st.name]
+            : template.replace('{station}', st.name).replace('{note}', note || `${trainType} ${destination}`);
+          speak(text);
+          setAnnounced((a) => ({ ...a, [key]: now }));
         }
-      } else {
-        if (hasNotified && d > RADIUS_METERS + 10) {
-          hasNotified = false;
-        }
       }
-    }
-
-    function handleError(err) {
-      console.error(err);
-      alert('位置情報の取得でエラー: ' + err.message);
-    }
-
-    startBtn.addEventListener('click', () => {
-      if (!('geolocation' in navigator)) {
-        alert('このブラウザは位置情報に対応していません');
-        return;
-      }
-
-      if (watchId !== null) return;
-      watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
-        enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 10000
-      });
-
-      startBtn.disabled = true;
-      startBtn.className = 'on';
-      stopBtn.disabled = false;
     });
+  }, [position, line, radius, announced, manualOverrides, template, trainType, destination]);
 
-    stopBtn.addEventListener('click', () => {
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
+  // 駅一覧の direction (進行方向) で次駅を推定する簡単ロジック
+  function getNextStations() {
+    const stations = STATIONS[line] || [];
+    if (!position) return stations.slice(0, 5);
+    // 現在地から最も近い駅 index を取る
+    let minIdx = 0;
+    let minD = Infinity;
+    stations.forEach((st, i) => {
+      const d = haversineDist(position.lat, position.lon, st.lat, st.lon);
+      if (d < minD) {
+        minD = d;
+        minIdx = i;
       }
-      startBtn.disabled = false;
-      startBtn.className = 'off';
-      stopBtn.disabled = true;
     });
-  </script>
-</body>
-</html>
+    // 次の 5 駅を返す（進行方向は行先が設定されていれば判断するが、まずは単純に増加方向）
+    const next = stations.slice(minIdx + 1, minIdx + 6);
+    return next.length ? next : stations.slice(minIdx - 5, minIdx).reverse();
+  }
+
+  // 管理UI: 特定駅のアナウンス編集
+  const setOverrideFor = (stationName, text) => {
+    setManualOverrides((m) => ({ ...m, [stationName]: text }));
+  };
+
+  // テストアナウンス
+  const testAnnounce = () => {
+    const text = template.replace('{station}', 'テスト駅').replace('{note}', `${trainType} ${destination}`);
+    speak(text);
+  };
+
+  // Map 再描画用
+  useEffect(() => {
+    setMapKey((k) => k + 1);
+  }, [line]);
+
+  return (
+    <div className="p-4 font-sans max-w-5xl mx-auto">
+      <h1 className="text-2xl font-bold mb-3">東村山駅通知アプリ — プロトタイプ</h1>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="col-span-1 md:col-span-1 p-3 border rounded">
+          <h2 className="font-semibold">操作</h2>
+          <div className="mt-2">回線: <select value={line} onChange={(e) => setLine(e.target.value)}>{Object.keys(STATIONS).map(k=> <option key={k} value={k}>{k}</option>)}</select></div>
+          <div className="mt-2">検出半径: <input type="range" min={10} max={300} value={radius} onChange={(e)=>setRadius(Number(e.target.value))} /> {radius} m</div>
+          <div className="mt-2">列車番号: <input value={trainNumber} onChange={(e)=>setTrainNumber(e.target.value)} placeholder="例: 123" /></div>
+          <div className="mt-2">列車種別（自動検出: {autoDetect ? 'ON' : 'OFF'}）: <select value={trainType} onChange={(e)=>{setTrainType(e.target.value); setAutoDetect(false);}}><option>普通</option><option>準急</option><option>快速</option><option>急行</option><option>不明</option></select></div>
+          <div className="mt-2">行先: <input value={destination} onChange={(e)=>setDestination(e.target.value)} placeholder="行先を入力" /></div>
+          <div className="mt-2">テンプレート（{'{station}'} と {'{note}'} を利用可）: <input value={template} onChange={(e)=>setTemplate(e.target.value)} /></div>
+          <div className="mt-3 space-x-2">
+            {watchId == null ? (
+              <button onClick={startWatch} className="px-3 py-1 rounded bg-green-500 text-white">位置監視開始</button>
+            ) : (
+              <button onClick={stopWatch} className="px-3 py-1 rounded bg-red-500 text-white">位置監視停止</button>
+            )}
+            <button onClick={testAnnounce} className="px-3 py-1 rounded bg-blue-500 text-white">テストアナウンス</button>
+          </div>
+        </div>
+
+        <div className="col-span-1 md:col-span-2 p-3 border rounded">
+          <h2 className="font-semibold">地図 / 現在地</h2>
+          <div style={{ height: 400 }} className="mb-2">
+            <MapContainer key={mapKey} center={[35.7289, 139.71]} zoom={12} style={{ height: '100%', width: '100%' }}>
+              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              {position && (
+                <>
+                  <Marker position={[position.lat, position.lon]}>
+                    <Popup>現在地 (精度: {position.accuracy} m)</Popup>
+                  </Marker>
+                  <Circle center={[position.lat, position.lon]} radius={radius} />
+                </>
+              )}
+              {(STATIONS[line] || []).map((st) => (
+                <Marker position={[st.lat, st.lon]} key={st.name}>
+                  <Popup>{st.name}</Popup>
+                </Marker>
+              ))}
+            </MapContainer>
+          </div>
+
+          <div>
+            <strong>近接中（次駅候補）:</strong>
+            <ul>
+              {getNextStations().map((s) => (
+                <li key={s.name}>{s.name}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 p-3 border rounded">
+        <h2 className="font-semibold">アナウンス編集 / 緊急対応</h2>
+        <p className="text-sm text-gray-600">ダイヤ乱れや事故で案内を差し替えたい駅に対して、即座に手動文言を設定できます。</p>
+        <div className="grid md:grid-cols-3 gap-2 mt-2">
+          {(STATIONS[line] || []).map((st) => (
+            <div key={st.name} className="p-2 border rounded">
+              <div className="font-medium">{st.name}</div>
+              <textarea rows={3} value={manualOverrides[st.name] || ''} onChange={(e)=>setOverrideFor(st.name, e.target.value)} placeholder="手動アナウンス（空欄でテンプレートを使用）" style={{ width: '100%' }} />
+              <div className="mt-1 text-sm">距離: {position ? Math.round(haversineDist(position.lat, position.lon, st.lat, st.lon)) + ' m' : '---'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 text-sm text-gray-700">注: このプロトタイプは現場検証を必ず行ってください。実際の放送用には音量、スピーカー、遅延や誤認識の検証、及び会社の運行ルールに従った調整が必要です。</div>
+    </div>
+  );
+}
