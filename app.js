@@ -145,14 +145,29 @@ function screenSettings() {
   state.datasets.dests.forEach(d=>destSel2.appendChild(el("option",{value:d},d)));
   const carsIn2 = el("input",{type:"number",min:"1",max:"12",value:"10"});
 
-  secondWrap.append(
-    el("div",{class:"row"},[el("label",{},"列番(後)"),trainNo2]),
-    el("div",{class:"grid2"},[
-      el("div",[el("label",{},"種別(後)"),typeSel2]),
-      el("div",[el("label",{},"行先(後)"),destSel2])
+secondWrap.append(
+  el("div", {class:"row"}, [
+    el("label", {}, "列番(後)"),
+    trainNo2
+  ]),
+
+  el("div", {class:"grid2"}, [
+    el("div", {}, [
+      el("label", {}, "種別(後)"),
+      typeSel2
     ]),
-    el("div",{class:"row"},[el("label",{},"両数(後)"),carsIn2])
-  );
+    el("div", {}, [
+      el("label", {}, "行先(後)"),
+      destSel2
+    ])
+  ]),
+
+  el("div", {class:"row"}, [
+    el("label", {}, "両数(後)"),
+    carsIn2
+  ])
+);
+
 
   const execBtn = el("button",{class:"btn"},"実行");
   execBtn.onclick =()=>{
