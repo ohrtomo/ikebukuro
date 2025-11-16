@@ -38,7 +38,7 @@ input[type="text"], select, input[type="number"] {
   height: min(50px, 320px);
   transform: rotate(45deg);
   display: flex; align-items: center; justify-content: center;
-  border: 12px solid transparent;
+  border: 8px solid transparent;
 }
 .diamond > span {
   transform: rotate(-45deg);
