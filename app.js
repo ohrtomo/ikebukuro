@@ -347,7 +347,7 @@ function screenSettings() {
         return;
     }
     // --- ★ 必須チェック ここまで ---
-	
+
 		// 前半設定
 		state.config.trainNo = trainNo.value.trim();
 		state.config.direction = selectedDir; // 方向はボタンで選んだ値
@@ -405,6 +405,9 @@ function screenStart() {
 		if (e.target.id === "btn-begin") {
 			// ダイヤ上の基本停車駅から通過駅リストを構築
 			buildPassStationList();
+
+			// ★案内開始の音声
+			speakOnce("start_guidance", "案内を開始します");
 
 			document.getElementById("screen-start").classList.remove("active");
 			document.getElementById("screen-guidance").classList.add("active");
