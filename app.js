@@ -509,6 +509,7 @@ function screenGuidance() {
 	const panel = modal.querySelector(".panel");
 
 	root._band1 = band1;
+	root._notes = band2.querySelector("#notes");
 	root._badgeType = band3.querySelector("#badgeType");
 	root._cellNo = band4.querySelector("#cellNo");
 	root._cellDest = band4.querySelector("#cellDest");
@@ -793,6 +794,19 @@ function renderGuidance() {
 	root._cellDest.textContent = state.config.dest;
 }
 
+function updateNotes(lat, lng, timeMs) {
+	const root = document.getElementById("screen-guidance");
+	if (!root || !root._notes) return;
+
+	const d = new Date(timeMs);
+	const hh = String(d.getHours()).padStart(2, "0");
+	const mm = String(d.getMinutes()).padStart(2, "0");
+	const ss = String(d.getSeconds()).padStart(2, "0");
+
+	root._notes.textContent =
+		`現在位置: ${lat.toFixed(5)}, ${lng.toFixed(5)} / 最終更新: ${hh}:${mm}:${ss}`;
+}
+
 function nearestStation(lat, lng) {
 	let best = null,
 		bestD = 1e12;
@@ -821,6 +835,8 @@ function onPos(pos) {
 		state.runtime.speedKmh = (dist / dt) * 3.6;
 	}
 	state.runtime.lastPosition = { lat: latitude, lng: longitude, time: now };
+
+	updateNotes(latitude, longitude, now);
 
 	const ns = nearestStation(latitude, longitude);
 	maybeSpeak(ns);
