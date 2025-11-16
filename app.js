@@ -183,7 +183,7 @@ function screenSettings() {
 
 				// 後半の両数表示も同期（編集はさせない）
 				if (carsLabel2) {
-					carsLabel2.textContent = `${selectedCars}両（元の列車と同じ）`;
+					carsLabel2.textContent = `${selectedCars}両`;
 				}
 			};
 			return btn;
