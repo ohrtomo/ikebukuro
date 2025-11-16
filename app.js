@@ -386,15 +386,26 @@ function screenGuidance() {
 	]);
 	root.appendChild(modal);
 
+	const panel = modal.querySelector(".panel");
+
 	root._band1 = band1;
 	root._badgeType = band3.querySelector("#badgeType");
 	root._cellNo = band4.querySelector("#cellNo");
 	root._cellDest = band4.querySelector("#cellDest");
 	root._clock = band5.querySelector("#clock");
 
-	band5.querySelector("#btnMenu").onclick = () => modal.classList.add("active");
+	// ★メニューボタンを押したとき：モーダル表示 ＋ サブ画面はリセット
+	band5.querySelector("#btnMenu").onclick = () => {
+		modal.classList.add("active");
+		panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+	};
+
+	// 背景クリックでモーダル閉じる ＋ サブ画面も消す
 	modal.onclick = (e) => {
-		if (e.target.id === "menuModal") modal.classList.remove("active");
+		if (e.target.id === "menuModal") {
+			modal.classList.remove("active");
+			panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+		}
 	};
 
 	modal.querySelector("#m-end").onclick = () => {
@@ -422,26 +433,47 @@ function screenGuidance() {
 function openList(title, list, onPick) {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
-	const wrap = el("div", {}, [
-		el("hr", { class: "sep" }),
-		el("h3", {}, title),
-		el(
-			"div",
-			{ class: "list" },
-			list.map((v) => {
-				const b = el("button", { class: "btn secondary" }, v);
-				b.onclick = () => {
-					onPick(v);
-					modal.classList.remove("active");
-				};
-				return b;
-			}),
-		),
-	]);
+
+	// サブ画面の種類をタイトルから判定
+	let kind = "list";
+	if (title.includes("行先")) kind = "dest";
+	else if (title.includes("種別")) kind = "type";
+
+	// ★同じ kind のサブ画面が既にあればトグルで閉じる
+	const existing = panel.querySelector(
+		`.menu-subpanel[data-kind="${kind}"]`,
+	);
+	if (existing) {
+		existing.remove();
+		return;
+	}
+
+	// ★他のサブ画面はすべて閉じる
+	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+
+	// 新しいサブ画面を追加
+	const wrap = el(
+		"div",
+		{ class: "menu-subpanel", "data-kind": kind },
+		[
+			el("hr", { class: "sep" }),
+			el("h3", {}, title),
+			el(
+				"div",
+				{ class: "list" },
+				list.map((v) => {
+					const b = el("button", { class: "btn secondary" }, v);
+					b.onclick = () => {
+						onPick(v);
+						modal.classList.remove("active");
+					};
+					return b;
+				}),
+			),
+		],
+	);
+
 	panel.appendChild(wrap);
-	modal.addEventListener("transitionend", () => panel.removeChild(wrap), {
-		once: true,
-	});
 }
 
 function openStopList() {
@@ -449,12 +481,30 @@ function openStopList() {
 	const panel = modal.querySelector(".panel");
 
 	const names = Object.keys(state.datasets.stations);
-	const trainType = state.config.type; // 今走っている列車の種別（例：快速急行、各停など）
+	const trainType = state.config.type; // 今走っている列車の種別
 
-	const wrap = el("div", {}, [
-		el("hr", { class: "sep" }),
-		el("h3", {}, "臨時停車・通過"),
-	]);
+	const kind = "stop";
+
+	// ★同じサブ画面が開いていればトグルで閉じる
+	const existing = panel.querySelector(
+		`.menu-subpanel[data-kind="${kind}"]`,
+	);
+	if (existing) {
+		existing.remove();
+		return;
+	}
+
+	// ★他のサブ画面はすべて閉じる
+	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+
+	const wrap = el(
+		"div",
+		{ class: "menu-subpanel", "data-kind": kind },
+		[
+			el("hr", { class: "sep" }),
+			el("h3", {}, "臨時停車・通過"),
+		],
+	);
 
 	const box = el("div", { style: "max-height:50vh;overflow:auto;" });
 
@@ -462,15 +512,13 @@ function openStopList() {
 		const info = state.datasets.stations[n];
 		const sp = info.stopPatterns || {};
 
-		// ★「もともとのダイヤ」で停車するかどうか
+		// 「もともとのダイヤ」で停車するかどうか
 		const baseStop = !!sp[trainType];
 
-		// ★現在の手動設定（通過駅リスト） — すでに変更済みならそれを優先
+		// 現在の手動設定（通過駅リスト）
 		const isCurrentlyPass = state.runtime.passStations.has(n);
 
-		// チェック = 「今の状態で停車扱い」とする
-		//  - 初回は baseStop に従う
-		//  - すでに手動変更されていれば passStations に従う
+		// チェック = 今の状態で停車扱い
 		const checked = !isCurrentlyPass && baseStop;
 
 		const chk = el("input", { type: "checkbox" });
@@ -499,23 +547,66 @@ function openStopList() {
 
 	wrap.append(box, done);
 	panel.appendChild(wrap);
-	modal.addEventListener("transitionend", () => panel.removeChild(wrap), {
-		once: true,
-	});
 }
 
 function openPlatformList() {
+	const modal = document.getElementById("menuModal");
+	const panel = modal.querySelector(".panel");
+
+	const kind = "platform";
+
+	const existing = panel.querySelector(
+		`.menu-subpanel[data-kind="${kind}"]`,
+	);
+	if (existing) {
+		existing.remove();
+		return;
+	}
+
+	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+
 	// 画面仕様は stopList と同じ構成で実用上は動作可
+	const wrap = el(
+		"div",
+		{ class: "menu-subpanel", "data-kind": kind },
+		[
+			el("hr", { class: "sep" }),
+			el("h3", {}, "着発線変更"),
+			// 必要に応じて内容実装
+		],
+	);
+
+	panel.appendChild(wrap);
 }
 
 function openTrainChange() {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
 	const names = Object.keys(state.datasets.stations);
-	const wrap = el("div", {}, [
-		el("hr", { class: "sep" }),
-		el("h3", {}, "列番変更"),
-	]);
+
+	const kind = "train";
+
+	// ★同じサブ画面が開いていればトグルで閉じる
+	const existing = panel.querySelector(
+		`.menu-subpanel[data-kind="${kind}"]`,
+	);
+	if (existing) {
+		existing.remove();
+		return;
+	}
+
+	// ★他のサブ画面はすべて閉じる
+	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+
+	const wrap = el(
+		"div",
+		{ class: "menu-subpanel", "data-kind": kind },
+		[
+			el("hr", { class: "sep" }),
+			el("h3", {}, "列番変更"),
+		],
+	);
+
 	const sel = el("select");
 	names.forEach((n) => {
 		sel.appendChild(el("option", { value: n }, n));
@@ -527,11 +618,9 @@ function openTrainChange() {
 		state.runtime.manualTrainNo = input.value.trim();
 		modal.classList.remove("active");
 	};
+
 	wrap.append(sel, input, done);
 	panel.appendChild(wrap);
-	modal.addEventListener("transitionend", () => panel.removeChild(wrap), {
-		once: true,
-	});
 }
 
 // ==== 停車パターン（ダイヤ上の基本停車駅） ====
@@ -662,12 +751,26 @@ function maybeSpeak(ns) {
 		// ——— ここから先は従来ロジック＋文言の差し替え ———
 
 		if (state.runtime.lastStopStation && ns.distance > 100) {
-			// 「次は○○、停車」はそのままにしておいてもよいが、
-			// 必要ならここも臨時対応にできる
-			speakOnce(
-				"leave100_" + key,
-				`次は${state.runtime.lastStopStation}、停車`,
-			);
+			const nextName = state.runtime.lastStopStation;
+
+			// ★「次の駅」のダイヤ上の停車／通過
+			const baseNextStop = baseIsStop(nextName);
+			// ★現在設定上の停車／通過（passStations）
+			const isNextStop = !state.runtime.passStations.has(nextName);
+
+			const isExtraStopNext = !baseNextStop && isNextStop;   // 本来通過→今は停車
+			const isExtraPassNext = baseNextStop && !isNextStop;   // 本来停車→今は通過
+
+			if (isNextStop) {
+				// 停車する場合：「停車」 or 「臨時停車」
+				const word = isExtraStopNext ? "臨時停車" : "停車";
+				speakOnce("leave100_" + nextName, `次は${nextName}、${word}`);
+			} else if (isExtraPassNext) {
+				// 本来停車だったのに今は通過する場合だけ「臨時通過」と案内
+				speakOnce("leave100_" + nextName, `次は${nextName}、臨時通過`);
+			}
+			// （本来通過→今も通過の駅は案内しない）
+
 			state.runtime.lastStopStation = null;
 		}
 
