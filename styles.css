@@ -99,3 +99,7 @@ input[type="text"], select, input[type="number"] {
   background: #2c7be5 !important;
   color: #fff !important;
 }
+
+.endchange-row {
+  margin-top: 16px;  /* 好きな値に調整してOK */
+}

@@ -348,7 +348,7 @@ function screenSettings() {
 			el("div", [el("label", {}, "種別"), typeSel]),
 			el("div", [el("label", {}, "行先"), destSel]),
 		]),
-		el("div", { class: "row" }, [endChange, el("span", {}, " 終点で列番変更")]),
+		el("div", { class: "row endchange-row" }, [endChange, el("span", {}, " 終点で列番変更")]),
 		secondWrap,
 		execBtn,
 	);
