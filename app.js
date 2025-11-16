@@ -71,6 +71,7 @@ function speakOnce(key, text) {
 
 // ==== Train number parser ====
 // 対応: 「開始〜終了」範囲 && 奇数→右 / 偶数→左 行先
+// 偶数→上り / 奇数→下り
 function parseTrainNo(trainNo) {
 	const n = parseInt(String(trainNo), 10);
 	if (Number.isNaN(n)) return null;
@@ -86,10 +87,10 @@ function parseTrainNo(trainNo) {
 			const destLeft = row["行先"] || "";
 			const destRight = row["Unnamed: 4"] || "";
 
-			// 偶数→左側（上り）／奇数→右側（下り）
+			// 偶数→左側（上り系） / 奇数→右側（下り系）
 			const dest = n % 2 === 0 ? destLeft : destRight;
 
-			// ★方向ロジック：偶数＝上り、奇数＝下り
+			// 偶数→上り / 奇数→下り
 			const direction = n % 2 === 0 ? "上り" : "下り";
 
 			found = { type, dest, direction };
@@ -132,24 +133,52 @@ function screenSettings() {
 		placeholder: "4桁の列車番号",
 		id: "trainNo",
 	});
+
+	// 検索ボタン（クリックハンドラは後で設定）
 	const btnSearch = el("button", { class: "btn" }, "検索");
-	btnSearch.onclick = () => {
-		const res = parseTrainNo(trainNo.value.trim());
-		if (res) {
-			typeSel.value = res.type;
-			destSel.value = res.dest;
 
-			// ★ここが重要
-		    dirSel.value = res.direction;
-		} else {
-			alert("列番表に該当がありません。手動で選択してください。");
-		}
-	};
+	// ---- 上り/下り（方向ボタン） ----
+	let selectedDir = "上り"; // 初期値
 
-	// 上り/下り
-	const dirSel = el("select", { id: "direction" }, [
-		el("option", { value: "上り" }, "上り"),
-		el("option", { value: "下り" }, "下り"),
+	const dirButtons = el("div", { class: "grid2" }, [
+		(() => {
+			const btn = el(
+				"button",
+				{
+					class: "btn secondary active-selected",
+					type: "button",
+					"data-dir": "上り",
+				},
+				"上り",
+			);
+			btn.onclick = () => {
+				selectedDir = "上り";
+				dirButtons.querySelectorAll("button").forEach((b) =>
+					b.classList.remove("active-selected"),
+				);
+				btn.classList.add("active-selected");
+			};
+			return btn;
+		})(),
+		(() => {
+			const btn = el(
+				"button",
+				{
+					class: "btn secondary",
+					type: "button",
+					"data-dir": "下り",
+				},
+				"下り",
+			);
+			btn.onclick = () => {
+				selectedDir = "下り";
+				dirButtons.querySelectorAll("button").forEach((b) =>
+					b.classList.remove("active-selected"),
+				);
+				btn.classList.add("active-selected");
+			};
+			return btn;
+		})(),
 	]);
 
 	// 種別（前）
@@ -234,11 +263,35 @@ function screenSettings() {
 		el("div", { class: "row" }, [el("label", {}, "両数(後)"), carsLabel2]),
 	);
 
+	// ---- 検索ボタンの挙動（列車番号 → 種別・行先・方向） ----
+	btnSearch.onclick = () => {
+		const res = parseTrainNo(trainNo.value.trim());
+		if (res) {
+			typeSel.value = res.type;
+			destSel.value = res.dest;
+
+			// 方向（上り/下り）をボタンに反映
+			if (res.direction === "上り" || res.direction === "下り") {
+				selectedDir = res.direction;
+				dirButtons.querySelectorAll("button").forEach((b) =>
+					b.classList.remove("active-selected"),
+				);
+				const target = dirButtons.querySelector(
+					`button[data-dir="${selectedDir}"]`,
+				);
+				if (target) target.classList.add("active-selected");
+			}
+		} else {
+			alert("列番表に該当がありません。手動で選択してください。");
+		}
+	};
+
 	// ---- 実行ボタン ----
 	const execBtn = el("button", { class: "btn" }, "実行");
 	execBtn.onclick = () => {
 		state.config.trainNo = trainNo.value.trim();
-		state.config.direction = dirSel.value;
+		// ★ 方向はボタンで選んだ値
+		state.config.direction = selectedDir;
 		state.config.type = typeSel.value;
 		state.config.dest = destSel.value;
 
@@ -266,7 +319,7 @@ function screenSettings() {
 			btnSearch,
 		]),
 		el("div", { class: "grid2" }, [
-			el("div", [el("label", {}, "上り/下り"), dirSel]),
+			el("div", [el("label", {}, "上り/下り"), dirButtons]),
 			el("div", [el("label", {}, "両数"), carsButtons]),
 		]),
 		el("div", { class: "grid2" }, [
@@ -292,7 +345,7 @@ function screenStart() {
 	);
 	root.onclick = (e) => {
 		if (e.target.id === "btn-begin") {
-			// ★ 列車の種別・駅データから、通過駅リストを自動生成
+			// ダイヤ上の基本停車駅から通過駅リストを構築
 			buildPassStationList();
 
 			document.getElementById("screen-start").classList.remove("active");
@@ -400,13 +453,13 @@ function screenGuidance() {
 	root._cellDest = band4.querySelector("#cellDest");
 	root._clock = band5.querySelector("#clock");
 
-	// ★メニューボタンを押したとき：モーダル表示 ＋ サブ画面はリセット
+	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
 	band5.querySelector("#btnMenu").onclick = () => {
 		modal.classList.add("active");
 		panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 	};
 
-	// 背景クリックでモーダル閉じる ＋ サブ画面も消す
+	// 背景クリックでモーダル閉じる＋サブ画面消去
 	modal.onclick = (e) => {
 		if (e.target.id === "menuModal") {
 			modal.classList.remove("active");
@@ -436,16 +489,17 @@ function screenGuidance() {
 	return root;
 }
 
+// 汎用リスト（行先変更・種別変更）
 function openList(title, list, onPick) {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
 
-	// サブ画面の種類をタイトルから判定
+	// サブ画面種別
 	let kind = "list";
 	if (title.includes("行先")) kind = "dest";
 	else if (title.includes("種別")) kind = "type";
 
-	// ★同じ kind のサブ画面が既にあればトグルで閉じる
+	// 既に同じ kind が開いていたらトグルで閉じる
 	const existing = panel.querySelector(
 		`.menu-subpanel[data-kind="${kind}"]`,
 	);
@@ -454,10 +508,9 @@ function openList(title, list, onPick) {
 		return;
 	}
 
-	// ★他のサブ画面はすべて閉じる
+	// 他のサブ画面は閉じる
 	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 
-	// 新しいサブ画面を追加
 	const wrap = el(
 		"div",
 		{ class: "menu-subpanel", "data-kind": kind },
@@ -482,6 +535,7 @@ function openList(title, list, onPick) {
 	panel.appendChild(wrap);
 }
 
+// 臨時停車・通過
 function openStopList() {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
@@ -489,7 +543,7 @@ function openStopList() {
 	const names = Object.keys(state.datasets.stations);
 	const kind = "stop";
 
-	// ★すでに「臨時停車・通過」サブ画面が開いていればトグルで閉じる
+	// 既に同じサブ画面が開いていればトグルで閉じる
 	const existing = panel.querySelector(
 		`.menu-subpanel[data-kind="${kind}"]`,
 	);
@@ -498,10 +552,9 @@ function openStopList() {
 		return;
 	}
 
-	// ★他のサブ画面（行先変更・種別変更・列番変更など）は全部閉じる
+	// 他のサブ画面は閉じる
 	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 
-	// サブ画面のラッパー
 	const wrap = el(
 		"div",
 		{ class: "menu-subpanel", "data-kind": kind },
@@ -514,12 +567,12 @@ function openStopList() {
 	const box = el("div", { style: "max-height:50vh;overflow:auto;" });
 
 	names.forEach((n) => {
-		// ★現在の設定：passStations に入っていれば「通過」、入っていなければ「停車」
+		// ★ 現在の設定：passStations に入っていれば通過、入っていなければ停車
 		const isCurrentlyPass = state.runtime.passStations.has(n);
 		const isStopNow = !isCurrentlyPass;
 
 		const chk = el("input", { type: "checkbox" });
-		chk.checked = isStopNow; // チェック = 現在「停車扱い」
+		chk.checked = isStopNow; // チェック = 停車扱い
 
 		const row = el("label", {}, [chk, " ", n]);
 		box.appendChild(row);
@@ -534,7 +587,7 @@ function openStopList() {
 			if (c.checked) newStopSet.add(names[i]); // チェック = 停車駅
 		});
 
-		// ★通過駅 = 全駅 - 停車駅
+		// 通過駅 = 全駅 - 停車駅
 		state.runtime.passStations = new Set(
 			names.filter((n) => !newStopSet.has(n)),
 		);
@@ -546,10 +599,10 @@ function openStopList() {
 	panel.appendChild(wrap);
 }
 
+// 着発線変更（枠だけ）
 function openPlatformList() {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
-
 	const kind = "platform";
 
 	const existing = panel.querySelector(
@@ -562,20 +615,20 @@ function openPlatformList() {
 
 	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 
-	// 画面仕様は stopList と同じ構成で実用上は動作可
 	const wrap = el(
 		"div",
 		{ class: "menu-subpanel", "data-kind": kind },
 		[
 			el("hr", { class: "sep" }),
 			el("h3", {}, "着発線変更"),
-			// 必要に応じて内容実装
+			// 必要があればここに実装を追加
 		],
 	);
 
 	panel.appendChild(wrap);
 }
 
+// 列番変更
 function openTrainChange() {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
@@ -583,7 +636,7 @@ function openTrainChange() {
 
 	const kind = "train";
 
-	// ★同じサブ画面が開いていればトグルで閉じる
+	// 既に同じサブ画面が開いていればトグルで閉じる
 	const existing = panel.querySelector(
 		`.menu-subpanel[data-kind="${kind}"]`,
 	);
@@ -592,7 +645,7 @@ function openTrainChange() {
 		return;
 	}
 
-	// ★他のサブ画面はすべて閉じる
+	// 他のサブ画面は閉じる
 	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 
 	const wrap = el(
@@ -628,13 +681,13 @@ function baseIsStop(stationName) {
 	return !!sp[state.config.type]; // 例: "快速急行" など
 }
 
-// ==== 停車駅/通過駅リスト生成 ====
+// ==== 停車駅/通過駅リスト生成（ダイヤ基準） ====
 function buildPassStationList() {
 	const stations = state.datasets.stations;
 	const pass = [];
 
-	for (const [name, info] of Object.entries(stations)) {
-		const baseStop = baseIsStop(name); // ★ここで利用
+	for (const [name] of Object.entries(stations)) {
+		const baseStop = baseIsStop(name); // ダイヤ上の停車かどうか
 
 		// baseStop が false = ダイヤ上は通過駅
 		if (!baseStop) {
@@ -755,8 +808,8 @@ function maybeSpeak(ns) {
 			// ★現在設定上の停車／通過（passStations）
 			const isNextStop = !state.runtime.passStations.has(nextName);
 
-			const isExtraStopNext = !baseNextStop && isNextStop;   // 本来通過→今は停車
-			const isExtraPassNext = baseNextStop && !isNextStop;   // 本来停車→今は通過
+			const isExtraStopNext = !baseNextStop && isNextStop; // 本来通過→今は停車
+			const isExtraPassNext = baseNextStop && !isNextStop; // 本来停車→今は通過
 
 			if (isNextStop) {
 				// 停車する場合：「停車」 or 「臨時停車」
