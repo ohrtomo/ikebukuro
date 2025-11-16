@@ -576,7 +576,7 @@
       "SトレB上": false,
       "快速急行": false,
       "地下快急": false,
-      "急行": false,
+      "急行": true,
       "通勤急行": false,
       "快速": true,
       "準急": true,
