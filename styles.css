@@ -34,11 +34,11 @@ input[type="text"], select, input[type="number"] {
 /* Band1 (両数) */
 .band1 { background: #000; position: relative; }
 .diamond {
-  width: min(40px, 240px);
-  height: min(40px, 240px);
+  width: min(40px, 320px);
+  height: min(40px, 320px);
   transform: rotate(45deg);
   display: flex; align-items: center; justify-content: center;
-  border: 16px solid transparent;
+  border: 12px solid transparent;
 }
 .diamond > span {
   transform: rotate(-45deg);
