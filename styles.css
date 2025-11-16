@@ -33,25 +33,25 @@ input[type="text"], select, input[type="number"] {
 
 /* --- Band1 (両数) --- */
 .diamond {
-  /* ★ ひし形の大きさ：元の 3/4 サイズ */
-  width: min(45vw, 240px);
-  height: min(45vw, 240px);
+  /* ★ ひし形の大きさ：全体を約 3/4 に縮小 */
+  width:  min(30vw, 180px);
+  height: min(30vw, 180px);
 
   transform: rotate(45deg);
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 16px solid transparent;
 
-  border: 6px solid transparent;
+  /* ★ 下のお知らせ欄との間に少し余白を入れる */
+  margin-bottom: 16px;
 }
 
-/* ひし形内の数字（2倍サイズ） */
-.diamond > span {
+.diamond span {
+  /* ★ フォントサイズを 2倍相当へ */
+  font-size: clamp(32px, 12vw, 80px);
   transform: rotate(-45deg);
-
-  /* ★ 文字サイズ：2倍程度に増量（上限104px） */
-  font-size: clamp(40px, 12vw, 104px);
-  font-weight: 900;
+  font-weight: bold;
 }
 
 .d10 { background: #ff7f00; color: #000; }
