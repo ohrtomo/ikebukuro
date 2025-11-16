@@ -214,11 +214,7 @@ function screenSettings() {
 	});
 
 	// ★ 後半両数は「表示だけ」：元の列車の両数を引き継ぐ
-	carsLabel2 = el(
-		"span",
-		{ id: "cars2Label" },
-		`${selectedCars}両`,
-	);
+	carsLabel2 = el("span", { id: "cars2Label" }, `${selectedCars}両`);
 
 	secondWrap.append(
 		el("div", { class: "row" }, [el("label", {}, "列番(後)"), trainNo2]),
@@ -229,10 +225,7 @@ function screenSettings() {
 		]),
 
 		// 両数(後) は入力欄をなくしてラベルだけ
-		el("div", { class: "row" }, [
-			el("label", {}, "両数(後)"),
-			carsLabel2,
-		]),
+		el("div", { class: "row" }, [el("label", {}, "両数(後)"), carsLabel2]),
 	);
 
 	// ---- 実行ボタン ----
@@ -251,7 +244,6 @@ function screenSettings() {
 			state.config.second.trainNo = trainNo2.value.trim();
 			state.config.second.type = typeSel2.value;
 			state.config.second.dest = destSel2.value;
-
 			// ★ 後半の両数は前半と同じに固定（変更不可）
 			state.config.second.cars = state.config.cars;
 		}
@@ -294,6 +286,9 @@ function screenStart() {
 	);
 	root.onclick = (e) => {
 		if (e.target.id === "btn-begin") {
+			// ★ 列車の種別・駅データから、通過駅リストを自動生成
+			buildPassStationList();
+
 			document.getElementById("screen-start").classList.remove("active");
 			document.getElementById("screen-guidance").classList.add("active");
 			startGuidance();
@@ -510,6 +505,24 @@ function openTrainChange() {
 	modal.addEventListener("transitionend", () => panel.removeChild(wrap), {
 		once: true,
 	});
+}
+
+// ==== 停車駅/通過駅リスト生成 ====
+function buildPassStationList() {
+	const trainType = state.config.type; // 例: "特急", "快速急行", "各停" など
+	const stations = state.datasets.stations;
+
+	const pass = [];
+
+	for (const [name, info] of Object.entries(stations)) {
+		const sp = info.stopPatterns || {};
+		// stopPatterns[種別] が true なら停車、それ以外は通過扱い
+		if (!sp[trainType]) {
+			pass.push(name);
+		}
+	}
+
+	state.runtime.passStations = new Set(pass);
 }
 
 let clockTimer = null,
