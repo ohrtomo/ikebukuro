@@ -481,11 +481,9 @@ function openStopList() {
 	const panel = modal.querySelector(".panel");
 
 	const names = Object.keys(state.datasets.stations);
-	const trainType = state.config.type; // 今走っている列車の種別
-
 	const kind = "stop";
 
-	// ★同じサブ画面が開いていればトグルで閉じる
+	// ★すでに「臨時停車・通過」サブ画面が開いていればトグルで閉じる
 	const existing = panel.querySelector(
 		`.menu-subpanel[data-kind="${kind}"]`,
 	);
@@ -494,9 +492,10 @@ function openStopList() {
 		return;
 	}
 
-	// ★他のサブ画面はすべて閉じる
+	// ★他のサブ画面（行先変更・種別変更・列番変更など）は全部閉じる
 	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 
+	// サブ画面のラッパー
 	const wrap = el(
 		"div",
 		{ class: "menu-subpanel", "data-kind": kind },
@@ -509,20 +508,12 @@ function openStopList() {
 	const box = el("div", { style: "max-height:50vh;overflow:auto;" });
 
 	names.forEach((n) => {
-		const info = state.datasets.stations[n];
-		const sp = info.stopPatterns || {};
-
-		// 「もともとのダイヤ」で停車するかどうか
-		const baseStop = !!sp[trainType];
-
-		// 現在の手動設定（通過駅リスト）
+		// ★現在の設定：passStations に入っていれば「通過」、入っていなければ「停車」
 		const isCurrentlyPass = state.runtime.passStations.has(n);
-
-		// チェック = 今の状態で停車扱い
-		const checked = !isCurrentlyPass && baseStop;
+		const isStopNow = !isCurrentlyPass;
 
 		const chk = el("input", { type: "checkbox" });
-		chk.checked = checked;
+		chk.checked = isStopNow; // チェック = 現在「停車扱い」
 
 		const row = el("label", {}, [chk, " ", n]);
 		box.appendChild(row);
@@ -537,7 +528,7 @@ function openStopList() {
 			if (c.checked) newStopSet.add(names[i]); // チェック = 停車駅
 		});
 
-		// 通過駅 = 全駅 - 停車駅
+		// ★通過駅 = 全駅 - 停車駅
 		state.runtime.passStations = new Set(
 			names.filter((n) => !newStopSet.has(n)),
 		);
