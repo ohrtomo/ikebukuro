@@ -86,10 +86,13 @@ function parseTrainNo(trainNo) {
 			const destLeft = row["行先"] || "";
 			const destRight = row["Unnamed: 4"] || "";
 
-			// ★奇数→右側、偶数→左側
+			// 偶数→左側（上り）／奇数→右側（下り）
+			const dest = n % 2 === 0 ? destLeft : destRight;
+
+			// ★方向ロジック：偶数＝上り、奇数＝下り
 			const direction = n % 2 === 0 ? "上り" : "下り";
 
-			found = { type, dest };
+			found = { type, dest, direction };
 		}
 	}
 	return found;
