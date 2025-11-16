@@ -118,6 +118,7 @@ function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
 	const c = el("div", { class: "container" });
 
+	// 列車番号（前）
 	const trainNo = el("input", {
 		type: "text",
 		placeholder: "4桁の列車番号",
@@ -134,48 +135,69 @@ function screenSettings() {
 		}
 	};
 
+	// 上り/下り
 	const dirSel = el("select", { id: "direction" }, [
 		el("option", { value: "上り" }, "上り"),
 		el("option", { value: "下り" }, "下り"),
 	]);
 
+	// 種別（前）
 	const typeSel = el("select", { id: "type" });
 	state.datasets.types.forEach((t) => {
 		typeSel.appendChild(el("option", { value: t }, t));
 	});
 
+	// 行先（前）
 	const destSel = el("select", { id: "dest" });
 	state.datasets.dests.forEach((d) => {
 		destSel.appendChild(el("option", { value: d }, d));
 	});
 
+	// ---- 両数（前）：10 / 8 / 7 / 6 / 4 / 2 ボタン選択 ----
 	const carsValues = [10, 8, 7, 6, 4, 2];
-	let selectedCars = 10; // 初期値は10両
+	let selectedCars = 10; // 初期値
+	let carsLabel2 = null; // 後半表示用ラベル（あとで代入）
 
-	const carsButtons = el("div", { class: "grid2" },
-	  carsValues.map((v) =>
-	    el("button",
-	      { class: "btn secondary", onclick: () => {
-	          selectedCars = v;
-	
-	          // 選択状態を視覚的にわかりやすくする
-	          carsButtons.querySelectorAll("button").forEach((b) => {
-	            b.classList.remove("active-selected");
-	          });
-	          event.target.classList.add("active-selected");
-	        }
-	      },
-	      `${v}両`
-	    )
-	  )
+	const carsButtons = el(
+		"div",
+		{ class: "grid2" },
+		carsValues.map((v) => {
+			const btn = el(
+				"button",
+				{
+					class:
+						"btn secondary" +
+						(v === selectedCars ? " active-selected" : ""),
+					type: "button",
+				},
+				`${v}両`,
+			);
+			btn.onclick = (e) => {
+				selectedCars = v;
+
+				// 前半ボタンの見た目更新
+				carsButtons.querySelectorAll("button").forEach((b) => {
+					b.classList.remove("active-selected");
+				});
+				e.currentTarget.classList.add("active-selected");
+
+				// 後半の両数表示も同期（編集はさせない）
+				if (carsLabel2) {
+					carsLabel2.textContent = `${selectedCars}両（元の列車と同じ）`;
+				}
+			};
+			return btn;
+		}),
 	);
 
+	// ---- 終点で列番変更 ON/OFF ----
 	const endChange = el("input", { type: "checkbox", id: "endChange" });
 	const secondWrap = el("div", { id: "secondConfig", style: "display:none;" });
 	endChange.onchange = () => {
 		secondWrap.style.display = endChange.checked ? "block" : "none";
 	};
 
+	// 後半：列番・種別・行先（両数は固定で表示のみ）
 	const trainNo2 = el("input", { type: "text" });
 	const typeSel2 = el("select");
 	state.datasets.types.forEach((t) => {
@@ -185,12 +207,13 @@ function screenSettings() {
 	state.datasets.dests.forEach((d) => {
 		destSel2.appendChild(el("option", { value: d }, d));
 	});
-	const carsIn2 = el("input", {
-		type: "number",
-		min: "1",
-		max: "12",
-		value: "10",
-	});
+
+	// ★ 後半両数は「表示だけ」：元の列車の両数を引き継ぐ
+	carsLabel2 = el(
+		"span",
+		{ id: "cars2Label" },
+		`${selectedCars}両（元の列車と同じ）`,
+	);
 
 	secondWrap.append(
 		el("div", { class: "row" }, [el("label", {}, "列番(後)"), trainNo2]),
@@ -200,27 +223,39 @@ function screenSettings() {
 			el("div", {}, [el("label", {}, "行先(後)"), destSel2]),
 		]),
 
-		el("div", { class: "row" }, [el("label", {}, "両数(後)"), carsIn2]),
+		// 両数(後) は入力欄をなくしてラベルだけ
+		el("div", { class: "row" }, [
+			el("label", {}, "両数(後)"),
+			carsLabel2,
+		]),
 	);
 
+	// ---- 実行ボタン ----
 	const execBtn = el("button", { class: "btn" }, "実行");
 	execBtn.onclick = () => {
 		state.config.trainNo = trainNo.value.trim();
 		state.config.direction = dirSel.value;
 		state.config.type = typeSel.value;
 		state.config.dest = destSel.value;
+
+		// 前半の両数（ボタンで選んだ値）
 		state.config.cars = selectedCars;
+
 		state.config.endChange = endChange.checked;
 		if (endChange.checked) {
 			state.config.second.trainNo = trainNo2.value.trim();
 			state.config.second.type = typeSel2.value;
 			state.config.second.dest = destSel2.value;
-			state.config.second.cars = parseInt(carsIn2.value, 10);
+
+			// ★ 後半の両数は前半と同じに固定（変更不可）
+			state.config.second.cars = state.config.cars;
 		}
+
 		document.getElementById("screen-settings").classList.remove("active");
 		document.getElementById("screen-start").classList.add("active");
 	};
 
+	// ---- 画面にパーツを配置 ----
 	c.append(
 		el("div", { class: "row" }, [
 			el("label", {}, "列車番号"),
@@ -229,7 +264,7 @@ function screenSettings() {
 		]),
 		el("div", { class: "grid2" }, [
 			el("div", [el("label", {}, "上り/下り"), dirSel]),
-			el("div", [el("label", {}, "両数"), carsButtons])
+			el("div", [el("label", {}, "両数"), carsButtons]),
 		]),
 		el("div", { class: "grid2" }, [
 			el("div", [el("label", {}, "種別"), typeSel]),
