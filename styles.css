@@ -24,7 +24,7 @@ input[type="text"], select, input[type="number"] {
 /* Guidance layout: 5 bands (2:2:2:1:1) */
 .guidance {
   display: grid;
-  grid-template-rows: 2.5fr 2fr 2fr 1fr 1fr;
+  grid-template-rows: 3fr 3fr 2fr 1fr 1fr;
   height: 100vh;
   width: 100%;
   overflow: hidden;
