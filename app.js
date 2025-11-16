@@ -237,22 +237,27 @@ function screenSettings() {
 		secondWrap.style.display = endChange.checked ? "block" : "none";
 	};
 
-	// 後半：列番・種別・行先（両数は固定で表示のみ）
-	const trainNo2 = el("input", { type: "text" });
-	const typeSel2 = el("select");
-	state.datasets.types.forEach((t) => {
-		typeSel2.appendChild(el("option", { value: t }, t));
-	});
-	const destSel2 = el("select");
-	state.datasets.dests.forEach((d) => {
-		destSel2.appendChild(el("option", { value: d }, d));
-	});
+    // ★ 後半：列番から種別・行先を検索するボタン
+    const btnSearch2 = el(
+        "button",
+        { class: "btn secondary", type: "button" },
+        "検索"
+    );
+    btnSearch2.onclick = () => {
+        const res = parseTrainNo(trainNo2.value.trim());
+        if (res) {
+            typeSel2.value = res.type;
+            destSel2.value = res.dest;
+        } else {
+            alert("列番表に該当がありません。手動で選択してください。");
+        }
+    };
 
 	// ★ 後半両数は「表示だけ」：元の列車の両数を引き継ぐ
 	carsLabel2 = el("span", { id: "cars2Label" }, `${selectedCars}両`);
 
 	secondWrap.append(
-		el("div", { class: "row" }, [el("label", {}, "列番(後)"), trainNo2]),
+		el("div", { class: "row" }, [el("label", {}, "列番(後)"), trainNo2,btnSearch2,]),
 
 		el("div", { class: "grid2" }, [
 			el("div", {}, [el("label", {}, "種別(後)"), typeSel2]),
