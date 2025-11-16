@@ -34,15 +34,15 @@ input[type="text"], select, input[type="number"] {
 /* Band1 (両数) */
 .band1 { background: #000; position: relative; }
 .diamond {
-  width: min(60vw, 320px);
-  height: min(60vw, 320px);
+  width: min(40px, 240px);
+  height: min(40px, 240px);
   transform: rotate(45deg);
   display: flex; align-items: center; justify-content: center;
-  border: 6px solid transparent;
+  border: 16px solid transparent;
 }
 .diamond > span {
   transform: rotate(-45deg);
-  font-size: clamp(20px, 8vw, 52px);
+  font-size: clamp(20px, 16vw, 120px);
   font-weight: 900;
 }
 

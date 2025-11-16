@@ -1242,14 +1242,27 @@ function otherSpeaks(ns) {
 	const before0100 = hh < 1;
 	const timeOK = after1555 || before0100;
 
-	if (
-		state.config.direction === "上り" &&
-		state.config.dest === "小竹向原" &&
-		ns.name === "練馬" &&
-		ns.distance > 100
-	) {
-		speakOnce("rule-nerima", "搭載かばん、確認");
-	}
+	// ★ 練馬駅 100m 内 → 外 に出た瞬間だけ発話
+    if (
+        state.config.direction === "上り" &&
+        state.config.dest === "小竹向原" &&
+        ns.name === "練馬"
+    ) {
+        const prevDist = 
+            state.runtime.prevStationName === "練馬"
+                ? state.runtime.prevStationDistance
+                : null;
+
+        const crossedOut =
+            prevDist != null &&
+            prevDist <= 100 &&
+            ns.distance > 100;
+
+        if (crossedOut) {
+            speakOnce("rule-nerima", "搭載かばん、確認");
+        }
+    }
+	
 	if (
 		state.config.direction === "上り" &&
 		/新宿線/.test(state.config.dest) &&
