@@ -96,6 +96,12 @@ function speakOnce(key, text) {
     }
 
     speechSynthesis.speak(utter);
+
+    // ★ 読み上げ内容を notes に表示
+    const root = document.getElementById("screen-guidance");
+    if (root && root._notes) {
+        root._notes.textContent = text;
+    }
 }
 
 // ==== Train number parser ====
