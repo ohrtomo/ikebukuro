@@ -123,6 +123,7 @@ function el(tag, attrs = {}, children = []) {
 }
 
 // ==== Screens ====
+// ==== Screens ====
 function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
 	const c = el("div", { class: "container" });
@@ -134,7 +135,7 @@ function screenSettings() {
 		id: "trainNo",
 	});
 
-	// 検索ボタン（クリックハンドラは後で設定）
+	// 検索ボタン（前半用）
 	const btnSearch = el("button", { class: "btn" }, "検索");
 
 	// ---- 上り/下り（方向ボタン） ----
@@ -237,31 +238,44 @@ function screenSettings() {
 		secondWrap.style.display = endChange.checked ? "block" : "none";
 	};
 
-    // ★ 後半：列番から種別・行先を検索するボタン
-    const btnSearch2 = el(
-        "button",
-        { class: "btn secondary", type: "button" },
-        "検索"
-    );
-    btnSearch2.onclick = () => {
-        const res = parseTrainNo(trainNo2.value.trim());
-        if (res) {
-            typeSel2.value = res.type;
-            destSel2.value = res.dest;
-        } else {
-            alert("列番表に該当がありません。手動で選択してください。");
-        }
-    };
+	// ---- 後半：列番・種別・行先（両数は固定で表示のみ） ----
+	const trainNo2 = el("input", { type: "text" });
+
+	const typeSel2 = el("select");
+	state.datasets.types.forEach((t) => {
+		typeSel2.appendChild(el("option", { value: t }, t));
+	});
+
+	const destSel2 = el("select");
+	state.datasets.dests.forEach((d) => {
+		destSel2.appendChild(el("option", { value: d }, d));
+	});
+
+	// ★ 後半：列番から種別・行先を検索するボタン
+	const btnSearch2 = el(
+		"button",
+		{ class: "btn secondary", type: "button" },
+		"検索",
+	);
+	btnSearch2.onclick = () => {
+		const res = parseTrainNo(trainNo2.value.trim());
+		if (res) {
+			typeSel2.value = res.type;
+			destSel2.value = res.dest;
+		} else {
+			alert("列番表に該当がありません。手動で選択してください。");
+		}
+	};
 
 	// ★ 後半両数は「表示だけ」：元の列車の両数を引き継ぐ
 	carsLabel2 = el("span", { id: "cars2Label" }, `${selectedCars}両`);
 
 	secondWrap.append(
 		el("div", { class: "row" }, [
-		    el("label", {}, "列番(後)"),
-		    trainNo2,
-		    btnSearch2,
-	    ]),
+			el("label", {}, "列番(後)"),
+			trainNo2,
+			btnSearch2,
+		]),
 
 		el("div", { class: "grid2" }, [
 			el("div", {}, [el("label", {}, "種別(後)"), typeSel2]),
@@ -272,7 +286,7 @@ function screenSettings() {
 		el("div", { class: "row" }, [el("label", {}, "両数(後)"), carsLabel2]),
 	);
 
-	// ---- 検索ボタンの挙動（列車番号 → 種別・行先・方向） ----
+	// ---- 検索ボタンの挙動（前半：列車番号 → 種別・行先・方向） ----
 	btnSearch.onclick = () => {
 		const res = parseTrainNo(trainNo.value.trim());
 		if (res) {
@@ -298,21 +312,20 @@ function screenSettings() {
 	// ---- 実行ボタン ----
 	const execBtn = el("button", { class: "btn" }, "実行");
 	execBtn.onclick = () => {
+		// 前半設定
 		state.config.trainNo = trainNo.value.trim();
-		// ★ 方向はボタンで選んだ値
-		state.config.direction = selectedDir;
+		state.config.direction = selectedDir; // 方向はボタンで選んだ値
 		state.config.type = typeSel.value;
 		state.config.dest = destSel.value;
+		state.config.cars = selectedCars; // 両数（ボタン）
 
-		// 前半の両数（ボタンで選んだ値）
-		state.config.cars = selectedCars;
-
+		// 終点で列番変更（後半設定）
 		state.config.endChange = endChange.checked;
 		if (endChange.checked) {
 			state.config.second.trainNo = trainNo2.value.trim();
 			state.config.second.type = typeSel2.value;
 			state.config.second.dest = destSel2.value;
-			// ★ 後半の両数は前半と同じに固定（変更不可）
+			// 後半の両数は前半と同じに固定（変更不可）
 			state.config.second.cars = state.config.cars;
 		}
 
