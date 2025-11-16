@@ -62,17 +62,40 @@ async function loadData() {
 
 // ==== Speech ====
 function speakOnce(key, text) {
-	const now = Date.now();
-	const last = state.runtime.lastSpoken[key] || 0;
-	if (now - last < 30000) return; // 30秒抑止
-	state.runtime.lastSpoken[key] = now;
+    const now = Date.now();
+    const last = state.runtime.lastSpoken[key] || 0;
+    if (now - last < 30000) return; // 30秒抑止
+    state.runtime.lastSpoken[key] = now;
 
-	const utter = new SpeechSynthesisUtterance(text);
-	utter.lang = "ja-JP";
-	const voices = speechSynthesis.getVoices();
-	const jpVoices = voices.filter((v) => v.lang.startsWith("ja"));
-	if (jpVoices.length > 0) utter.voice = jpVoices[0];
-	speechSynthesis.speak(utter);
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "ja-JP";
+
+    // ★ Safari の女性声（Kyoko）を最優先で選ぶ
+    let voices = speechSynthesis.getVoices();
+
+    // Safari は非同期ロードの場合があるため、空なら待つ
+    if (voices.length === 0) {
+        // 200ms後に再試行
+        setTimeout(() => speakOnce(key, text), 200);
+        return;
+    }
+
+    // ★ 「Kyoko」を含む女性声を優先選択
+    const femaleVoice = voices.find(v => 
+        v.lang.startsWith("ja") && /Kyoko/i.test(v.name)
+    );
+
+    if (femaleVoice) {
+        utter.voice = femaleVoice;
+    } else {
+        // 代替として、女性らしい声を探す
+        const fallback = voices.find(
+            v => v.lang.startsWith("ja") && /Female|Girl|Woman/i.test(v.name)
+        );
+        if (fallback) utter.voice = fallback;
+    }
+
+    speechSynthesis.speak(utter);
 }
 
 // ==== Train number parser ====
@@ -1262,7 +1285,7 @@ function otherSpeaks(ns) {
             speakOnce("rule-nerima", "搭載かばん、確認");
         }
     }
-	
+
 	if (
 		state.config.direction === "上り" &&
 		/新宿線/.test(state.config.dest) &&
