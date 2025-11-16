@@ -94,3 +94,8 @@ input[type="text"], select, input[type="number"] {
 
 /* Start screen */
 .centered { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+
+.active-selected {
+  background: #2c7be5 !important;
+  color: #fff !important;
+}

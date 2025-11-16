@@ -149,13 +149,26 @@ function screenSettings() {
 		destSel.appendChild(el("option", { value: d }, d));
 	});
 
-	const carsIn = el("input", {
-		type: "number",
-		id: "cars",
-		min: "1",
-		max: "12",
-		value: "10",
-	});
+	const carsValues = [10, 8, 7, 6, 4, 2];
+	let selectedCars = 10; // 初期値は10両
+
+	const carsButtons = el("div", { class: "grid2" },
+	  carsValues.map((v) =>
+	    el("button",
+	      { class: "btn secondary", onclick: () => {
+	          selectedCars = v;
+	
+	          // 選択状態を視覚的にわかりやすくする
+	          carsButtons.querySelectorAll("button").forEach((b) => {
+	            b.classList.remove("active-selected");
+	          });
+	          event.target.classList.add("active-selected");
+	        }
+	      },
+	      `${v}両`
+	    )
+	  )
+	);
 
 	const endChange = el("input", { type: "checkbox", id: "endChange" });
 	const secondWrap = el("div", { id: "secondConfig", style: "display:none;" });
@@ -196,7 +209,7 @@ function screenSettings() {
 		state.config.direction = dirSel.value;
 		state.config.type = typeSel.value;
 		state.config.dest = destSel.value;
-		state.config.cars = parseInt(carsIn.value, 10);
+		state.config.cars = selectedCars;
 		state.config.endChange = endChange.checked;
 		if (endChange.checked) {
 			state.config.second.trainNo = trainNo2.value.trim();
@@ -216,7 +229,7 @@ function screenSettings() {
 		]),
 		el("div", { class: "grid2" }, [
 			el("div", [el("label", {}, "上り/下り"), dirSel]),
-			el("div", [el("label", {}, "両数"), carsIn]),
+			el("div", [el("label", {}, "両数"), carsButtons])
 		]),
 		el("div", { class: "grid2" }, [
 			el("div", [el("label", {}, "種別"), typeSel]),
