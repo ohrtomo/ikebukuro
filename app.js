@@ -323,7 +323,7 @@ function typeClass(t) {
 
 function band1RenderCars(elm, show, cars) {
 	elm.innerHTML = "";
-	if (!show) return;
+
 	const c =
 		cars === 10
 			? "d10"
@@ -336,9 +336,14 @@ function band1RenderCars(elm, show, cars) {
 						: cars === 7
 							? "d7"
 							: "d10";
-	const diamond = el("div", { class: `diamond ${c}` }, [
+
+	// 表示するかどうかで visibility を切り替え
+	const style = show ? "" : "visibility:hidden;";
+
+	const diamond = el("div", { class: `diamond ${c}`, style }, [
 		el("span", {}, cars === 7 ? "特" : `${cars}両`),
 	]);
+
 	elm.appendChild(diamond);
 }
 
