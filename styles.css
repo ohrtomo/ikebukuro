@@ -24,7 +24,7 @@ input[type="text"], select, input[type="number"] {
 /* Guidance layout: 5 bands (2:2:2:1:1) */
 .guidance {
   display: grid;
-  grid-template-rows: 2fr 2fr 2fr 1fr 1fr;
+  grid-template-rows: 2.5fr 2fr 2fr 1fr 1fr;
   height: 100vh;
   width: 100%;
   overflow: hidden;
@@ -34,15 +34,15 @@ input[type="text"], select, input[type="number"] {
 /* Band1 (両数) */
 .band1 { background: #000; position: relative; }
 .diamond {
-  width: min(50px, 320px);
-  height: min(50px, 320px);
+  width: min(60vw, 320px);
+  height: min(60vw, 320px);
   transform: rotate(45deg);
   display: flex; align-items: center; justify-content: center;
-  border: 8px solid transparent;
+  border: 6px solid transparent;
 }
 .diamond > span {
   transform: rotate(-45deg);
-  font-size: clamp(20px, 16vw, 120px);
+  font-size: clamp(20px, 8vw, 52px);
   font-weight: 900;
 }
 
