@@ -761,32 +761,229 @@ function buildPassStationList() {
 	state.runtime.passStations = new Set(pass);
 }
 
-// ==== 次に停車する駅名を取得 ====
-// direction が "下り" のときは西武秩父側（リストの後ろ側）
-// "上り" のときは池袋側（リストの前側）を探索します。
-function findNextStopStationName(fromName) {
-	const names = Object.keys(state.datasets.stations);
-	const idx = names.indexOf(fromName);
+// ==== 路線ごとの駅順（物理順） ====
+
+// 池袋線（本線）
+const MAIN_LINE_ORDER = [
+	"池袋",
+	"椎名町",
+	"東長崎",
+	"江古田",
+	"桜台",
+	"練馬",
+	"中村橋",
+	"富士見台",
+	"練馬高野台",
+	"石神井公園",
+	"大泉学園",
+	"保谷",
+	"ひばりヶ丘",
+	"東久留米",
+	"清瀬",
+	"秋津",
+	"所沢",
+	"西所沢",
+	"小手指",
+	"狭山ヶ丘",
+	"武蔵藤沢",
+	"稲荷山公園",
+	"入間市",
+	"仏子",
+	"元加治",
+	"飯能",
+	"東飯能",
+	"武蔵丘",
+	"高麗",
+	"武蔵横手",
+	"東吾野",
+	"吾野",
+	"西吾野",
+	"正丸",
+	"正丸トンネル",
+	"芦ヶ久保",
+	"横瀬",
+	"西武秩父",
+];
+
+// 有楽町線
+const YURAKU_LINE_ORDER = [
+	"小竹向原",
+	"新桜台",
+	"練馬",
+];
+
+// 豊島線
+const TOSHIMA_LINE_ORDER = [
+	"練馬",
+	"豊島園",
+];
+
+// 狭山線
+const SAYAMA_LINE_ORDER = [
+	"西所沢",
+	"下山口",
+	"西武球場前",
+];
+
+// ==== 行先カテゴリ判定 ====
+
+// 有楽町線へ進む行先
+const DEST_YURAKU = ["小竹向原"];
+
+// 豊島線へ進む行先
+const DEST_TOSHIMA = ["豊島園"];
+
+// 狭山線へ進む行先
+const DEST_SAYAMA = ["西武球場前", "下山口"];
+
+// 新宿線直通として扱う行先（所沢より先は案内しない）
+const DEST_SHINJUKU = ["新宿線直通"];
+
+// 本線として扱う行先（ご提示いただいた一覧）
+const DEST_MAIN = [
+	"池袋",
+	"東長崎",
+	"練馬",
+	"練馬高野台",
+	"石神井公園",
+	"保谷",
+	"ひばりヶ丘",
+	"清瀬",
+	"所沢",
+	"西所沢",
+	"小手指",
+	"狭山ヶ丘",
+	"入間市",
+	"仏子",
+	"飯能",
+	"武蔵丘",
+	"高麗",
+	"武蔵横手",
+	"東吾野",
+	"吾野",
+	"西吾野",
+	"正丸",
+	"正丸トンネル",
+	"芦ヶ久保",
+	"横瀬",
+	"西武秩父",
+];
+
+// 行先がどのカテゴリかざっくり判定（必要に応じて利用）
+function getDestCategory(dest) {
+	if (DEST_YURAKU.includes(dest)) return "yuraku";
+	if (DEST_TOSHIMA.includes(dest)) return "toshima";
+	if (DEST_SAYAMA.includes(dest)) return "sayama";
+	if (DEST_SHINJUKU.includes(dest)) return "shinjuku";
+	if (DEST_MAIN.includes(dest)) return "main";
+	return "main"; // 不明な場合は本線扱い
+}
+
+// ある駅名がどの路線配列に属しているかを返す
+function getLineForStation(name) {
+	if (MAIN_LINE_ORDER.includes(name)) return "main";
+	if (YURAKU_LINE_ORDER.includes(name)) return "yuraku";
+	if (TOSHIMA_LINE_ORDER.includes(name)) return "toshima";
+	if (SAYAMA_LINE_ORDER.includes(name)) return "sayama";
+	return null;
+}
+
+// 1 本の路線配列の中で、direction（上り/下り）と passStations を考慮して
+// 「次に実際に停車する駅」を探す共通ヘルパー
+function findNextOnLine(line, fromName, direction) {
+	const idx = line.indexOf(fromName);
 	if (idx === -1) return null;
 
-	if (state.config.direction === "下り") {
-		// 下り：配列の後ろ方向に探索
-		for (let i = idx + 1; i < names.length; i++) {
-			const n = names[i];
-			// 実際に停車する駅だけを対象（passStations に入っていない駅）
-			if (!state.runtime.passStations.has(n)) {
-				return n;
+	const step = direction === "下り" ? 1 : -1;
+
+	// 「新宿線直通」行先のときは、所沢より上り方向（池袋側）は案内しない
+	const isShinjukuThrough = DEST_SHINJUKU.includes(state.config.dest);
+	const tokorozawaIndex = line.indexOf("所沢");
+
+	for (let i = idx + step; i >= 0 && i < line.length; i += step) {
+		const n = line[i];
+
+		// 新宿線直通：上り方向で所沢より先（池袋側）は案内不要
+		if (isShinjukuThrough && direction === "上り" && tokorozawaIndex !== -1) {
+			// 上り = インデックスが小さくなる方向に進む
+			if (i < tokorozawaIndex) {
+				// 所沢よりさらに池袋側なので、ここから先は案内しない
+				return null;
 			}
 		}
-	} else {
-		// 上り：配列の前方向に探索
-		for (let i = idx - 1; i >= 0; i--) {
-			const n = names[i];
-			if (!state.runtime.passStations.has(n)) {
-				return n;
-			}
+
+		// 実際に停車する駅だけ対象（passStations に入っていない＝停車駅）
+		if (!state.runtime.passStations.has(n)) {
+			return n;
 		}
 	}
+	return null;
+}
+
+// ==== 次に停車する駅名を取得 ====
+// ・fromName = いま停車している（または直前に停車していた）駅
+// ・state.config.direction = "上り" / "下り"
+// ・state.config.dest = 行先
+// をもとに、本線／支線の分岐を考慮して次の停車駅を返す
+function findNextStopStationName(fromName) {
+	const dir = state.config.direction;   // "上り" or "下り"
+	const dest = state.config.dest;
+
+	const destCat = getDestCategory(dest);
+	const lineOfFrom = getLineForStation(fromName);
+
+	// 安全側：どの路線にも属さない駅名ならあきらめる
+	if (!lineOfFrom) return null;
+
+	// --- 分岐駅の特別処理 ---
+
+	// 練馬での分岐
+	if (fromName === "練馬") {
+		if (dir === "上り" && destCat === "yuraku") {
+			// 有楽町線：練馬から上り方向に分岐 → 有楽町線（練馬→新桜台→小竹向原）
+			return findNextOnLine(YURAKU_LINE_ORDER, fromName, "上り");
+		}
+		if (dir === "下り" && destCat === "toshima") {
+			// 豊島線：練馬から下り方向に分岐 → 豊島線（練馬→豊島園）
+			return findNextOnLine(TOSHIMA_LINE_ORDER, fromName, "下り");
+		}
+		// それ以外の行先は本線継続扱い
+		return findNextOnLine(MAIN_LINE_ORDER, fromName, dir);
+	}
+
+	// 西所沢での分岐
+	if (fromName === "西所沢") {
+		if (dir === "下り" && destCat === "sayama") {
+			// 狭山線：西所沢から下り方向に分岐 → 狭山線（西所沢→下山口→西武球場前）
+			return findNextOnLine(SAYAMA_LINE_ORDER, fromName, "下り");
+		}
+		// それ以外は本線（池袋線）扱い
+		return findNextOnLine(MAIN_LINE_ORDER, fromName, dir);
+	}
+
+	// 所沢より先は案内不要（新宿線直通・上り）
+	// → ただし「所沢行き」までの手前駅からは普通に「次は所沢…」と案内される
+	if (DEST_SHINJUKU.includes(dest) && fromName === "所沢" && dir === "上り") {
+		return null;
+	}
+
+	// --- 通常の処理 ---
+	// 現在所属している路線ごとに、対応する配列＆向きで次停車駅を検索
+
+	if (lineOfFrom === "main") {
+		return findNextOnLine(MAIN_LINE_ORDER, fromName, dir);
+	}
+	if (lineOfFrom === "yuraku") {
+		return findNextOnLine(YURAKU_LINE_ORDER, fromName, dir);
+	}
+	if (lineOfFrom === "toshima") {
+		return findNextOnLine(TOSHIMA_LINE_ORDER, fromName, dir);
+	}
+	if (lineOfFrom === "sayama") {
+		return findNextOnLine(SAYAMA_LINE_ORDER, fromName, dir);
+	}
+
+	// 想定外（ここには基本来ない）
 	return null;
 }
 
