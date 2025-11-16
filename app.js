@@ -38,6 +38,10 @@ const state = {
 		manualTrainNo: null,
 		manualTrainChangeAt: null,
 		lastStopDistance: null,   // ★ 直前の「最後に停車した駅」からの距離
+		// ★ 300m/120m判定用：前回の最近傍駅とその距離
+		prevStationName: null,
+		prevStationDistance: null,
+		
 	},
 };
 
@@ -1107,6 +1111,10 @@ function maybeSpeak(ns) {
 	if (!ns) return;
 	const t = state.config.type;
 	const d = state.runtime.speedKmh;
+	// ★ 前回の最近傍駅と距離（300mクロス判定用）
+	const prevName = state.runtime.prevStationName;
+	const prevDist = state.runtime.prevStationDistance;
+	const prevSameDist = prevName === ns.name ? prevDist : null;
 
 	// 特記事項
 	otherSpeaks(ns);
@@ -1152,7 +1160,13 @@ function maybeSpeak(ns) {
 		}
 
 		// ===== 300m 手前の案内 =====
-		if (isStop && ns.distance <= 300) {
+		// 直前は 300m より外側、今回は 300m 以内に入ったときだけ案内
+		const crossed300 =
+			isStop &&
+			ns.distance <= 300 &&
+			(prevSameDist == null || prevSameDist > 300);
+
+		if (crossed300) {
 			const stopWord = isExtraStop ? "臨時停車" : "停車";
 			speakOnce(
 				"arr300_" + key,
@@ -1161,7 +1175,8 @@ function maybeSpeak(ns) {
 		}
 
 		// ===== 停止直前の案内（停止位置） =====
-		if (isStop && ns.distance <= 120) {
+		// 速度が 5km/h 以下のときは案内しない
+		if (isStop && ns.distance <= 120 && d > 5) {
 			const stopWord = isExtraStop ? "臨時停車" : "停車";
 
 			if (
@@ -1206,6 +1221,10 @@ function maybeSpeak(ns) {
 		if (ns.distance <= 120 && d <= 30)
 			speakOnce("nonp120_" + key, `種別回送、ドアあつかい注意`);
 	}
+
+	// ★ この呼び出しでの距離を次回比較用に保存
+	state.runtime.prevStationName = ns.name;
+	state.runtime.prevStationDistance = ns.distance;
 }
 
 function otherSpeaks(ns) {
