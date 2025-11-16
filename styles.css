@@ -31,18 +31,26 @@ input[type="text"], select, input[type="number"] {
 }
 .band { display: flex; align-items: center; justify-content: center; padding: 8px; }
 
-/* Band1 (両数) */
-.band1 { background: #000; position: relative; }
+/* --- Band1 (両数) --- */
 .diamond {
-  width: min(60vw, 320px);
-  height: min(60vw, 320px);
+  /* ★ ひし形の大きさ：元の 3/4 サイズ */
+  width: min(45vw, 240px);
+  height: min(45vw, 240px);
+
   transform: rotate(45deg);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
   border: 6px solid transparent;
 }
+
+/* ひし形内の数字（2倍サイズ） */
 .diamond > span {
   transform: rotate(-45deg);
-  font-size: clamp(20px, 8vw, 52px);
+
+  /* ★ 文字サイズ：2倍程度に増量（上限104px） */
+  font-size: clamp(40px, 12vw, 104px);
   font-weight: 900;
 }
 
