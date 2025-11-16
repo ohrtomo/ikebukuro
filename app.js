@@ -447,29 +447,56 @@ function openList(title, list, onPick) {
 function openStopList() {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
+
 	const names = Object.keys(state.datasets.stations);
-	const sel = new Set(names.filter((n) => !state.runtime.passStations.has(n)));
+	const trainType = state.config.type; // 今走っている列車の種別（例：快速急行、各停など）
 
 	const wrap = el("div", {}, [
 		el("hr", { class: "sep" }),
 		el("h3", {}, "臨時停車・通過"),
 	]);
+
 	const box = el("div", { style: "max-height:50vh;overflow:auto;" });
+
 	names.forEach((n) => {
-		const chk = el("input", { type: "checkbox", checked: sel.has(n) });
+		const info = state.datasets.stations[n];
+		const sp = info.stopPatterns || {};
+
+		// ★「もともとのダイヤ」で停車するかどうか
+		const baseStop = !!sp[trainType];
+
+		// ★現在の手動設定（通過駅リスト） — すでに変更済みならそれを優先
+		const isCurrentlyPass = state.runtime.passStations.has(n);
+
+		// チェック = 「今の状態で停車扱い」とする
+		//  - 初回は baseStop に従う
+		//  - すでに手動変更されていれば passStations に従う
+		const checked = !isCurrentlyPass && baseStop;
+
+		const chk = el("input", { type: "checkbox" });
+		chk.checked = checked;
+
 		const row = el("label", {}, [chk, " ", n]);
 		box.appendChild(row);
 	});
+
 	const done = el("button", { class: "btn" }, "決定");
 	done.onclick = () => {
 		const checks = box.querySelectorAll("input[type=checkbox]");
-		const newSel = new Set();
+		const newStopSet = new Set();
+
 		checks.forEach((c, i) => {
-			if (c.checked) newSel.add(names[i]);
+			if (c.checked) newStopSet.add(names[i]); // チェック = 停車駅
 		});
-		state.runtime.passStations = new Set(names.filter((n) => !newSel.has(n)));
+
+		// 通過駅 = 全駅 - 停車駅
+		state.runtime.passStations = new Set(
+			names.filter((n) => !newStopSet.has(n)),
+		);
+
 		modal.classList.remove("active");
 	};
+
 	wrap.append(box, done);
 	panel.appendChild(wrap);
 	modal.addEventListener("transitionend", () => panel.removeChild(wrap), {
