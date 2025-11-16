@@ -257,7 +257,11 @@ function screenSettings() {
 	carsLabel2 = el("span", { id: "cars2Label" }, `${selectedCars}両`);
 
 	secondWrap.append(
-		el("div", { class: "row" }, [el("label", {}, "列番(後)"), trainNo2,btnSearch2]),
+		el("div", { class: "row" }, [
+		    el("label", {}, "列番(後)"),
+		    trainNo2,
+		    btnSearch2,
+	    ]),
 
 		el("div", { class: "grid2" }, [
 			el("div", {}, [el("label", {}, "種別(後)"), typeSel2]),
