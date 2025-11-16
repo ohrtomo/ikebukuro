@@ -81,9 +81,14 @@ function parseTrainNo(trainNo) {
 		const end = parseInt(row["Unnamed: 1"], 10);
 		if (!Number.isNaN(start) && !Number.isNaN(end) && n >= start && n <= end) {
 			const type = row["種別"] || "";
-			const destOdd = row["行先"] || "";
-			const destEven = row["Unnamed: 4"] || "";
-			const dest = n % 2 === 0 ? destEven : destOdd;
+
+			// 左側: 行先 / 右側: Unnamed: 4
+			const destLeft = row["行先"] || "";
+			const destRight = row["Unnamed: 4"] || "";
+
+			// ★奇数→右側、偶数→左側
+			const dest = n % 2 === 0 ? destLeft : destRight;
+
 			found = { type, dest };
 		}
 	}
