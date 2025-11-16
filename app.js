@@ -534,17 +534,24 @@ function openTrainChange() {
 	});
 }
 
+// ==== 停車パターン（ダイヤ上の基本停車駅） ====
+function baseIsStop(stationName) {
+	const info = state.datasets.stations[stationName];
+	if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
+	const sp = info.stopPatterns;
+	return !!sp[state.config.type]; // 例: "快速急行" など
+}
+
 // ==== 停車駅/通過駅リスト生成 ====
 function buildPassStationList() {
-	const trainType = state.config.type; // 例: "特急", "快速急行", "各停" など
 	const stations = state.datasets.stations;
-
 	const pass = [];
 
 	for (const [name, info] of Object.entries(stations)) {
-		const sp = info.stopPatterns || {};
-		// stopPatterns[種別] が true なら停車、それ以外は通過扱い
-		if (!sp[trainType]) {
+		const baseStop = baseIsStop(name); // ★ここで利用
+
+		// baseStop が false = ダイヤ上は通過駅
+		if (!baseStop) {
 			pass.push(name);
 		}
 	}
@@ -640,10 +647,23 @@ function maybeSpeak(ns) {
 
 	const key = ns.name;
 
+	// ★ 本来のダイヤ上の停車／通過
+	const baseStop = baseIsStop(ns.name);
+
+	// ★ 現在の設定（passStations）から見た停車／通過
+	const isStop = !state.runtime.passStations.has(ns.name);
+
+	// ★本来は通過だが今は停車 = 臨時停車
+	const isExtraStop = !baseStop && isStop;
+	// ★本来は停車だが今は通過 = 臨時通過
+	const isExtraPass = baseStop && !isStop;
+
 	if (!isNonPassenger(t)) {
-		const isStop = !state.runtime.passStations.has(ns.name);
+		// ——— ここから先は従来ロジック＋文言の差し替え ———
 
 		if (state.runtime.lastStopStation && ns.distance > 100) {
+			// 「次は○○、停車」はそのままにしておいてもよいが、
+			// 必要ならここも臨時対応にできる
 			speakOnce(
 				"leave100_" + key,
 				`次は${state.runtime.lastStopStation}、停車`,
@@ -651,40 +671,50 @@ function maybeSpeak(ns) {
 			state.runtime.lastStopStation = null;
 		}
 
+		// 300m 手前の案内
 		if (isStop && ns.distance <= 300) {
+			const stopWord = isExtraStop ? "臨時停車" : "停車";
 			speakOnce(
 				"arr300_" + key,
-				`まもなく${ns.name}、停車、${state.config.cars}両`,
+				`まもなく${ns.name}、${stopWord}、${state.config.cars}両`,
 			);
 		}
 
+		// 停止直前の案内（停止位置）
 		if (isStop && ns.distance <= 120) {
+			const stopWord = isExtraStop ? "臨時停車" : "停車";
+
 			if (
 				state.config.cars === 8 &&
 				(state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
 			) {
 				speakOnce(
 					"arr120_" + key,
-					`停車、8両、${state.config.direction === "上り" ? ns.up8pos : ns.down8pos}あわせ`,
+					`${stopWord}、8両、${state.config.direction === "上り" ? ns.up8pos : ns.down8pos}あわせ`,
 				);
 			} else if (state.config.cars === 10) {
-				speakOnce("arr120_" + key, `停車、10両`);
+				speakOnce("arr120_" + key, `${stopWord}、10両`);
 			} else {
 				speakOnce(
 					"arr120_" + key,
-					`停車、${state.config.cars}両、停止位置注意`,
+					`${stopWord}、${state.config.cars}両、停止位置注意`,
 				);
 			}
 			if (ns.distance <= 50 && isStop) state.runtime.lastStopStation = ns.name;
 		}
 
+		// 通過列車の案内（200m）
 		if (!isStop && ns.distance <= 200 && d <= 45) {
-			speakOnce("pass200_" + key, `種別${t}、通過`);
+			const passWord = isExtraPass ? "臨時通過" : "通過";
+			speakOnce("pass200_" + key, `種別${t}、${passWord}`);
 		}
+		// 通過列車の案内（120m）
 		if (!isStop && ns.distance <= 120 && d <= 30) {
-			speakOnce("pass120_" + key, `種別${t}、通過、速度注意`);
+			const passWord = isExtraPass ? "臨時通過" : "通過";
+			speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
 		}
 	} else {
+		// 回送・試運転などは従来通り
 		if (ns.distance <= 200 && d <= 45)
 			speakOnce("nonp200_" + key, `種別回送、ていつう確認`);
 		if (ns.distance <= 120 && d <= 30)
