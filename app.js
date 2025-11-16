@@ -41,6 +41,7 @@ const state = {
 		// ★ 300m/120m判定用：前回の最近傍駅とその距離
 		prevStationName: null,
 		prevStationDistance: null,
+		prevDistances: {},        // ★ 駅ごとの「前回距離」（300m判定用）
 		
 	},
 };
@@ -1160,8 +1161,14 @@ function maybeSpeak(ns) {
 		}
 
 		// ===== 300m 手前の案内 =====
+		// ★ 一番最初の測位（スポーン直後）は 300m 判定を無効にする
+		const isFirstMeasurement =
+			state.runtime.prevStationName === null &&
+			state.runtime.prevStationDistance === null;
+
 		// 直前は 300m より外側、今回は 300m 以内に入ったときだけ案内
 		const crossed300 =
+			!isFirstMeasurement &&        // ★ 初回は必ず false にする
 			isStop &&
 			ns.distance <= 300 &&
 			(prevSameDist == null || prevSameDist > 300);
