@@ -97,10 +97,10 @@ function speakOnce(key, text) {
 
     speechSynthesis.speak(utter);
 
-    // ★ 読み上げ内容を notes に表示
+    // ★ 読み上げ内容を「音声用」表示欄に表示（次の読み上げまで残す）
     const root = document.getElementById("screen-guidance");
-    if (root && root._notes) {
-        root._notes.textContent = text;
+    if (root && root._speechText) {
+        root._speechText.textContent = text;
     }
 }
 
@@ -498,11 +498,14 @@ function band1RenderCars(elm, show, cars) {
 }
 
 function screenGuidance() {
-	const root = el("div", { class: "screen", id: "screen-guidance" });
-	const band1 = el("div", { class: "band band1" });
-	const band2 = el("div", { class: "band band2" }, [
-		el("div", { class: "notes", id: "notes" }, ""),
-	]);
+    const root = el("div", { class: "screen", id: "screen-guidance" });
+    const band1 = el("div", { class: "band band1" });
+    const band2 = el("div", { class: "band band2" }, [
+        // ★ GPS 状態表示用
+        el("div", { class: "notes", id: "gpsStatus" }, ""),
+        // ★ 音声案内テキスト表示用
+        el("div", { class: "notes speech", id: "speechText" }, ""),
+    ]);
 	const band3 = el("div", { class: "band band3" }, [
 		el("div", { class: "badge", id: "badgeType" }, ""),
 	]);
@@ -541,11 +544,12 @@ function screenGuidance() {
 	]);
 	root.appendChild(modal);
 
-	const panel = modal.querySelector(".panel");
+    const panel = modal.querySelector(".panel");
 
-	root._band1 = band1;
-	root._notes = band2.querySelector("#notes");
-	root._badgeType = band3.querySelector("#badgeType");
+    root._band1      = band1;
+    root._gpsStatus  = band2.querySelector("#gpsStatus");   // ★ GPS 用
+    root._speechText = band2.querySelector("#speechText");  // ★ 音声用
+    root._badgeType  = band3.querySelector("#badgeType");
 	root._cellNo = band4.querySelector("#cellNo");
 	root._cellDest = band4.querySelector("#cellDest");
 	root._clock = band5.querySelector("#clock");
@@ -1039,21 +1043,22 @@ function startGuidance() {
 	if (navigator.geolocation) {
 		gpsTimer = setInterval(() => {
 			navigator.geolocation.getCurrentPosition(
-				onPos,
-				() => {
-					// ★ 位置情報が取得できない場合の表示
-					const root = document.getElementById("screen-guidance");
-					if (root && root._notes) {
-						root._notes.textContent = "位置情報が取得できません";
-					}
-				},
+                onPos,
+                () => {
+                    // ★ 位置情報が取得できない場合の表示（GPS用だけ）
+                    const root = document.getElementById("screen-guidance");
+                    if (root && root._gpsStatus) {
+                        root._gpsStatus.textContent = "位置情報が取得できません";
+                    }
+                },
+
 				{
 					enableHighAccuracy: true,
 					maximumAge: 0,
 					timeout: 5000,
 				},
 			);
-		}, 1000); // 1秒ごと
+		}, 1000);
 	} else {
 		alert("GPS使用不可");
 	}
@@ -1079,16 +1084,16 @@ function renderGuidance() {
 }
 
 function updateNotes(lat, lng, timeMs) {
-	const root = document.getElementById("screen-guidance");
-	if (!root || !root._notes) return;
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._gpsStatus) return;
 
-	const d = new Date(timeMs);
-	const hh = String(d.getHours()).padStart(2, "0");
-	const mm = String(d.getMinutes()).padStart(2, "0");
-	const ss = String(d.getSeconds()).padStart(2, "0");
+    const d = new Date(timeMs);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
 
-	root._notes.textContent =
-		`現在位置: ${lat.toFixed(5)}, ${lng.toFixed(5)} / 最終更新: ${hh}:${mm}:${ss}`;
+    root._gpsStatus.textContent =
+        `現在位置: ${lat.toFixed(5)}, ${lng.toFixed(5)} /  ${hh}:${mm}:${ss}`;
 }
 
 function nearestStation(lat, lng) {
