@@ -87,7 +87,7 @@ function parseTrainNo(trainNo) {
 			const destRight = row["Unnamed: 4"] || "";
 
 			// ★奇数→右側、偶数→左側
-			const dest = n % 2 === 0 ? destLeft : destRight;
+			const direction = n % 2 === 0 ? "上り" : "下り";
 
 			found = { type, dest };
 		}
@@ -135,6 +135,9 @@ function screenSettings() {
 		if (res) {
 			typeSel.value = res.type;
 			destSel.value = res.dest;
+
+			// ★ここが重要
+		    dirSel.value = res.direction;
 		} else {
 			alert("列番表に該当がありません。手動で選択してください。");
 		}
