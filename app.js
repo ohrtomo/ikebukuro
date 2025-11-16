@@ -212,7 +212,7 @@ function screenSettings() {
 	carsLabel2 = el(
 		"span",
 		{ id: "cars2Label" },
-		`${selectedCars}両（元の列車と同じ）`,
+		`${selectedCars}両`,
 	);
 
 	secondWrap.append(
