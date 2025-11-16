@@ -760,30 +760,53 @@ function buildPassStationList() {
 	state.runtime.passStations = new Set(pass);
 }
 
-let clockTimer = null,
-	gpsWatchId = null;
+let clockTimer = null;
+let gpsTimer = null;
 
 function startGuidance() {
 	state.runtime.started = true;
 	renderGuidance();
+
+	// 時計表示
 	clockTimer = setInterval(() => {
 		const d = new Date();
 		document.getElementById("screen-guidance")._clock.textContent =
 			`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 	}, 200);
 
+	// 1秒ごとに現在位置を取得
 	if (navigator.geolocation) {
-		gpsWatchId = navigator.geolocation.watchPosition(onPos, console.warn, {
-			enableHighAccuracy: true,
-			maximumAge: 1000,
-			timeout: 10000,
-		});
-	} else alert("GPS使用不可");
+		gpsTimer = setInterval(() => {
+			navigator.geolocation.getCurrentPosition(
+				onPos,
+				() => {
+					// ★ 位置情報が取得できない場合の表示
+					const root = document.getElementById("screen-guidance");
+					if (root && root._notes) {
+						root._notes.textContent = "位置情報が取得できません";
+					}
+				},
+				{
+					enableHighAccuracy: true,
+					maximumAge: 0,
+					timeout: 5000,
+				},
+			);
+		}, 1000); // 1秒ごと
+	} else {
+		alert("GPS使用不可");
+	}
 }
 
 function stopGuidance() {
-	if (clockTimer) clearInterval(clockTimer);
-	if (gpsWatchId) navigator.geolocation.clearWatch(gpsWatchId);
+	if (clockTimer) {
+		clearInterval(clockTimer);
+		clockTimer = null;
+	}
+	if (gpsTimer) {
+		clearInterval(gpsTimer);
+		gpsTimer = null;
+	}
 }
 
 function renderGuidance() {
