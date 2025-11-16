@@ -139,14 +139,14 @@ function screenSettings() {
 	const btnSearch = el("button", { class: "btn" }, "検索");
 
 	// ---- 上り/下り（方向ボタン） ----
-	let selectedDir = "上り"; // 初期値
+	let selectedDir = ""; // 初期値
 
 	const dirButtons = el("div", { class: "grid2" }, [
 		(() => {
 			const btn = el(
 				"button",
 				{
-					class: "btn secondary active-selected",
+					class: "btn secondary",
 					type: "button",
 					"data-dir": "上り",
 				},
@@ -184,19 +184,23 @@ function screenSettings() {
 
 	// 種別（前）
 	const typeSel = el("select", { id: "type" });
+	typeSel.appendChild(el("option", { value: "" }, ""));  // ★ 未選択用
+
 	state.datasets.types.forEach((t) => {
 		typeSel.appendChild(el("option", { value: t }, t));
 	});
 
 	// 行先（前）
 	const destSel = el("select", { id: "dest" });
+	destSel.appendChild(el("option", { value: "" }, ""));  // ★ 未選択用
+	
 	state.datasets.dests.forEach((d) => {
 		destSel.appendChild(el("option", { value: d }, d));
 	});
 
 	// ---- 両数（前）：10 / 8 / 7 / 6 / 4 / 2 ボタン選択 ----
 	const carsValues = [10, 8, 7, 6, 4, 2];
-	let selectedCars = 10; // 初期値
+	let selectedCars = null; // 初期値
 	let carsLabel2 = null; // 後半表示用ラベル（あとで代入）
 
 	const carsButtons = el(
@@ -242,11 +246,15 @@ function screenSettings() {
 	const trainNo2 = el("input", { type: "text" });
 
 	const typeSel2 = el("select");
-	state.datasets.types.forEach((t) => {
+	typeSel2.appendChild(el("option", { value: "" }, "")); // ★
+
+		state.datasets.types.forEach((t) => {
 		typeSel2.appendChild(el("option", { value: t }, t));
 	});
 
 	const destSel2 = el("select");
+	destSel2.appendChild(el("option", { value: "" }, ""));  // ★ 未選択用
+
 	state.datasets.dests.forEach((d) => {
 		destSel2.appendChild(el("option", { value: d }, d));
 	});
@@ -312,6 +320,34 @@ function screenSettings() {
 	// ---- 実行ボタン ----
 	const execBtn = el("button", { class: "btn" }, "実行");
 	execBtn.onclick = () => {
+
+    // --- ★ 必須チェック ---
+    if (!trainNo.value.trim()) {
+        alert("列車番号を入力してください。");
+        return;
+    }
+
+    if (!selectedDir) {
+        alert("上り/下りを選択してください。");
+        return;
+    }
+
+    if (!typeSel.value) {
+        alert("種別を選択してください。");
+        return;
+    }
+
+    if (!destSel.value) {
+        alert("行先を選択してください。");
+        return;
+    }
+
+    if (!selectedCars) {
+        alert("両数を選択してください。");
+        return;
+    }
+    // --- ★ 必須チェック ここまで ---
+	
 		// 前半設定
 		state.config.trainNo = trainNo.value.trim();
 		state.config.direction = selectedDir; // 方向はボタンで選んだ値

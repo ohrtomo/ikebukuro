@@ -101,5 +101,5 @@ input[type="text"], select, input[type="number"] {
 }
 
 .endchange-row {
-  margin-top: 16px;  /* 好きな値に調整してOK */
+  margin-top: 32px;  /* 好きな値に調整してOK */
 }
