@@ -37,6 +37,7 @@ const state = {
 		platformChanges: new Set(),
 		manualTrainNo: null,
 		manualTrainChangeAt: null,
+		lastStopDistance: null,   // ★ 直前の「最後に停車した駅」からの距離
 	},
 };
 
@@ -900,29 +901,52 @@ function maybeSpeak(ns) {
 	if (!isNonPassenger(t)) {
 		// ——— ここから先は従来ロジック＋文言の差し替え ———
 
-		if (state.runtime.lastStopStation && ns.distance > 100) {
-			const nextName = state.runtime.lastStopStation;
+	// ★ 停車駅から「100m以内 → 100mより外」へ出た瞬間に次駅案内
+	if (state.runtime.lastStopStation) {
+		const lastName = state.runtime.lastStopStation;
+		const lastInfo = state.datasets.stations[lastName];
 
-			// ★「次の駅」のダイヤ上の停車／通過
-			const baseNextStop = baseIsStop(nextName);
-			// ★現在設定上の停車／通過（passStations）
-			const isNextStop = !state.runtime.passStations.has(nextName);
+		if (lastInfo && state.runtime.lastPosition) {
+			// 現在位置から「最後に停車した駅」までの距離
+			const distFromLast = haversine(
+				lastInfo.lat,
+				lastInfo.lng,
+				state.runtime.lastPosition.lat,
+				state.runtime.lastPosition.lng,
+			);
 
-			const isExtraStopNext = !baseNextStop && isNextStop; // 本来通過→今は停車
-			const isExtraPassNext = baseNextStop && !isNextStop; // 本来停車→今は通過
+			// 前回記録していた距離（なければ今回の値で初期化）
+			const prevDist =
+				state.runtime.lastStopDistance != null
+					? state.runtime.lastStopDistance
+					: distFromLast;
 
-			if (isNextStop) {
-				// 停車する場合：「停車」 or 「臨時停車」
-				const word = isExtraStopNext ? "臨時停車" : "停車";
-				speakOnce("leave100_" + nextName, `次は${nextName}、${word}`);
-			} else if (isExtraPassNext) {
-				// 本来停車だったのに今は通過する場合だけ「臨時通過」と案内
-				speakOnce("leave100_" + nextName, `次は${nextName}、臨時通過`);
+			// ★100m以内だったものが、今回100mを超えたタイミングでだけ案内
+			if (prevDist <= 100 && distFromLast > 100) {
+				const nextName = lastName;
+
+				const baseNextStop = baseIsStop(nextName);
+				const isNextStop = !state.runtime.passStations.has(nextName);
+
+				const isExtraStopNext = !baseNextStop && isNextStop; // 本来通過→今は停車
+				const isExtraPassNext = baseNextStop && !isNextStop; // 本来停車→今は通過
+
+				if (isNextStop) {
+					const word = isExtraStopNext ? "臨時停車" : "停車";
+					speakOnce("leave100_" + nextName, `次は${nextName}、${word}`);
+				} else if (isExtraPassNext) {
+					speakOnce("leave100_" + nextName, `次は${nextName}、臨時通過`);
+				}
+
+				// 一度案内したらリセット
+				state.runtime.lastStopStation = null;
+				state.runtime.lastStopDistance = null;
+			} else {
+				// まだ100m以内 or まだ外に出ていない場合は距離だけ更新
+				state.runtime.lastStopDistance = distFromLast;
 			}
-			// （本来通過→今も通過の駅は案内しない）
-
-			state.runtime.lastStopStation = null;
 		}
+	}
 
 		// 300m 手前の案内
 		if (isStop && ns.distance <= 300) {
@@ -953,7 +977,12 @@ function maybeSpeak(ns) {
 					`${stopWord}、${state.config.cars}両、停止位置注意`,
 				);
 			}
-			if (ns.distance <= 50 && isStop) state.runtime.lastStopStation = ns.name;
+
+			// ★ 停車駅に「到着」した印として駅名と距離を記録
+			if (ns.distance <= 50 && isStop) {
+				state.runtime.lastStopStation = ns.name;
+				state.runtime.lastStopDistance = ns.distance; // おおむね 0〜50m
+			}
 		}
 
 		// 通過列車の案内（200m）
