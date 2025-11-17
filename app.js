@@ -61,13 +61,13 @@ async function loadData() {
 		fetch("./data/types.json").then((r) => r.json()),
 		fetch("./data/destinations.json").then((r) => r.json()),
 		fetch("./data/train_number_table.json").then((r) => r.json()),
-		fetch("./data/carIcons.json").then(r => r.json()), 
+		fetch("./data/car_icons.json").then((r) => r.json()),
 	]);
 	state.datasets.stations = stations;
 	state.datasets.types = types;
 	state.datasets.dests = dests;
 	state.datasets.trainTable = ttable;
-	state.datasets.carIcons = carIcons;  
+	state.datasets.carIcons    = carIcons;
 }
 
 // ==== Speech ====
