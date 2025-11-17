@@ -17,6 +17,7 @@ const state = {
 		types: [],
 		dests: [],
 		trainTable: [],
+		carIcons: {},
 	},
 	config: {
 		direction: "上り",
@@ -60,11 +61,13 @@ async function loadData() {
 		fetch("./data/types.json").then((r) => r.json()),
 		fetch("./data/destinations.json").then((r) => r.json()),
 		fetch("./data/train_number_table.json").then((r) => r.json()),
+		fetch("./data/car_icons.json").then((r) => r.json()),
 	]);
 	state.datasets.stations = stations;
 	state.datasets.types = types;
 	state.datasets.dests = dests;
 	state.datasets.trainTable = ttable;
+	state.datasets.carIcons   = carIcons || {};   
 }
 
 // ==== Speech ====
@@ -458,29 +461,40 @@ function typeClass(t) {
 }
 
 function band1RenderCars(elm, show, cars) {
-	elm.innerHTML = "";
+  elm.innerHTML = "";
 
-	const c =
-		cars === 10
-			? "d10"
-			: cars === 8
-				? "d8"
-				: cars === 6
-					? "d6"
-					: cars === 4
-						? "d4"
-						: cars === 7
-							? "d7"
-							: "d10";
+  // 非表示時は visibility だけ切り替え
+  if (!show) {
+    elm.style.visibility = "hidden";
+    return;
+  }
+  elm.style.visibility = "visible";
 
-	// 表示するかどうかで visibility を切り替え
-	const style = show ? "" : "visibility:hidden;";
+  const icons = state.datasets.carIcons || {};
+  const info =
+    icons[String(cars)]         // 10, 8, 7, … に一致
+    || icons.default            // なければデフォルト
+    || null;
 
-	const diamond = el("div", { class: `diamond ${c}`, style }, [
-		el("span", {}, cars === 7 ? "特" : `${cars}両`),
-	]);
+  // アイコン情報がなければ文字だけ出しておく
+  if (!info || !info.src) {
+    const fallback = el(
+      "div",
+      { class: "cars-wrapper" },
+      `${cars}両`
+    );
+    elm.appendChild(fallback);
+    return;
+  }
 
-	elm.appendChild(diamond);
+  const img = el("img", {
+    src: info.src,
+    alt: info.alt || `${cars}両`,
+    class: "cars-icon",
+  });
+
+  const wrapper = el("div", { class: "cars-wrapper" }, img);
+  elm.appendChild(wrapper);
 }
 
 function screenGuidance() {

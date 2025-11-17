@@ -111,3 +111,19 @@ input[type="text"], select, input[type="number"] {
 .endchange-row {
   margin-top: 32px;  /* 好きな値に調整してOK */
 }
+
+/* 両数表示エリアの中央寄せ用 */
+.cars-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 高さを固定したいなら band1 と揃えてもよい */
+  height: 100%;
+}
+
+/* アイコンそのもののサイズ */
+.cars-icon {
+  max-height: 80%;    /* band1 の高さに対して8割くらい */
+  max-width: 80%;
+  object-fit: contain;
+}
