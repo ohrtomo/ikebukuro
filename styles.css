@@ -122,8 +122,8 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* アイコンそのもののサイズ */
-.cars-icon {
-  max-height: 80%;    /* band1 の高さに対して8割くらい */
-  max-width: 80%;
-  object-fit: contain;
+.carIcon {
+    width: 80%;
+    max-width: 200px;
+    object-fit: contain;
 }

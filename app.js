@@ -61,13 +61,13 @@ async function loadData() {
 		fetch("./data/types.json").then((r) => r.json()),
 		fetch("./data/destinations.json").then((r) => r.json()),
 		fetch("./data/train_number_table.json").then((r) => r.json()),
-		fetch("./data/car_icons.json").then((r) => r.json()),
+		fetch("./data/carIcons.json").then(r => r.json()), 
 	]);
 	state.datasets.stations = stations;
 	state.datasets.types = types;
 	state.datasets.dests = dests;
 	state.datasets.trainTable = ttable;
-	state.datasets.carIcons   = carIcons || {};   
+	state.datasets.carIcons = carIcons;  
 }
 
 // ==== Speech ====
@@ -461,40 +461,21 @@ function typeClass(t) {
 }
 
 function band1RenderCars(elm, show, cars) {
-  elm.innerHTML = "";
+    elm.innerHTML = "";
+    if (!show) {
+        elm.style.visibility = "hidden";
+        return;
+    }
+    elm.style.visibility = "visible";
 
-  // 非表示時は visibility だけ切り替え
-  if (!show) {
-    elm.style.visibility = "hidden";
-    return;
-  }
-  elm.style.visibility = "visible";
+    const iconFile = state.datasets.carIcons[cars];
+    if (!iconFile) return;
 
-  const icons = state.datasets.carIcons || {};
-  const info =
-    icons[String(cars)]         // 10, 8, 7, … に一致
-    || icons.default            // なければデフォルト
-    || null;
+    const img = document.createElement("img");
+    img.src = "./data/car_icons/" + iconFile;
+    img.className = "carIcon";
 
-  // アイコン情報がなければ文字だけ出しておく
-  if (!info || !info.src) {
-    const fallback = el(
-      "div",
-      { class: "cars-wrapper" },
-      `${cars}両`
-    );
-    elm.appendChild(fallback);
-    return;
-  }
-
-  const img = el("img", {
-    src: info.src,
-    alt: info.alt || `${cars}両`,
-    class: "cars-icon",
-  });
-
-  const wrapper = el("div", { class: "cars-wrapper" }, img);
-  elm.appendChild(wrapper);
+    elm.appendChild(img);
 }
 
 function screenGuidance() {
