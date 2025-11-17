@@ -461,21 +461,31 @@ function typeClass(t) {
 }
 
 function band1RenderCars(elm, show, cars) {
-    elm.innerHTML = "";
-    if (!show) {
-        elm.style.visibility = "hidden";
-        return;
+    // ★ 中身を消さないようにする（innerHTML = "" をやめる）
+
+    // 1. 既存の img.carIcon を探す。なければ新しく作る
+    let img = elm.querySelector(".carIcon");
+    if (!img) {
+        img = document.createElement("img");
+        img.className = "carIcon";
+        elm.appendChild(img);
     }
-    elm.style.visibility = "visible";
 
+    // 2. 両数に対応するアイコンファイルを取得
     const iconFile = state.datasets.carIcons[cars];
-    if (!iconFile) return;
 
-    const img = document.createElement("img");
-    img.src = "./data/car_icons/" + iconFile;
-    img.className = "carIcon";
+    // ファイルが見つからない場合は強制的に非表示扱い
+    if (!iconFile) {
+        show = false;
+    } else {
+        img.src = "./data/car_icons/" + iconFile;
+    }
 
-    elm.appendChild(img);
+    // 3. 画像の visibility だけ切り替える
+    img.style.visibility = show ? "visible" : "hidden";
+
+    // （お好みで）バンド自体は常に表示
+    elm.style.visibility = "visible";
 }
 
 function screenGuidance() {
