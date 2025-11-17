@@ -26,7 +26,12 @@ const state = {
 		trainNo: "",
 		endChange: false,
 		second: { type: "", dest: "", cars: 10, trainNo: "" },
+
+        // ★ 音量（0.0〜1.0）: 初期値は最大
+        voiceVolume: 1.0,
+
 	},
+
 	runtime: {
 		started: false,
 		lastSpoken: {},
@@ -70,6 +75,10 @@ function speakOnce(key, text) {
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = "ja-JP";
 
+    // ★ 音量反映（0.0〜1.0）
+    const vol = state.config.voiceVolume;
+    utter.volume = typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
+
     // ★ Safari の女性声（Kyoko）を最優先で選ぶ
     let voices = speechSynthesis.getVoices();
 
@@ -81,7 +90,7 @@ function speakOnce(key, text) {
     }
 
     // ★ 「Kyoko」を含む女性声を優先選択
-    const femaleVoice = voices.find(v => 
+    const femaleVoice = voices.find(v =>
         v.lang.startsWith("ja") && /Kyoko/i.test(v.name)
     );
 
@@ -539,6 +548,7 @@ function screenGuidance() {
 				el("button", { class: "btn secondary", id: "m-dest" }, "行先変更"),
 				el("button", { class: "btn secondary", id: "m-type" }, "種別変更"),
 				el("button", { class: "btn secondary", id: "m-train" }, "列番変更"),
+				el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),// 音量設定
 			]),
 		]),
 	]);
@@ -586,6 +596,7 @@ function screenGuidance() {
 	modal.querySelector("#m-stop").onclick = () => openStopList();
 	modal.querySelector("#m-platform").onclick = () => openPlatformList();
 	modal.querySelector("#m-train").onclick = () => openTrainChange();
+	modal.querySelector("#m-volume").onclick = () => openVolumePanel();
 
 	return root;
 }
@@ -698,6 +709,80 @@ function openStopList() {
 
 	wrap.append(box, done);
 	panel.appendChild(wrap);
+}
+
+// 音量設定・テスト
+function openVolumePanel() {
+    const modal = document.getElementById("menuModal");
+    const panel = modal.querySelector(".panel");
+    const kind = "volume";
+
+    // 既に同じサブ画面が開いていればトグルで閉じる
+    const existing = panel.querySelector(
+        `.menu-subpanel[data-kind="${kind}"]`,
+    );
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    // 他のサブ画面は閉じる
+    panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+
+    // ★ 現在の音量（0〜100%）
+    const currentVol = Math.round(
+        (typeof state.config.voiceVolume === "number"
+            ? state.config.voiceVolume
+            : 1.0) * 100,
+    );
+
+    const slider = el("input", {
+        type: "range",
+        min: "0",
+        max: "100",
+        value: String(currentVol),
+        style: "width:100%;",
+    });
+
+    const label = el("span", {}, `${currentVol}%`);
+
+    slider.oninput = () => {
+        const v = Number(slider.value);
+        label.textContent = `${v}%`;
+        // 0〜1 に変換して保存
+        state.config.voiceVolume = Math.min(Math.max(v / 100, 0), 1);
+    };
+
+    const testBtn = el("button", { class: "btn" }, "テスト音声を再生");
+    testBtn.onclick = () => {
+        // ★ テストは毎回鳴らしたいのでキーをユニークにする
+        const key = "test_volume_" + Date.now();
+        speakOnce(key, "これは音量テストです。");
+    };
+
+    const wrap = el(
+        "div",
+        { class: "menu-subpanel", "data-kind": kind },
+        [
+            el("hr", { class: "sep" }),
+            el("h3", {}, "音量設定"),
+            el("div", { class: "row" }, [
+                el("label", {}, "音量"),
+            ]),
+            el("div", { class: "row" }, [
+                slider,
+            ]),
+            el("div", { class: "row" }, [
+                el("span", {}, "現在: "),
+                label,
+            ]),
+            el("div", { class: "row", style: "margin-top:8px;" }, [
+                testBtn,
+            ]),
+        ],
+    );
+
+    panel.appendChild(wrap);
 }
 
 // 着発線変更（枠だけ）
