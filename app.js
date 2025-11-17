@@ -47,6 +47,8 @@ const state = {
 		prevStationName: null,
 		prevStationDistance: null,
 		prevDistances: {},        // ★ 駅ごとの「前回距離」（300m判定用）
+		routeLocked: false,      // ルートを確定したかどうか
+		routeLine: null,         // "main" / "yuraku" / "toshima" / "sayama"
 		
 	},
 };
@@ -1085,10 +1087,64 @@ function findNextStopStationName(fromName) {
 	return null;
 }
 
+// ==== ルート確定ロジック ====
+// ns: nearestStation() の結果オブジェクト
+function updateRouteLock(ns) {
+	if (!ns) return;
+
+	// すでに確定済みなら何もしない
+	if (state.runtime.routeLocked && state.runtime.routeLine) return;
+
+	const dir = state.config.direction;      // "上り" / "下り"
+	const destCat = getDestCategory(state.config.dest); // "main" / "yuraku" / ...
+
+	// 1) 池袋線 下り：東長崎 を通過したら「本線」で確定
+	//    → ここから先、新桜台が近づいても有楽町線は無視したい
+	if (dir === "下り" && ns.name === "東長崎") {
+		state.runtime.routeLocked = true;
+		state.runtime.routeLine = "main";
+		return;
+	}
+
+	// 2) 練馬 付近でルート確定
+	if (ns.name === "練馬") {
+		let line = "main";
+
+		// 練馬から上りで有楽町線方面（小竹向原行き） → 有楽町線
+		if (dir === "上り" && destCat === "yuraku") {
+			line = "yuraku";
+		}
+		// 練馬から下りで豊島線方面（豊島園行き） → 豊島線
+		else if (dir === "下り" && destCat === "toshima") {
+			line = "toshima";
+		}
+		// それ以外 → 池袋線本線として扱う
+
+		state.runtime.routeLocked = true;
+		state.runtime.routeLine = line;
+		return;
+	}
+
+	// 3) 西所沢で狭山線 or 本線を確定（お好みで）
+	if (ns.name === "西所沢") {
+		if (dir === "下り" && destCat === "sayama") {
+			state.runtime.routeLocked = true;
+			state.runtime.routeLine = "sayama";
+		} else {
+			state.runtime.routeLocked = true;
+			state.runtime.routeLine = "main";
+		}
+		return;
+	}
+}
+
+
 let clockTimer = null;
 let gpsTimer = null;
 
 function startGuidance() {
+	state.runtime.routeLocked = false;
+	state.runtime.routeLine = null;
 	state.runtime.started = true;
 	renderGuidance();
 
@@ -1159,8 +1215,23 @@ function updateNotes(lat, lng, timeMs) {
 function nearestStation(lat, lng) {
 	let best = null,
 		bestD = 1e12;
+
+	// ★ 確定済みルート
+	const lockedLine = state.runtime.routeLine;
+
 	for (const [name, info] of Object.entries(state.datasets.stations)) {
 		if (info.lat == null || info.lng == null) continue;
+
+		// ★ ルート確定済みなら、別路線の駅は無視
+		if (lockedLine) {
+			const line = getLineForStation(name); // "main" / "yuraku" / ...
+
+			// line が判定できて、かつ確定ルートと異なる場合はスキップ
+			if (line && line !== lockedLine) {
+				continue;
+			}
+		}
+
 		const d = haversine(lat, lng, info.lat, info.lng);
 		if (d < bestD) {
 			bestD = d;
@@ -1204,6 +1275,10 @@ function isNonPassenger(t) {
 
 function maybeSpeak(ns) {
 	if (!ns) return;
+
+	// ★ ここでルート確定ロジックをまわす
+	updateRouteLock(ns);
+
 	const t = state.config.type;
 	const d = state.runtime.speedKmh;
 	// ★ 前回の最近傍駅と距離（300mクロス判定用）
