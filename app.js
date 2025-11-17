@@ -106,6 +106,15 @@ function speakOnce(key, text) {
 
     speechSynthesis.speak(utter);
 
+	// ★ 追加で同じ音声を少し遅延して重ねる（音量実質UP）
+    setTimeout(() => {
+        const u2 = new SpeechSynthesisUtterance(text);
+        u2.lang = utter.lang;
+        u2.volume = utter.volume;  // 同じ音量
+        if (utter.voice) u2.voice = utter.voice;
+       speechSynthesis.speak(u2);
+    }, 120);
+
     // ★ 読み上げ内容を「音声用」表示欄に表示（次の読み上げまで残す）
     const root = document.getElementById("screen-guidance");
     if (root && root._speechText) {
