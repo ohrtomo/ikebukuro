@@ -79,41 +79,7 @@ function speakOnce(key, text) {
     const vol = state.config.voiceVolume;
     utter.volume = typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
 
-    // ★ Safari の女性声（Kyoko）を最優先で選ぶ
-    let voices = speechSynthesis.getVoices();
-
-    // Safari は非同期ロードの場合があるため、空なら待つ
-    if (voices.length === 0) {
-        // 200ms後に再試行
-        setTimeout(() => speakOnce(key, text), 200);
-        return;
-    }
-
-    // ★ 「Kyoko」を含む女性声を優先選択
-    const femaleVoice = voices.find(v =>
-        v.lang.startsWith("ja") && /Kyoko/i.test(v.name)
-    );
-
-    if (femaleVoice) {
-        utter.voice = femaleVoice;
-    } else {
-        // 代替として、女性らしい声を探す
-        const fallback = voices.find(
-            v => v.lang.startsWith("ja") && /Female|Girl|Woman/i.test(v.name)
-        );
-        if (fallback) utter.voice = fallback;
-    }
-
     speechSynthesis.speak(utter);
-
-	// ★ 追加で同じ音声を少し遅延して重ねる（音量実質UP）
-    setTimeout(() => {
-        const u2 = new SpeechSynthesisUtterance(text);
-        u2.lang = utter.lang;
-        u2.volume = utter.volume;  // 同じ音量
-        if (utter.voice) u2.voice = utter.voice;
-       speechSynthesis.speak(u2);
-    }, 120);
 
     // ★ 読み上げ内容を「音声用」表示欄に表示（次の読み上げまで残す）
     const root = document.getElementById("screen-guidance");
