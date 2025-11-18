@@ -1247,31 +1247,58 @@ function nearestStation(lat, lng) {
 }
 
 function onPos(pos) {
-	const { latitude, longitude } = pos.coords;
-	const now = Date.now();
-	if (state.runtime.lastPosition) {
-		const dt = (now - state.runtime.lastPosition.time) / 1000;
-		const dist = haversine(
-			state.runtime.lastPosition.lat,
-			state.runtime.lastPosition.lng,
-			latitude,
-			longitude,
-		);
-		state.runtime.speedKmh = (dist / dt) * 3.6;
-	}
-	state.runtime.lastPosition = { lat: latitude, lng: longitude, time: now };
+    const { latitude, longitude } = pos.coords;
 
-	updateNotes(latitude, longitude, now);
+    const now = Date.now();
+    const gpsTime = pos.timestamp;          // ★ 位置情報が取得された本当の時刻(ms)
+    const ageMs = now - gpsTime;            // ★ どれだけ古いか
 
-	const ns = nearestStation(latitude, longitude);
-	maybeSpeak(ns);
-	const show =
-		ns && ns.distance <= 300 && !state.runtime.passStations.has(ns.name);
-	band1RenderCars(
-		document.getElementById("screen-guidance")._band1,
-		show,
-		state.config.cars,
-	);
+    const root = document.getElementById("screen-guidance");
+
+    // ★ 5秒以上古いデータは無視する
+    if (ageMs > 5000) {
+        if (root && root._gpsStatus) {
+            root._gpsStatus.textContent =
+                "位置情報が古いため無視しました";  // ← お知らせ欄に表示
+        }
+        return; // ★ この更新は使わない
+    }
+
+    // ★ ここから先は「新しい」データのみ使用
+    if (state.runtime.lastPosition) {
+        const dt = (gpsTime - state.runtime.lastPosition.time) / 1000;
+        const dist = haversine(
+            state.runtime.lastPosition.lat,
+            state.runtime.lastPosition.lng,
+            latitude,
+            longitude
+        );
+        state.runtime.speedKmh = (dist / dt) * 3.6;
+    }
+
+    state.runtime.lastPosition = {
+        lat: latitude,
+        lng: longitude,
+        time: gpsTime   // ★ 最新の本当の時刻
+    };
+
+    // ★ 本当の GPS 時刻で表示
+    updateNotes(latitude, longitude, gpsTime);
+
+    // ★ 最寄り駅判定
+    const ns = nearestStation(latitude, longitude);
+
+    // ★ 駅案内ロジック
+    maybeSpeak(ns);
+
+    // ★ 車両アイコン（既存コード）
+    const show =
+        ns && ns.distance <= 300 && !state.runtime.passStations.has(ns.name);
+    band1RenderCars(
+        document.getElementById("screen-guidance")._band1,
+        show,
+        state.config.cars
+    );
 }
 
 function isNonPassenger(t) {
