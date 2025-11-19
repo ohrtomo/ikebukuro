@@ -1,0 +1,129 @@
+/* Reset */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #111; color: #fff; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; }
+button, input, select { font: inherit; }
+
+/* Common */
+.container { padding: 12px; }
+.row { margin-bottom: 12px; }
+label { display: block; margin-bottom: 6px; color: #ddd; }
+input[type="text"], select, input[type="number"] {
+  width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff;
+}
+
+.btn { padding: 12px 16px; border-radius: 10px; border: none; background: #2c7be5; color: white; font-weight: 700; }
+.btn.secondary { background: #444; }
+.btn.warn { background: #c92a2a; }
+.btn:active { opacity: .85; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.screen { display: none; }
+.screen.active { display: block; }
+
+/* Guidance layout: 5 bands (2:2:2:1:1) */
+.guidance {
+  display: grid;
+  grid-template-rows: 3fr 3fr 2fr 1fr 1fr;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+.band { display: flex; align-items: center; justify-content: center; padding: 8px; }
+
+/* --- Band1 (両数) --- */
+.diamond {
+  /* ★ ひし形の大きさ：全体を約 3/4 に縮小 */
+  width:  min(30vw, 180px);
+  height: min(30vw, 180px);
+
+  transform: rotate(45deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 16px solid transparent;
+
+  /* ★ 下のお知らせ欄との間に少し余白を入れる */
+  margin-bottom: 16px;
+}
+
+.diamond span {
+  /* ★ フォントサイズを 2倍相当へ */
+  font-size: clamp(32px, 12vw, 80px);
+  transform: rotate(-45deg);
+  font-weight: bold;
+}
+
+.d10 { background: #ff7f00; color: #000; }
+.d8  { background: #ffd000; border-color: #000; color: #000; background-clip: padding-box; }
+.d6  { background: #ff8c3a; border-color: #000; color: #000; }
+.d4  { background: #0057b8; border-color: #fff; color: #fff; }
+.d7  { background: #c1121f; color: #fff; }
+
+/* Band2 */
+.band2 { background: #111; color: #fff; padding: 8px; }
+.notes { font-size: clamp(14px, 4.5vw, 22px); text-align: center; }
+
+/* Band3 種別 */
+.badge {
+  padding: 8px 16px; border-radius: 12px; font-size: clamp(18px, 6vw, 40px);
+  font-weight: 900; border: 4px solid transparent;
+}
+
+/* 種別配色 */
+.j-tokkyu { background: #d90429; color: #fff; }
+.j-storea, .j-storb_down, .j-storb_up { background: #fff; color: #000; border-color: #9acd32; }
+.j-kaisokukyuko, .j-chikakaiku { background: #800080; color: #fff; }
+.j-kyuko { background: #ff7f00; color: #fff; }
+.j-tsukin_kyuko { background: #ffae00; color: #000; }
+.j-kaisoku { background: #87ceeb; color: #000; }
+.j-junkyu { background: #1f7a1f; color: #fff; }
+.j-tsukin_junkyu { background: #0057b8; color: #fff; }
+.j-kukan_junkyu { background: #9acd32; color: #000; }
+.j-kakutei { background: #808080; color: #fff; }
+.j-kaiso, .j-rinji-a { background: #fff; color: #d90429; border-color: #d90429; }
+
+/* Band4 列番/行先 */
+.band4 { background: #000; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.band4 .cell { background: #000; color: #fff; display: flex; align-items: center; justify-content: center; font-size: clamp(20px, 5.5vw, 36px); font-weight: 800; border: 2px solid #333; padding: 6px; }
+
+/* Band5 時計とメニュー */
+.band5 { background: #000; display: grid; grid-template-columns: 1fr 5fr; align-items: stretch; }
+.menu-btn { display:flex; align-items:center; justify-content:center; font-weight:900; border-right: 2px solid #333; }
+.clock { display:flex; align-items:center; justify-content:center; font-size: clamp(18px, 5vw, 32px); font-weight:800; }
+
+/* Menu modal */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; padding: 18px; }
+.modal.active { display: flex; }
+.panel { background: #1a1a1a; color: #fff; border-radius: 16px; width: min(720px, 96vw); max-height: 84vh; overflow: auto; padding: 16px; border: 1px solid #333; }
+.list { display: grid; gap: 8px; }
+.sep { border: none; border-top: 1px solid #333; margin: 16px 0; }
+.small { font-size: 12px; color: #aaa; }
+
+/* Start screen */
+.centered { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+
+.active-selected {
+  background: #2c7be5 !important;
+  color: #fff !important;
+}
+
+.endchange-row {
+  margin-top: 32px;  /* 好きな値に調整してOK */
+}
+
+/* 両数表示エリアの中央寄せ用 */
+.cars-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 高さを固定したいなら band1 と揃えてもよい */
+  height: 100%;
+}
+
+/* アイコンそのもののサイズ */
+.carIcon {
+    width: 80%;
+    max-width: 200px;
+    object-fit: contain;
+}
