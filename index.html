@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>西武線リアルタイム列車位置（全路線・種別色分け・ES5版）</title>
+<title>西武線リアルタイム列車位置（全路線・種別色分け＋時刻表）</title>
 <style>
   body { font-family: sans-serif; margin: 20px; }
   #controls { margin-bottom: 10px; }
@@ -15,18 +15,45 @@
     white-space:pre-wrap;
     max-height:180px;
     overflow:auto;
+    margin-bottom:10px;
+  }
+  #timetablePanel {
+    border:1px solid #888;
+    padding:8px;
+    max-height:260px;
+    overflow:auto;
+    font-size: 13px;
+  }
+  #timetablePanel h3 {
+    margin: 0 0 4px 0;
+    font-size: 14px;
+  }
+  #timetablePanel table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  #timetablePanel th,
+  #timetablePanel td {
+    border:1px solid #ccc;
+    padding:2px 4px;
+    text-align:left;
+    font-size:12px;
   }
 </style>
 </head>
 <body>
-<h2>西武線リアルタイム列車位置（全路線・種別色分け・ES5版）</h2>
+<h2>西武線リアルタイム列車位置（全路線・種別色分け＋時刻表）</h2>
 <div id="controls">
   路線：<select id="lineSelect"></select>
 </div>
 <canvas id="diagram" width="1200" height="400"></canvas>
 <pre id="log"></pre>
+<div id="timetablePanel">
+  <h3>時刻表（列車をクリックすると表示）</h3>
+  <div id="timetableContent">まだ列車が選択されていません。</div>
+</div>
 
-<!-- ★同じフォルダに routes_es5.js を置いてください -->
+<!-- 同じフォルダに routes_es5.js を置いてください -->
 <script src="routes_es5.js"></script>
 
 <script>
@@ -36,6 +63,11 @@ function log(msg){
   var time = new Date().toLocaleTimeString();
   el.textContent += "[" + time + "] " + msg + "\n";
 }
+
+// クリック判定用に、直近の描画での列車マーカー情報を保持
+var currentRoute = null;
+var currentStations = null;
+var currentTrainMarkers = []; // {x, y, train}
 
 // すべての処理を onload 内で実行（routes 読み込み前参照を防ぐ）
 window.onload = function(){
@@ -149,6 +181,137 @@ window.onload = function(){
     xhr.send(null);
   }
 
+  // ====== （仮）駅別発車情報 API 呼び出し ======
+  // ★注意★:
+  //   実際のエンドポイント URL / パラメータ / レスポンス構造は
+  //   社内で確認し、この関数内を書き換えてください。
+  //   ここでは "departures" 配列の中に trainNo, stationId, stationName,
+  //   arrivalTime, departureTime, delay があることを仮定しています。
+  function fetchDeparturesOfStation(stationId, callback) {
+    var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/" +
+              encodeURIComponent(stationId) + "/departures";
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", url, true);
+    xhr.onreadystatechange = function(){
+      if (xhr.readyState === 4) {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var json = JSON.parse(xhr.responseText);
+            var deps = json.departures || json.list || [];
+            callback(deps);
+          } catch(e) {
+            log("駅別発車情報 JSON パースエラー: " + e.message);
+            callback([]);
+          }
+        } else {
+          log("駅別発車情報 APIエラー: HTTP " + xhr.status + " stationId=" + stationId);
+          callback([]);
+        }
+      }
+    };
+    xhr.onerror = function(e){
+      log("駅別発車情報 XHRエラー: " + (e && e.message ? e.message : "不明"));
+      callback([]);
+    };
+    xhr.send(null);
+  }
+
+  // ====== 列車番号から時刻表を構成 ======
+  // route: 現在選択中路線
+  // train: クリックされた列車オブジェクト
+  function fetchTimetableByTrain(route, train, callback) {
+    if (!route || !route.stations || !route.stations.length) {
+      callback([]);
+      return;
+    }
+    var stations = route.stations;
+    var trainNo = train.trainNo;
+    var results = [];
+    var idx = 0;
+
+    // 駅を順番に1駅ずつ問い合わせる（簡易実装）
+    function next() {
+      if (idx >= stations.length) {
+        callback(results);
+        return;
+      }
+      var st = stations[idx++];
+      fetchDeparturesOfStation(st.id, function(deps){
+        // ★ここもレスポンス仕様に合わせて調整してください
+        for (var i = 0; i < deps.length; i++) {
+          var d = deps[i];
+          if (d.trainNo === trainNo) {
+            // 時刻のキー名は仮置き
+            var arr = d.arrivalTime  || d.arrival || null;
+            var dep = d.departureTime || d.departure || null;
+            var delay = d.delay || d.late || null;
+            results.push({
+              stationId: st.id,
+              stationName: st.name || d.stationName || "",
+              arrivalTime: arr,
+              departureTime: dep,
+              delay: delay
+            });
+          }
+        }
+        // 次の駅へ
+        next();
+      });
+    }
+
+    log("列車 " + trainNo + " の時刻表取得を開始します（駅ごとに発車情報を参照）");
+    next();
+  }
+
+  // ====== 時刻表パネルの描画 ======
+  function renderTimetable(route, train, stops) {
+    var container = document.getElementById("timetableContent");
+    if (!train) {
+      container.textContent = "列車が選択されていません。";
+      return;
+    }
+
+    if (!stops || !stops.length) {
+      container.textContent = "時刻表データが取得できませんでした（API仕様の確認が必要です）。";
+      return;
+    }
+
+    // route.stations の順序で並ぶように sort
+    var order = {};
+    if (route && route.stations) {
+      for (var i = 0; i < route.stations.length; i++) {
+        order[route.stations[i].id] = i;
+      }
+    }
+    stops.sort(function(a,b){
+      var ia = typeof order[a.stationId] === "number" ? order[a.stationId] : 9999;
+      var ib = typeof order[b.stationId] === "number" ? order[b.stationId] : 9999;
+      return ia - ib;
+    });
+
+    var html = "";
+    html += "<div>";
+    html += "列車番号: <strong>" + train.trainNo + "</strong>　";
+    html += "種別: " + (train.trainTypeName || train.trainType || "") + "　";
+    html += "行先: " + (train.endStationName || "") + "</div>";
+    html += "<table>";
+    html += "<thead><tr><th>駅名</th><th>着時刻</th><th>発時刻</th><th>遅延</th></tr></thead><tbody>";
+
+    for (var j = 0; j < stops.length; j++) {
+      var s = stops[j];
+      html += "<tr>";
+      html += "<td>" + (s.stationName || "") + "</td>";
+      html += "<td>" + (s.arrivalTime   || "") + "</td>";
+      html += "<td>" + (s.departureTime || "") + "</td>";
+      html += "<td>" + (s.delay != null ? s.delay : "") + "</td>";
+      html += "</tr>";
+    }
+
+    html += "</tbody></table>";
+    container.innerHTML = html;
+  }
+
   // ====== メイン更新 ======
   function update(){
     if (!routes || !routes.length) {
@@ -168,6 +331,10 @@ window.onload = function(){
       route = routes[0];
     }
     var stList = route.stations;
+    currentRoute = route;
+    currentStations = stList;
+    currentTrainMarkers = [];
+
     adjustCanvasSize(stList);
     drawLine(stList);
 
@@ -189,6 +356,13 @@ window.onload = function(){
         var y = interpolate(from.y, to.y, t);
         var typeName = tr.trainTypeName || tr.trainType || "";
         drawTrain(x, y, tr.trainNo, typeName);
+
+        // クリック検出用に記録
+        currentTrainMarkers.push({
+          x: x,
+          y: y - 25, // 丸の中心
+          train: tr
+        });
       }
     });
   }
@@ -208,9 +382,50 @@ window.onload = function(){
     sel.onchange = update;
   }
 
+  // ====== 列車クリック検出 ======
+  function findTrainAtPosition(px, py) {
+    var hit = null;
+    var minDist2 = 9999999;
+    var threshold = 15; // ピクセル
+    var th2 = threshold * threshold;
+
+    for (var i = 0; i < currentTrainMarkers.length; i++) {
+      var m = currentTrainMarkers[i];
+      var dx = px - m.x;
+      var dy = py - m.y;
+      var d2 = dx*dx + dy*dy;
+      if (d2 <= th2 && d2 < minDist2) {
+        minDist2 = d2;
+        hit = m;
+      }
+    }
+    return hit;
+  }
+
+  canvas.addEventListener("click", function(evt){
+    var rect = canvas.getBoundingClientRect();
+    var x = evt.clientX - rect.left;
+    var y = evt.clientY - rect.top;
+
+    var marker = findTrainAtPosition(x, y);
+    if (!marker) {
+      log("クリック位置付近に列車が見つかりませんでした。");
+      return;
+    }
+
+    var tr = marker.train;
+    log("列車クリック: trainNo=" + tr.trainNo + " 種別=" +
+        (tr.trainTypeName || tr.trainType || "") + " 行先=" + (tr.endStationName || ""));
+
+    // 時刻表取得
+    fetchTimetableByTrain(currentRoute, tr, function(stops){
+      renderTimetable(currentRoute, tr, stops);
+    });
+  });
+
   initLineSelect();
   update();
-  setInterval(update, 10000); // 10秒ごと
+  setInterval(update, 10000); // 10秒ごとに位置更新
 
 }; // window.onload 終了
 
