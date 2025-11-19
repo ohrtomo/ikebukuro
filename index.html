@@ -213,6 +213,9 @@ window.onload = function(){
               deps = json;
             } else if (json.departures && Array.isArray(json.departures)) {
               deps = json.departures;
+            } else if (json.departure && Array.isArray(json.departure)) {
+                // ★ここを追加（単数形）
+                deps = json.departure;              
             } else if (json.list && Array.isArray(json.list)) {
               deps = json.list;
             } else if (json.data && Array.isArray(json.data)) {
