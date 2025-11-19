@@ -531,6 +531,7 @@ function screenGuidance() {
 				el("button", { class: "btn secondary", id: "m-type" }, "種別変更"),
 				el("button", { class: "btn secondary", id: "m-train" }, "列番変更"),
 				el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),// 音量設定
+				el("button", { class: "btn secondary", id: "m-close" }, "とじる"),
 			]),
 		]),
 	]);
@@ -566,6 +567,13 @@ function screenGuidance() {
 		document.getElementById("screen-guidance").classList.remove("active");
 		document.getElementById("screen-settings").classList.add("active");
 	};
+
+    // ★ 「とじる」ボタン：メニューだけ閉じる（案内は継続）
+    modal.querySelector("#m-close").onclick = () => {
+        modal.classList.remove("active");
+        // 開いているサブ画面（行先変更・種別変更など）も全部閉じる
+        panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    };
 
 	modal.querySelector("#m-dest").onclick = () =>
 		openList("行先変更", state.datasets.dests, (v) => {
