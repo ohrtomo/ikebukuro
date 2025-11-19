@@ -150,73 +150,105 @@ window.onload = function(){
   }
 
   // ====== 列車情報取得（本番 API 直叩き） ======
-  function fetchDeparturesOfStation(stationId, callback) {
-      var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/" +
-                encodeURIComponent(stationId) + "/departures";
-  
-      var xhr = new XMLHttpRequest();
-      xhr.open("GET", url, true);
-  
-      xhr.onreadystatechange = function() {
-          if (xhr.readyState === 4) {
-  
-              // ★ HTTP ステータスをログに出す
-              log("駅別発車情報 HTTP status=" + xhr.status +
-                  " stationId=" + stationId);
-  
-              if (xhr.status >= 200 && xhr.status < 300) {
-                  try {
-                      var text = xhr.responseText || "";
-  
-                      // ★ JSON の先頭200文字だけログに出す
-                      log("駅別発車情報レスポンス(一部) stationId=" + stationId + " : " +
-                          text.substr(0, 200).replace(/\s+/g, " ") +
-                          (text.length > 200 ? "..." : ""));
-  
-                      var json = JSON.parse(text);
-                      var deps = [];
-  
-                      // ★あり得そうなキーを全部チェック
-                      if (Array.isArray(json)) {
-                          deps = json;
-                      } else if (json.departures && Array.isArray(json.departures)) {
-                          deps = json.departures;
-                      } else if (json.list && Array.isArray(json.list)) {
-                          deps = json.list;
-                      } else if (json.data && Array.isArray(json.data)) {
-                          deps = json.data;
-                      }
-  
-                      // ★件数と1件目のキーをログ
-                      if (deps.length > 0) {
-                          log("駅別発車情報件数=" + deps.length +
-                              " stationId=" + stationId +
-                              " 先頭要素キー=" + Object.keys(deps[0]).join(","));
-                      } else {
-                          log("駅別発車情報: 配列が空、または想定と異なる構造 stationId=" + stationId);
-                      }
-  
-                      callback(deps);
-                  } catch (e) {
-                      log("駅別発車情報 JSON パースエラー: " + e.message);
-                      callback([]);
-                  }
-              } else {
-                  log("駅別発車情報 APIエラー: HTTP " + xhr.status +
-                      " stationId=" + stationId);
-                  callback([]);
-              }
+  function fetchTrains(lineId, callback) {
+    var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=" + encodeURIComponent(lineId);
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", url, true);
+    xhr.onreadystatechange = function(){
+      if (xhr.readyState === 4) {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var json = JSON.parse(xhr.responseText);
+            var trains = json.train || [];
+            if (json.code && json.code !== "0000" && !trains.length) {
+              log("API応答コード: " + json.code + " " + (json.message || ""));
+            }
+            callback(trains);
+          } catch(e) {
+            log("JSONパースエラー: " + e.message);
+            callback([]);
           }
-      };
+        } else {
+          log("APIエラー: HTTP " + xhr.status);
+          callback([]);
+        }
+      }
+    };
+    xhr.onerror = function(e){
+      log("XHRエラー: " + (e && e.message ? e.message : "不明") + "（CORS制限の可能性あり）");
+      callback([]);
+    };
+    xhr.send(null);
+  }
 
-      xhr.onerror = function(e) {
-          log("駅別発車情報 XHRエラー: " +
-              (e && e.message ? e.message : "不明") +
+  // ====== （デバッグ付き）駅別発車情報 API 呼び出し ======
+  function fetchDeparturesOfStation(stationId, callback) {
+    var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/" +
+              encodeURIComponent(stationId) + "/departures";
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", url, true);
+
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState === 4) {
+
+        // ★ HTTP ステータスをログに出す
+        log("駅別発車情報 HTTP status=" + xhr.status +
+            " stationId=" + stationId);
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var text = xhr.responseText || "";
+
+            // ★ JSON の先頭200文字だけログに出す
+            log("駅別発車情報レスポンス(一部) stationId=" + stationId + " : " +
+                text.substr(0, 200).replace(/\s+/g, " ") +
+                (text.length > 200 ? "..." : ""));
+
+            var json = JSON.parse(text);
+            var deps = [];
+
+            // ★あり得そうなキーを全部チェック
+            if (Array.isArray(json)) {
+              deps = json;
+            } else if (json.departures && Array.isArray(json.departures)) {
+              deps = json.departures;
+            } else if (json.list && Array.isArray(json.list)) {
+              deps = json.list;
+            } else if (json.data && Array.isArray(json.data)) {
+              deps = json.data;
+            }
+
+            // ★件数と1件目のキーをログ
+            if (deps.length > 0) {
+              log("駅別発車情報件数=" + deps.length +
+                  " stationId=" + stationId +
+                  " 先頭要素キー=" + Object.keys(deps[0]).join(","));
+            } else {
+              log("駅別発車情報: 配列が空、または想定と異なる構造 stationId=" + stationId);
+            }
+
+            callback(deps);
+          } catch (e) {
+            log("駅別発車情報 JSON パースエラー: " + e.message);
+            callback([]);
+          }
+        } else {
+          log("駅別発車情報 APIエラー: HTTP " + xhr.status +
               " stationId=" + stationId);
           callback([]);
-      };
+        }
+      }
+    };
 
-      xhr.send(null);
+    xhr.onerror = function(e) {
+      log("駅別発車情報 XHRエラー: " +
+          (e && e.message ? e.message : "不明") +
+          " stationId=" + stationId);
+      callback([]);
+    };
+
+    xhr.send(null);
   }
 
   // ====== （仮）駅別発車情報 API 呼び出し ======
