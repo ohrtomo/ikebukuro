@@ -6,7 +6,8 @@
 <style>
 body { font-family: sans-serif; margin: 20px; }
 #controls { margin-bottom: 10px; }
-#diagram { border:1px solid #444; }
+#diagram { border:1px solid #444; display:block; margin-bottom:10px; }
+#log { font-size: 12px; background:#f5f5f5; padding:6px; border:1px solid #ccc; white-space:pre-wrap; max-height:180px; overflow:auto; }
 </style>
 </head>
 <body>
@@ -15,10 +16,25 @@ body { font-family: sans-serif; margin: 20px; }
 路線：<select id="lineSelect"></select>
 </div>
 <canvas id="diagram" width="1400" height="500"></canvas>
+<pre id="log"></pre>
 
 
+<!-- 同じフォルダに routes.js を置いてください -->
 <script src="routes.js"></script>
 <script>
+// ====== 簡易ログ ======
+function log(msg){
+const el = document.getElementById('log');
+const time = new Date().toLocaleTimeString();
+el.textContent += `[${time}] ${msg}\n`;
+}
+
+
+if (typeof routes === 'undefined') {
+log('エラー: routes.js が読み込めていません。index.html と同じフォルダに routes.js を置いてください。');
+}
+
+
 // ====== 種別色マップ ======
 const TRAIN_TYPE_COLORS = {
 "特急": "#e6002d",
@@ -39,12 +55,14 @@ const ctx = canvas.getContext("2d");
 
 
 function adjustCanvasSize(stList) {
+if (!stList || !stList.length) return;
 const maxX = Math.max(...stList.map(s => s.x));
-canvas.width = maxX + 200;
+canvas.width = Math.max(800, maxX + 100);
 }
 
 
 function drawLine(stList) {
+if (!stList || !stList.length) return;
 ctx.clearRect(0,0,canvas.width,canvas.height);
 ctx.strokeStyle = "#000";
 ctx.lineWidth = 4;
@@ -67,31 +85,7 @@ ctx.fillText(s.name, s.x - 20, s.y + 25);
 
 function drawTrain(x, y, label, typeName) {
 const color = TRAIN_TYPE_COLORS[typeName] || "#000";
-
-
 ctx.fillStyle = color;
 ctx.beginPath();
 ctx.arc(x, y - 25, 12, 0, Math.PI*2);
 ctx.fill();
-
-
-ctx.fillStyle = "#000";
-ctx.font = "12px sans-serif";
-ctx.fillText(label, x - 10, y - 35);
-}
-
-
-function interpolate(a,b,t){ return a + (b-a)*t; }
-function findStation(stList, id){ return stList.find(s=>s.id===id); }
-
-
-async function fetchTrains(lineId) {
-const url = `https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=${lineId}`;
-const res = await fetch(url);
-const json = await res.json();
-return json.train || [];
-}
-
-
-async function update() {
-const lineId = document.getElementById("lineSelect").value;
