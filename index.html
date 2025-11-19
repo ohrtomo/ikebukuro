@@ -280,7 +280,7 @@ window.onload = function(){
 
     xhr.send(null);
   }
-  
+
   // ====== 列車番号から時刻表を構成（デバッグ付き） ======
   function fetchTimetableByTrain(route, train, callback) {
 
@@ -319,9 +319,11 @@ window.onload = function(){
               d.no ||
               null;
 
-          if (dTrainNo === trainNo) {
+          // 比較は文字列同士に揃える
+          var targetTrainNo = String(trainNo || "");
+          var candTrainNo   = (dTrainNo != null) ? String(dTrainNo) : null;
 
-            // 到着・発車時刻らしきキーを複数候補でチェック
+          if (candTrainNo === targetTrainNo) {
             var arr =
                 d.arrivalTime ||
                 d.arrival ||
