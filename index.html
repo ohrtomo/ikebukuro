@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>西武線リアルタイム列車位置（テスト版・種別色分け）</title>
+<title>西武線リアルタイム列車位置（全路線・種別色分け・ES5版）</title>
 <style>
   body { font-family: sans-serif; margin: 20px; }
   #controls { margin-bottom: 10px; }
@@ -19,203 +19,201 @@
 </style>
 </head>
 <body>
-<h2>西武線リアルタイム列車位置（テスト版・種別色分け）</h2>
+<h2>西武線リアルタイム列車位置（全路線・種別色分け・ES5版）</h2>
 <div id="controls">
   路線：<select id="lineSelect"></select>
 </div>
 <canvas id="diagram" width="1200" height="400"></canvas>
 <pre id="log"></pre>
 
+<!-- ★同じフォルダに routes_es5.js を置いてください -->
+<script src="routes_es5.js"></script>
+
 <script>
-// ====== 簡易ログ ======
+// ==================== 共通ユーティリティ ====================
 function log(msg){
   var el = document.getElementById('log');
   var time = new Date().toLocaleTimeString();
   el.textContent += "[" + time + "] " + msg + "\n";
 }
 
-// ====== 簡易 routes 定義（池袋線の一部だけ・テスト用） ======
-var routes = [
-  {
-    id: "L001",
-    name: "池袋線（簡略）",
-    stations: [
-      { id: "S0100IK", name: "池袋",       x:  50, y: 200 },
-      { id: "S0101SC", name: "椎名町",     x: 150, y: 200 },
-      { id: "S0102HI", name: "東長崎",     x: 250, y: 200 },
-      { id: "S0103EE", name: "江古田",     x: 350, y: 200 },
-      { id: "S0104SD", name: "桜台",       x: 450, y: 200 },
-      { id: "S0105NE", name: "練馬",       x: 550, y: 200 },
-      { id: "S0110HZ", name: "練馬高野台", x: 650, y: 200 },
-      { id: "S0116OE", name: "大泉学園",   x: 750, y: 200 },
-      { id: "S0120HO", name: "保谷",       x: 850, y: 200 }
-    ],
-    links: [] // 線は駅リストの順番で自動接続する
-  }
-];
+// ここから下の処理は window.onload の中で実行して、
+// routes が読み込まれていないタイミング参照を避ける
+window.onload = function(){
 
-// ====== 種別色マップ ======
-var TRAIN_TYPE_COLORS = {
-  "特急":       "#e6002d",
-  "急行":       "#ff6600",
-  "快速急行":   "#c00000",
-  "快速":       "#0099e6",
-  "準急":       "#009933",
-  "通勤急行":   "#cc3300",
-  "通勤準急":   "#33aa66",
-  "S-TRAIN":    "#0066cc",
-  "各駅停車":   "#555555",
-  "普通":       "#555555"
-};
-
-var canvas = document.getElementById("diagram");
-var ctx = canvas.getContext("2d");
-
-function adjustCanvasSize(stList) {
-  if (!stList || !stList.length) return;
-  var maxX = stList[stList.length - 1].x;
-  canvas.width = Math.max(800, maxX + 100);
-}
-
-function drawLine(stList) {
-  if (!stList || !stList.length) return;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.strokeStyle = "#000";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(stList[0].x, stList[0].y);
-  for (var i=1; i<stList.length; i++) {
-    ctx.lineTo(stList[i].x, stList[i].y);
-  }
-  ctx.stroke();
-
-  ctx.fillStyle = "#000";
-  ctx.font = "14px sans-serif";
-  for (var j=0; j<stList.length; j++) {
-    var s = stList[j];
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, 8, 0, Math.PI*2);
-    ctx.fill();
-    ctx.fillText(s.name, s.x - 20, s.y + 25);
-  }
-}
-
-function drawTrain(x, y, label, typeName) {
-  var color = TRAIN_TYPE_COLORS[typeName] || "#000";
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y - 25, 10, 0, Math.PI*2);
-  ctx.fill();
-
-  ctx.fillStyle = "#000";
-  ctx.font = "12px sans-serif";
-  ctx.fillText(label, x - 10, y - 35);
-}
-
-function interpolate(a,b,t){ return a + (b-a)*t; }
-
-function findStation(stList, id){
-  for (var i=0; i<stList.length; i++) {
-    if (stList[i].id === id) return stList[i];
-  }
-  return null;
-}
-
-// ====== 列車情報取得（本番 API 直叩き） ======
-function fetchTrains(lineId, callback) {
-  var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=" + encodeURIComponent(lineId);
-  var xhr = new XMLHttpRequest();
-  xhr.open("GET", url, true);
-  xhr.onreadystatechange = function(){
-    if (xhr.readyState === 4) {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          var json = JSON.parse(xhr.responseText);
-          var trains = json.train || [];
-          // エラーコードが載るタイプの応答ならログ
-          if (json.code && json.code !== "0000" && !trains.length) {
-            log("API応答コード: " + json.code + " " + (json.message || ""));
-          }
-          callback(trains);
-        } catch(e) {
-          log("JSONパースエラー: " + e.message);
-          callback([]);
-        }
-      } else {
-        log("APIエラー: HTTP " + xhr.status);
-        callback([]);
-      }
-    }
-  };
-  xhr.onerror = function(e){
-    log("XHRエラー: " + (e && e.message ? e.message : "不明") + "（CORS制限の可能性あり）");
-    callback([]);
-  };
-  xhr.send(null);
-}
-
-// ====== メイン更新 ======
-function update(){
-  if (!routes || !routes.length) {
-    log("routes が空です。");
+  // ====== routes 安全チェック ======
+  if (typeof routes === "undefined") {
+    log("エラー: routes_es5.js が読み込めていません。seibu_full_es5.html と同じフォルダに routes_es5.js を置き、<script src=\"routes_es5.js\"></script> になっているか確認してください。");
     return;
   }
-  var sel = document.getElementById("lineSelect");
-  var lineId = sel.value;
-  var route = null;
-  for (var i=0; i<routes.length; i++) {
-    if (routes[i].id === lineId) {
-      route = routes[i];
-      break;
+  if (!routes || !routes.length) {
+    log("エラー: routes が空です。routes_es5.js の中身を確認してください。");
+    return;
+  }
+
+  // ====== 種別色マップ ======
+  var TRAIN_TYPE_COLORS = {
+    "特急":       "#e6002d",
+    "急行":       "#ff6600",
+    "快速急行":   "#c00000",
+    "快速":       "#0099e6",
+    "準急":       "#009933",
+    "通勤急行":   "#cc3300",
+    "通勤準急":   "#33aa66",
+    "S-TRAIN":    "#0066cc",
+    "各駅停車":   "#555555",
+    "普通":       "#555555"
+  };
+
+  var canvas = document.getElementById("diagram");
+  var ctx = canvas.getContext("2d");
+
+  function adjustCanvasSize(stList) {
+    if (!stList || !stList.length) return;
+    var maxX = stList[stList.length - 1].x;
+    canvas.width = Math.max(800, maxX + 100);
+  }
+
+  function drawLine(stList) {
+    if (!stList || !stList.length) return;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(stList[0].x, stList[0].y);
+    for (var i=1; i<stList.length; i++) {
+      ctx.lineTo(stList[i].x, stList[i].y);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = "#000";
+    ctx.font = "14px sans-serif";
+    for (var j=0; j<stList.length; j++) {
+      var s = stList[j];
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 8, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillText(s.name, s.x - 20, s.y + 25);
     }
   }
-  if (!route) {
-    route = routes[0];
+
+  function drawTrain(x, y, label, typeName) {
+    var color = TRAIN_TYPE_COLORS[typeName] || "#000";
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y - 25, 10, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = "#000";
+    ctx.font = "12px sans-serif";
+    ctx.fillText(label, x - 10, y - 35);
   }
-  var stList = route.stations;
-  adjustCanvasSize(stList);
-  drawLine(stList);
 
-  fetchTrains(route.id, function(trains){
-    log("列車データ取得: lineId=" + route.id + " 件数=" + trains.length);
-    for (var i=0; i<trains.length; i++) {
-      var tr = trains[i];
-      var fromId = tr.fromStationId ? tr.fromStationId.replace(/^\\s+|\\s+$/g, "") : "";
-      var toId   = tr.toStationId   ? tr.toStationId.replace(/^\\s+|\\s+$/g, "") : "";
-      var from = findStation(stList, fromId);
-      var to   = findStation(stList, toId);
-      if (!from || !to) continue;
+  function interpolate(a,b,t){ return a + (b-a)*t; }
 
-      var t = 0.5;
-      if (tr.direction && (tr.direction.indexOf("down") >= 0 || tr.direction.indexOf("下") >= 0)) t = 0.3;
-      if (tr.direction && (tr.direction.indexOf("up") >= 0   || tr.direction.indexOf("上") >= 0)) t = 0.7;
-
-      var x = interpolate(from.x, to.x, t);
-      var y = interpolate(from.y, to.y, t);
-      var typeName = tr.trainTypeName || tr.trainType || "";
-      drawTrain(x, y, tr.trainNo, typeName);
+  function findStation(stList, id){
+    for (var i=0; i<stList.length; i++) {
+      if (stList[i].id === id) return stList[i];
     }
-  });
-}
-
-// ====== 初期化 ======
-function initLineSelect(){
-  var sel = document.getElementById("lineSelect");
-  sel.innerHTML = "";
-  for (var i=0; i<routes.length; i++) {
-    var r = routes[i];
-    var opt = document.createElement("option");
-    opt.value = r.id;
-    opt.text = r.name + " (" + r.id + ")";
-    sel.appendChild(opt);
+    return null;
   }
-  if (routes.length) sel.value = routes[0].id;
-  sel.onchange = update;
-}
 
-initLineSelect();
-update();
-setInterval(update, 10000); // 10秒ごと
+  // ====== 列車情報取得（本番 API 直叩き） ======
+  function fetchTrains(lineId, callback) {
+    var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=" + encodeURIComponent(lineId);
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", url, true);
+    xhr.onreadystatechange = function(){
+      if (xhr.readyState === 4) {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var json = JSON.parse(xhr.responseText);
+            var trains = json.train || [];
+            if (json.code && json.code !== "0000" && !trains.length) {
+              log("API応答コード: " + json.code + " " + (json.message || ""));
+            }
+            callback(trains);
+          } catch(e) {
+            log("JSONパースエラー: " + e.message);
+            callback([]);
+          }
+        } else {
+          log("APIエラー: HTTP " + xhr.status);
+          callback([]);
+        }
+      }
+    };
+    xhr.onerror = function(e){
+      log("XHRエラー: " + (e && e.message ? e.message : "不明") + "（CORS制限の可能性あり）");
+      callback([]);
+    };
+    xhr.send(null);
+  }
+
+  // ====== メイン更新 ======
+  function update(){
+    if (!routes || !routes.length) {
+      log("routes が空です。");
+      return;
+    }
+    var sel = document.getElementById("lineSelect");
+    var lineId = sel.value;
+    var route = null;
+    for (var i=0; i<routes.length; i++) {
+      if (routes[i].id === lineId) {
+        route = routes[i];
+        break;
+      }
+    }
+    if (!route) {
+      route = routes[0];
+    }
+    var stList = route.stations;
+    adjustCanvasSize(stList);
+    drawLine(stList);
+
+    fetchTrains(route.id, function(trains){
+      log("列車データ取得: lineId=" + route.id + " 件数=" + trains.length);
+      for (var i=0; i<trains.length; i++) {
+        var tr = trains[i];
+        var fromId = tr.fromStationId ? tr.fromStationId.replace(/^\s+|\s+$/g, "") : "";
+        var toId   = tr.toStationId   ? tr.toStationId.replace(/^\s+|\s+$/g, "")   : "";
+        var from = findStation(stList, fromId);
+        var to   = findStation(stList, toId);
+        if (!from || !to) continue;
+
+        var t = 0.5;
+        if (tr.direction && (tr.direction.indexOf("down") >= 0 || tr.direction.indexOf("下") >= 0)) t = 0.3;
+        if (tr.direction && (tr.direction.indexOf("up")   >= 0 || tr.direction.indexOf("上") >= 0)) t = 0.7;
+
+        var x = interpolate(from.x, to.x, t);
+        var y = interpolate(from.y, to.y, t);
+        var typeName = tr.trainTypeName || tr.trainType || "";
+        drawTrain(x, y, tr.trainNo, typeName);
+      }
+    });
+  }
+
+  // ====== 初期化 ======
+  function initLineSelect(){
+    var sel = document.getElementById("lineSelect");
+    sel.innerHTML = "";
+    for (var i=0; i<routes.length; i++) {
+      var r = routes[i];
+      var opt = document.createElement("option");
+      opt.value = r.id;
+      opt.text  = r.name + " (" + r.id + ")";
+      sel.appendChild(opt);
+    }
+    if (routes.length) sel.value = routes[0].id;
+    sel.onchange = update;
+  }
+
+  initLineSelect();
+  update();
+  setInterval(update, 10000); // 10秒ごと
+
+}; // window.onload
 
 </script>
 </body>
