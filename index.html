@@ -540,18 +540,30 @@ window.onload = function(){
   update();
   setInterval(update, 10000); // 10秒ごとに位置更新
   
+    // ====== ★デバッグ用：駅別発車情報を生のまま取得して console に表示 ======
   function debugStationDepartures(stationId) {
     var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/" +
-             encodeURIComponent(stationId) + "/departures";
+              encodeURIComponent(stationId) + "/departures";
+  
+    log("debugStationDepartures: " + url);
 
     var xhr = new XMLHttpRequest();
     xhr.open("GET", url, true);
-    xhr.onreadystatechange = function(){
+
+    xhr.onreadystatechange = function() {
       if (xhr.readyState === 4) {
-        console.log("DEBUG stationId=" + stationId + " status=" + xhr.status);
-        console.log("DEBUG body:", xhr.responseText);
+        console.log("===== debugStationDepartures =====");
+        console.log("stationId:", stationId);
+        console.log("HTTP status:", xhr.status);
+        console.log("body:", xhr.responseText);
+        console.log("===== END =====");
       }
     };
+
+    xhr.onerror = function(e) {
+      console.error("debugStationDepartures XHR error:", e);
+    };
+
     xhr.send(null);
   }
 
