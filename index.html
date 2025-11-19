@@ -225,11 +225,12 @@ function fetchStationDeparturesFlatten(stationId, callback) {
   xhr.open("GET", url, true);
   xhr.onreadystatechange = function() {
     if (xhr.readyState === 4) {
+
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           var text = xhr.responseText || "";
 
-          // ★レスポンスの一部とトップレベルのキーをログ
+          // レスポンス冒頭をログ
           log("駅別発車情報レスポンス(一部) stationId=" + stationId + " : " +
               text.substr(0, 200).replace(/\s+/g, " ") +
               (text.length > 200 ? "..." : ""));
@@ -237,12 +238,11 @@ function fetchStationDeparturesFlatten(stationId, callback) {
           var json = JSON.parse(text);
           var rootList = [];
 
-          // --- トップレベルの配列候補 ---
+          // --- トップレベル（駅ごとの塊）の配列候補 ---
           if (Array.isArray(json)) {
             rootList = json;
           } else if (json.departure && Array.isArray(json.departure)) {
-            // 例: { total: .., offset: 0, departure: [ {...}, {...} ] }
-            rootList = json.departure;
+            rootList = json.departure;        // 典型パターン
           } else if (json.departures && Array.isArray(json.departures)) {
             rootList = json.departures;
           } else if (json.list && Array.isArray(json.list)) {
@@ -251,7 +251,6 @@ function fetchStationDeparturesFlatten(stationId, callback) {
             rootList = json.data;
           }
 
-          // --- 展開 ---
           var flat = [];
 
           for (var i = 0; i < rootList.length; i++) {
@@ -264,25 +263,37 @@ function fetchStationDeparturesFlatten(stationId, callback) {
 
             var subList = [];
 
-            // detail の中にある配列候補を総当り
+            // --- detail 内の配列候補を総当り ---
             if (detail) {
-              if (detail.departureList && Array.isArray(detail.departureList)) {
+              // 1) detail がそのまま配列のケース
+              if (Array.isArray(detail)) {
+                subList = detail;
+
+              // 2) detail.xxx が配列のケース（これまでの多くの駅）
+              } else if (detail.departureList && Array.isArray(detail.departureList)) {
                 subList = detail.departureList;
               } else if (detail.departure && Array.isArray(detail.departure)) {
-                // おそらくこちらが本命
                 subList = detail.departure;
               } else if (detail.list && Array.isArray(detail.list)) {
                 subList = detail.list;
+
+              // 3) detail が単一オブジェクトで、そこに trainNo 等が入っているケース
+              } else {
+                // trainNo や departureTime を持っていそうなら 1 レコードとして扱う
+                if (detail.trainNo != null || detail.departureTime != null) {
+                  subList = [detail];
+                }
               }
             }
 
             if (subList.length > 0) {
+              // detail 側の配列を 1 本のフラット配列に詰める
               for (var j = 0; j < subList.length; j++) {
                 var d = subList[j] || {};
                 var obj = {};
                 var key;
 
-                // detail 側の要素をコピー
+                // detail 内の要素をコピー
                 for (key in d) {
                   if (d.hasOwnProperty(key)) {
                     obj[key] = d[key];
@@ -297,10 +308,9 @@ function fetchStationDeparturesFlatten(stationId, callback) {
 
                 flat.push(obj);
               }
+
             } else {
-              // detail 側に配列がない場合、
-              // もし top 自体が trainNo, departureTime 等を持っていれば
-              // それを 1 レコードとして扱うフォールバック
+              // subList が空：top 自体に trainNo / departureTime がある場合はそれを 1 レコードとみなす
               if (top.trainNo != null || top.departureTime != null) {
                 var obj2 = {};
                 var kk;
@@ -328,11 +338,13 @@ function fetchStationDeparturesFlatten(stationId, callback) {
           }
 
           callback(flat);
-        } catch(e) {
+
+        } catch (e) {
           log("駅別発車情報 JSON パースエラー: " + e.message +
               " stationId=" + stationId);
           callback([]);
         }
+
       } else {
         log("駅別発車情報 APIエラー: HTTP " + xhr.status +
             " stationId=" + stationId);
@@ -341,7 +353,7 @@ function fetchStationDeparturesFlatten(stationId, callback) {
     }
   };
 
-  xhr.onerror = function(e){
+  xhr.onerror = function(e) {
     log("駅別発車情報 XHRエラー: " +
         (e && e.message ? e.message : "不明") +
         " stationId=" + stationId);
