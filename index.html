@@ -492,6 +492,21 @@ window.onload = function(){
     if (routes.length) sel.value = routes[0].id;
     sel.onchange = update;
   }
+  
+  function debugStationDepartures(stationId) {
+  var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/" +
+            encodeURIComponent(stationId) + "/departures";
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", url, true);
+  xhr.onreadystatechange = function(){
+    if (xhr.readyState === 4) {
+      console.log("DEBUG stationId=" + stationId + " status=" + xhr.status);
+      console.log("DEBUG body:", xhr.responseText);
+    }
+  };
+  xhr.send(null);
+  } 
 
   // ====== 列車クリック検出 ======
   function findTrainAtPosition(px, py) {
