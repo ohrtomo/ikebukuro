@@ -216,10 +216,11 @@ function fetchTrainsByLine(lineId, callback) {
   xhr.send(null);
 }
 
-// ==================== 駅別発車情報取得（departures 展開） ====================
+// ==================== 駅別発車情報取得（departures 展開・修正版） ====================
 function fetchStationDeparturesFlatten(stationId, callback) {
   var url = "https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/" +
             encodeURIComponent(stationId) + "/departures";
+
   var xhr = new XMLHttpRequest();
   xhr.open("GET", url, true);
   xhr.onreadystatechange = function() {
@@ -227,12 +228,20 @@ function fetchStationDeparturesFlatten(stationId, callback) {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           var text = xhr.responseText || "";
+
+          // ★レスポンスの一部とトップレベルのキーをログ
+          log("駅別発車情報レスポンス(一部) stationId=" + stationId + " : " +
+              text.substr(0, 200).replace(/\s+/g, " ") +
+              (text.length > 200 ? "..." : ""));
+
           var json = JSON.parse(text);
           var rootList = [];
 
+          // --- トップレベルの配列候補 ---
           if (Array.isArray(json)) {
             rootList = json;
           } else if (json.departure && Array.isArray(json.departure)) {
+            // 例: { total: .., offset: 0, departure: [ {...}, {...} ] }
             rootList = json.departure;
           } else if (json.departures && Array.isArray(json.departures)) {
             rootList = json.departures;
@@ -242,7 +251,9 @@ function fetchStationDeparturesFlatten(stationId, callback) {
             rootList = json.data;
           }
 
+          // --- 展開 ---
           var flat = [];
+
           for (var i = 0; i < rootList.length; i++) {
             var top = rootList[i] || {};
             var detail = top.detail;
@@ -251,22 +262,59 @@ function fetchStationDeparturesFlatten(stationId, callback) {
             var baseDirectionName = top.directionName || null;
             var baseSectionNo = top.sectionNo;
 
-            if (detail && detail.departureList && Array.isArray(detail.departureList)) {
-              var list = detail.departureList;
-              for (var j = 0; j < list.length; j++) {
-                var d = list[j];
+            var subList = [];
+
+            // detail の中にある配列候補を総当り
+            if (detail) {
+              if (detail.departureList && Array.isArray(detail.departureList)) {
+                subList = detail.departureList;
+              } else if (detail.departure && Array.isArray(detail.departure)) {
+                // おそらくこちらが本命
+                subList = detail.departure;
+              } else if (detail.list && Array.isArray(detail.list)) {
+                subList = detail.list;
+              }
+            }
+
+            if (subList.length > 0) {
+              for (var j = 0; j < subList.length; j++) {
+                var d = subList[j] || {};
                 var obj = {};
                 var key;
+
+                // detail 側の要素をコピー
                 for (key in d) {
                   if (d.hasOwnProperty(key)) {
                     obj[key] = d[key];
                   }
                 }
+
+                // 上位の stationId / lineId / directionName / sectionNo を補完
                 if (baseStationId != null) obj.stationId = baseStationId;
                 if (baseLineId   != null) obj.lineId    = baseLineId;
                 if (baseDirectionName != null) obj.directionName = baseDirectionName;
                 if (baseSectionNo != null) obj.sectionNo = baseSectionNo;
+
                 flat.push(obj);
+              }
+            } else {
+              // detail 側に配列がない場合、
+              // もし top 自体が trainNo, departureTime 等を持っていれば
+              // それを 1 レコードとして扱うフォールバック
+              if (top.trainNo != null || top.departureTime != null) {
+                var obj2 = {};
+                var kk;
+                for (kk in top) {
+                  if (top.hasOwnProperty(kk) && kk !== "detail") {
+                    obj2[kk] = top[kk];
+                  }
+                }
+                if (baseStationId != null) obj2.stationId = baseStationId;
+                if (baseLineId   != null) obj2.lineId    = baseLineId;
+                if (baseDirectionName != null) obj2.directionName = baseDirectionName;
+                if (baseSectionNo != null) obj2.sectionNo = baseSectionNo;
+
+                flat.push(obj2);
               }
             }
           }
@@ -292,12 +340,14 @@ function fetchStationDeparturesFlatten(stationId, callback) {
       }
     }
   };
+
   xhr.onerror = function(e){
     log("駅別発車情報 XHRエラー: " +
         (e && e.message ? e.message : "不明") +
         " stationId=" + stationId);
     callback([]);
   };
+
   xhr.send(null);
 }
 
