@@ -1,1 +1,97 @@
-<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1,user-scalable=no'><title>乗務支援・音声案内</title><link rel='stylesheet' href='./styles.css'><div id='app'></div><script src='./app.js'></script>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>西武線リアルタイム列車位置（種別色分け版）</title>
+<style>
+body { font-family: sans-serif; margin: 20px; }
+#controls { margin-bottom: 10px; }
+#diagram { border:1px solid #444; }
+</style>
+</head>
+<body>
+<h2>西武線リアルタイム列車位置（種別色分け対応）</h2>
+<div id="controls">
+路線：<select id="lineSelect"></select>
+</div>
+<canvas id="diagram" width="1400" height="500"></canvas>
+
+
+<script src="routes.js"></script>
+<script>
+// ====== 種別色マップ ======
+const TRAIN_TYPE_COLORS = {
+"特急": "#e6002d",
+"急行": "#ff6600",
+"快速急行": "#c00000",
+"快速": "#0099e6",
+"準急": "#009933",
+"通勤急行": "#cc3300",
+"通勤準急": "#33aa66",
+"S-TRAIN": "#0066cc",
+"各駅停車": "#555555",
+"普通": "#555555"
+};
+
+
+const canvas = document.getElementById("diagram");
+const ctx = canvas.getContext("2d");
+
+
+function adjustCanvasSize(stList) {
+const maxX = Math.max(...stList.map(s => s.x));
+canvas.width = maxX + 200;
+}
+
+
+function drawLine(stList) {
+ctx.clearRect(0,0,canvas.width,canvas.height);
+ctx.strokeStyle = "#000";
+ctx.lineWidth = 4;
+ctx.beginPath();
+ctx.moveTo(stList[0].x, stList[0].y);
+for (let i=1; i<stList.length; i++) ctx.lineTo(stList[i].x, stList[i].y);
+ctx.stroke();
+
+
+ctx.fillStyle = "#000";
+ctx.font = "14px sans-serif";
+for (let s of stList) {
+ctx.beginPath();
+ctx.arc(s.x, s.y, 10, 0, Math.PI*2);
+ctx.fill();
+ctx.fillText(s.name, s.x - 20, s.y + 25);
+}
+}
+
+
+function drawTrain(x, y, label, typeName) {
+const color = TRAIN_TYPE_COLORS[typeName] || "#000";
+
+
+ctx.fillStyle = color;
+ctx.beginPath();
+ctx.arc(x, y - 25, 12, 0, Math.PI*2);
+ctx.fill();
+
+
+ctx.fillStyle = "#000";
+ctx.font = "12px sans-serif";
+ctx.fillText(label, x - 10, y - 35);
+}
+
+
+function interpolate(a,b,t){ return a + (b-a)*t; }
+function findStation(stList, id){ return stList.find(s=>s.id===id); }
+
+
+async function fetchTrains(lineId) {
+const url = `https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=${lineId}`;
+const res = await fetch(url);
+const json = await res.json();
+return json.train || [];
+}
+
+
+async function update() {
+const lineId = document.getElementById("lineSelect").value;
