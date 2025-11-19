@@ -37,13 +37,12 @@ function log(msg){
   el.textContent += "[" + time + "] " + msg + "\n";
 }
 
-// ここから下の処理は window.onload の中で実行して、
-// routes が読み込まれていないタイミング参照を避ける
+// すべての処理を onload 内で実行（routes 読み込み前参照を防ぐ）
 window.onload = function(){
 
   // ====== routes 安全チェック ======
   if (typeof routes === "undefined") {
-    log("エラー: routes_es5.js が読み込めていません。seibu_full_es5.html と同じフォルダに routes_es5.js を置き、<script src=\"routes_es5.js\"></script> になっているか確認してください。");
+    log("エラー: routes_es5.js が読み込めていません。seibu_full_es5.html と同じフォルダに routes_es5.js を置いてください。");
     return;
   }
   if (!routes || !routes.length) {
@@ -81,14 +80,14 @@ window.onload = function(){
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(stList[0].x, stList[0].y);
-    for (var i=1; i<stList.length; i++) {
+    for (var i = 1; i < stList.length; i++) {
       ctx.lineTo(stList[i].x, stList[i].y);
     }
     ctx.stroke();
 
     ctx.fillStyle = "#000";
     ctx.font = "14px sans-serif";
-    for (var j=0; j<stList.length; j++) {
+    for (var j = 0; j < stList.length; j++) {
       var s = stList[j];
       ctx.beginPath();
       ctx.arc(s.x, s.y, 8, 0, Math.PI*2);
@@ -112,7 +111,7 @@ window.onload = function(){
   function interpolate(a,b,t){ return a + (b-a)*t; }
 
   function findStation(stList, id){
-    for (var i=0; i<stList.length; i++) {
+    for (var i = 0; i < stList.length; i++) {
       if (stList[i].id === id) return stList[i];
     }
     return null;
@@ -159,7 +158,7 @@ window.onload = function(){
     var sel = document.getElementById("lineSelect");
     var lineId = sel.value;
     var route = null;
-    for (var i=0; i<routes.length; i++) {
+    for (var i = 0; i < routes.length; i++) {
       if (routes[i].id === lineId) {
         route = routes[i];
         break;
@@ -174,7 +173,7 @@ window.onload = function(){
 
     fetchTrains(route.id, function(trains){
       log("列車データ取得: lineId=" + route.id + " 件数=" + trains.length);
-      for (var i=0; i<trains.length; i++) {
+      for (var i = 0; i < trains.length; i++) {
         var tr = trains[i];
         var fromId = tr.fromStationId ? tr.fromStationId.replace(/^\s+|\s+$/g, "") : "";
         var toId   = tr.toStationId   ? tr.toStationId.replace(/^\s+|\s+$/g, "")   : "";
@@ -198,7 +197,7 @@ window.onload = function(){
   function initLineSelect(){
     var sel = document.getElementById("lineSelect");
     sel.innerHTML = "";
-    for (var i=0; i<routes.length; i++) {
+    for (var i = 0; i < routes.length; i++) {
       var r = routes[i];
       var opt = document.createElement("option");
       opt.value = r.id;
@@ -213,7 +212,7 @@ window.onload = function(){
   update();
   setInterval(update, 10000); // 10秒ごと
 
-}; // window.onload
+}; // window.onload 終了
 
 </script>
 </body>
