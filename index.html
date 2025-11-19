@@ -192,7 +192,6 @@ window.onload = function(){
     xhr.onreadystatechange = function() {
       if (xhr.readyState === 4) {
 
-        // HTTP ステータスをログに出す
         log("駅別発車情報 HTTP status=" + xhr.status +
             " stationId=" + stationId);
 
@@ -200,38 +199,66 @@ window.onload = function(){
           try {
             var text = xhr.responseText || "";
 
-            // JSON の先頭200文字だけログに出す
             log("駅別発車情報レスポンス(一部) stationId=" + stationId + " : " +
                 text.substr(0, 200).replace(/\s+/g, " ") +
                 (text.length > 200 ? "..." : ""));
 
             var json = JSON.parse(text);
-            var deps = [];
+            var list = [];
 
-            // あり得そうなキーを全部チェック
-            if (Array.isArray(json)) {
-              deps = json;
-            } else if (json.departures && Array.isArray(json.departures)) {
-              deps = json.departures;
-            } else if (json.departure && Array.isArray(json.departure)) {
-                // ★ここを追加（単数形）
-                deps = json.departure;              
-            } else if (json.list && Array.isArray(json.list)) {
-              deps = json.list;
-            } else if (json.data && Array.isArray(json.data)) {
-              deps = json.data;
+            // 典型構造: { total, offset, departure:[ { .., detail:[ {...}, ...] }, ... ] }
+            if (json && Array.isArray(json.departure)) {
+              for (var i = 0; i < json.departure.length; i++) {
+                var block = json.departure[i];
+                var base = {
+                  stationId: block.stationId || stationId,
+                  lineId:    block.lineId    || null,
+                  direction: block.direction || null,
+                  directionName: block.directionName || null,
+                  sectionNo: block.sectionNo || null
+                };
+
+                // detail に列車ごとの情報が入っていると仮定
+                if (block.detail && Array.isArray(block.detail)) {
+                  for (var j = 0; j < block.detail.length; j++) {
+                    var d = block.detail[j];
+                    var merged = {};
+
+                    // detail の中身をコピー
+                    for (var k in d) {
+                      if (Object.prototype.hasOwnProperty.call(d, k)) {
+                        merged[k] = d[k];
+                      }
+                    }
+                    // 親側の共通情報を埋める（重複キーは detail 優先）
+                    for (var bk in base) {
+                      if (!Object.prototype.hasOwnProperty.call(merged, bk)) {
+                        merged[bk] = base[bk];
+                      }
+                    }
+
+                    list.push(merged);
+                  }
+                }
+              }
+            } else if (Array.isArray(json.departures)) {
+              // 念のため: 複数パターンへのフォールバック
+              list = json.departures;
+            } else if (Array.isArray(json.list)) {
+              list = json.list;
+            } else if (Array.isArray(json.data)) {
+              list = json.data;
             }
 
-            // 件数と1件目のキーをログ
-            if (deps.length > 0) {
-              log("駅別発車情報件数=" + deps.length +
+            if (list.length > 0) {
+              log("駅別発車情報(展開後)件数=" + list.length +
                   " stationId=" + stationId +
-                  " 先頭要素キー=" + Object.keys(deps[0]).join(","));
+                  " 先頭要素キー=" + Object.keys(list[0]).join(","));
             } else {
-              log("駅別発車情報: 配列が空、または想定と異なる構造 stationId=" + stationId);
+              log("駅別発車情報: detail 展開後も配列が空 stationId=" + stationId);
             }
 
-            callback(deps);
+            callback(list);
           } catch (e) {
             log("駅別発車情報 JSON パースエラー: " + e.message);
             callback([]);
@@ -253,7 +280,7 @@ window.onload = function(){
 
     xhr.send(null);
   }
-
+  
   // ====== 列車番号から時刻表を構成（デバッグ付き） ======
   function fetchTimetableByTrain(route, train, callback) {
 
