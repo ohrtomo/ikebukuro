@@ -56,6 +56,7 @@ const state = {
         muteUntil: 0,
         lastDepartStation: null,
         lastDepartPrevDist: null,
+		manualPlatforms: {},
     },
 };
 
@@ -911,33 +912,161 @@ function openOperationInfo() {
         });
 }
 
-// 着発線変更（枠だけ）
+// 着発線変更
 function openPlatformList() {
-	const modal = document.getElementById("menuModal");
-	const panel = modal.querySelector(".panel");
-	const kind = "platform";
+    const modal = document.getElementById("menuModal");
+    const panel = modal.querySelector(".panel");
+    const kind = "platform";
 
-	const existing = panel.querySelector(
-		`.menu-subpanel[data-kind="${kind}"]`,
-	);
-	if (existing) {
-		existing.remove();
-		return;
-	}
+    // 既に同じサブ画面が開いていればトグルで閉じる
+    const existing = panel.querySelector(
+        `.menu-subpanel[data-kind="${kind}"]`,
+    );
+    if (existing) {
+        existing.remove();
+        return;
+    }
 
-	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    // 他のサブ画面は閉じる
+    panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 
-	const wrap = el(
-		"div",
-		{ class: "menu-subpanel", "data-kind": kind },
-		[
-			el("hr", { class: "sep" }),
-			el("h3", {}, "着発線変更"),
-			// 必要があればここに実装を追加
-		],
-	);
+    const wrap = el(
+        "div",
+        { class: "menu-subpanel", "data-kind": kind },
+        [
+            el("hr", { class: "sep" }),
+            el("h3", {}, "着発線変更"),
+        ],
+    );
 
-	panel.appendChild(wrap);
+    const platforms = state.datasets.platforms;
+    if (!platforms) {
+        wrap.append(
+            el("div", { class: "row" }, "platform.json が読み込まれていません。"),
+        );
+        panel.appendChild(wrap);
+        return;
+    }
+
+    const dayType = state.config.dayType || "平日";
+    const dayData = platforms[dayType];
+    if (!dayData) {
+        wrap.append(
+            el(
+                "div",
+                { class: "row" },
+                `「${dayType}」の番線データが見つかりません。`,
+            ),
+        );
+        panel.appendChild(wrap);
+        return;
+    }
+
+    const box = el("div", {
+        style: "max-height:50vh;overflow:auto;font-size:14px;",
+    });
+
+    // 駅名一覧（空文字は除外）
+    const stationNames = Object.keys(dayData)
+        .filter((n) => n && n.trim())
+        .sort((a, b) => a.localeCompare(b, "ja"));
+
+    const overrides = state.runtime.manualPlatforms || {};
+
+    stationNames.forEach((stationName) => {
+        const platMap = dayData[stationName];
+        if (!platMap) return;
+
+        const platNos = Object.keys(platMap).sort(
+            (a, b) => parseInt(a, 10) - parseInt(b, 10),
+        );
+        if (platNos.length === 0) return;
+
+        // 標準の番線（platform.json による現在列車の想定番線）
+        const basePlat = getPlatformForStation(stationName);
+        const currentOverride = overrides[stationName] || null;
+        const selectedPlat = currentOverride || basePlat || platNos[0];
+
+        const row = el(
+            "div",
+            {
+                class: "row plat-row",
+                "data-station": stationName,
+                style: "margin-bottom:4px;",
+            },
+            [],
+        );
+
+        // 駅名
+        row.appendChild(
+            el(
+                "span",
+                {
+                    style:
+                        "display:inline-block;min-width:6em;margin-right:4px;",
+                },
+                stationName,
+            ),
+        );
+
+        // 各番線のラジオボタン（見た目はチェックに近いが 1つだけ選択）
+        platNos.forEach((platNo) => {
+            const id = `plat_${stationName}_${platNo}`;
+
+            const input = el("input", {
+                type: "radio",
+                name: `plat_${stationName}`,
+                value: platNo,
+                id,
+            });
+            if (String(platNo) === String(selectedPlat)) {
+                input.checked = true;
+            }
+
+            const label = el(
+                "label",
+                {
+                    for: id,
+                    style: "margin-right:8px;",
+                },
+                `${platNo}番`,
+            );
+
+            row.appendChild(input);
+            row.appendChild(label);
+        });
+
+        box.appendChild(row);
+    });
+
+    const done = el("button", { class: "btn", style: "margin-top:8px;" }, "決定");
+    done.onclick = () => {
+        const newOverrides = {};
+        const rows = box.querySelectorAll(".plat-row");
+
+        rows.forEach((row) => {
+            const stationName = row.getAttribute("data-station");
+            const basePlat = getPlatformForStation(stationName);
+            const checked = row.querySelector('input[type="radio"]:checked');
+            if (!checked) return;
+
+            const selectedPlat = checked.value;
+
+            // 標準番線と同じなら「変更なし」扱いで override は保存しない
+            if (basePlat && String(basePlat) === String(selectedPlat)) {
+                return;
+            }
+
+            // 標準番線と異なる場合だけ「着発線変更」として保存
+            newOverrides[stationName] = selectedPlat;
+        });
+
+        state.runtime.manualPlatforms = newOverrides;
+        modal.classList.remove("active");
+    };
+
+    wrap.append(box, done);
+    panel.appendChild(wrap);
 }
 
 // 列番変更
@@ -1161,6 +1290,29 @@ function getPlatformForStation(stationName) {
         }
     }
     return null;
+}
+
+// ==== 発着番線（実際に使う値） ====
+// 手動変更があればそれを優先し、なければ platform.json の標準値を使う
+function getEffectivePlatformForStation(stationName) {
+    const overrides = state.runtime.manualPlatforms || {};
+    if (overrides[stationName]) {
+        return overrides[stationName];   // 例: "1" "2" など
+    }
+    return getPlatformForStation(stationName);
+}
+
+// ==== 番線が「着発線変更」されているかどうか ====
+// ・手動値が存在し、かつ標準値と異なっていれば true
+function isPlatformChanged(stationName) {
+    const overrides = state.runtime.manualPlatforms || {};
+    const override = overrides[stationName];
+    if (!override) return false;
+
+    const base = getPlatformForStation(stationName);
+    if (!base) return true; // 標準設定が無いのに手動があるケース
+
+    return String(override) !== String(base);
 }
 
 
@@ -1568,24 +1720,26 @@ function maybeSpeak(ns) {
                 if (isNextStop) {
                     const word = isExtraStopNext ? "臨時停車" : "停車";
 
-                    // ★ 発着番線を取得
-                    const plat = getPlatformForStation(nextName);
+                    // ★ 実際に案内する番線（手動変更を反映）
+                    const plat = getEffectivePlatformForStation(nextName);
 
+                    let text;
                     if (plat) {
-                        // 番線が分かる場合 → 「次は池袋、1番、停車」
-                        speakOnce(
-                            "leave200_" + nextName,
-                            `次は${nextName}、${plat}番、${word}`,
-                        );
+                        // 標準／手動を含め「番線あり」の場合
+                        text = `次は${nextName}、${plat}番、${word}`;
                     } else {
-                        // 従来どおり番線なし
-                        speakOnce(
-                            "leave200_" + nextName,
-                            `次は${nextName}、${word}`,
-                        );
+                        // 番線情報が無い場合は従来どおり
+                        text = `次は${nextName}、${word}`;
                     }
+
+                    // ★ 手動で標準と違う番線に変更されている場合のみ「着発線変更」を付加
+                    if (isPlatformChanged(nextName)) {
+                        text += "、着発線変更";
+                    }
+
+                    speakOnce("leave200_" + nextName, text);
                 } else if (isExtraPassNext) {
-                    // ★ 臨時通過の案内は、番線は読まない仕様にしています
+                    // ★ 臨時通過の案内は番線・着発線変更を読まない
                     speakOnce(
                         "leave200_" + nextName,
                         `次は${nextName}、臨時通過`,
@@ -1614,47 +1768,53 @@ function maybeSpeak(ns) {
 			);
 		}
 
-		// ===== (C) 停止直前の案内：200m クロス時 =====
-		// 200m より外側 → 200m 以内に入った瞬間
-		const crossed200Stop =
-			!isFirstMeasurement &&
-			isStop &&
-			ns.distance <= 200 &&
-			(prevSameDist == null || prevSameDist > 200);
+        // ===== (C) 停止直前の案内：200m クロス時 =====
+        // 200m より外側 → 200m 以内に入った瞬間
+        const crossed200Stop =
+            !isFirstMeasurement &&
+            isStop &&
+            ns.distance <= 200 &&
+            (prevSameDist == null || prevSameDist > 200);
 
-		if (crossed200Stop && d > 5) {
-			const stopWord = isExtraStop ? "臨時停車" : "停車";
+        if (crossed200Stop && d > 5) {
+            const stopWord = isExtraStop ? "臨時停車" : "停車";
 
-			if (
-				state.config.cars === 8 &&
-				(state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
-			) {
-				speakOnce(
-					"arr200_" + key,
-					`${stopWord}、8両、${
-						state.config.direction === "上り"
-							? ns.up8pos
-							: ns.down8pos
-					}あわせ`,
-				);
-			} else if (state.config.cars === 10) {
-				speakOnce("arr200_" + key, `${stopWord}、10両`);
-			} else {
-				speakOnce(
-					"arr200_" + key,
-					`${stopWord}、${state.config.cars}両、停止位置注意`,
-				);
-			}
+            // ★ この駅で着発線変更されているか
+            const changedHere = isPlatformChanged(ns.name);
 
-			
-		}
+            if (
+                state.config.cars === 8 &&
+                (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
+            ) {
+                let text = `${stopWord}、8両、${
+                    state.config.direction === "上り"
+                        ? ns.up8pos
+                        : ns.down8pos
+                }あわせ`;
+                if (changedHere) {
+                    text += "、着発線変更";
+                }
+                speakOnce("arr200_" + key, text);
+            } else if (state.config.cars === 10) {
+                let text = `${stopWord}、10両`;
+                if (changedHere) {
+                    text += "、着発線変更";
+                }
+                speakOnce("arr200_" + key, text);
+            } else {
+                let text = `${stopWord}、${state.config.cars}両、停止位置注意`;
+                if (changedHere) {
+                    text += "、着発線変更";
+                }
+                speakOnce("arr200_" + key, text);
+            }
 
-		// ★ ここから追加：200m以内に入ったら到着扱い（速度条件なし、クロス条件なし）
-        if (isStop && ns.distance <= 200) {
-            // まだ lastStopStation が未セットのときのみ計算（無駄な上書きを防止）
-            if (!state.runtime.lastStopStation) {
-                const nextName = findNextStopStationName(ns.name);
-                state.runtime.lastStopStation = nextName || null;
+            // ★ 「到着扱い」：停車駅 200m以内に入れば次駅を計算（※ここはすでに変更済みのはず）
+            if (ns.distance <= 200) {
+                if (!state.runtime.lastStopStation) {
+                    const nextName = findNextStopStationName(ns.name);
+                    state.runtime.lastStopStation = nextName || null;
+                }
             }
         }
 
