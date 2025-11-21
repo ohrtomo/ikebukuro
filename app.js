@@ -12,63 +12,71 @@ function haversine(lat1, lon1, lat2, lon2) {
 
 // ==== Global state ====
 const state = {
-	datasets: {
-		stations: null,
-		types: [],
-		dests: [],
-		trainTable: [],
-		carIcons: {},
-	},
-	config: {
-		direction: "上り",
-		type: "",
-		dest: "",
-		cars: 10,
-		trainNo: "",
-		endChange: false,
-		second: { type: "", dest: "", cars: 10, trainNo: "" },
+    datasets: {
+        stations: null,
+        types: [],
+        dests: [],
+        trainTable: [],
+        carIcons: {},
+        platforms: null,   // ★ 追加: 発着番線データ
+    },
+    config: {
+        direction: "上り",
+        type: "",
+        dest: "",
+        cars: 10,
+        trainNo: "",
+        endChange: false,
+        second: { type: "", dest: "", cars: 10, trainNo: "" },
 
         // ★ 音量（0.0〜1.0）: 初期値は最大
         voiceVolume: 1.0,
 
-	},
+        // ★ 追加: 運転日区分（平日 / 土休日）
+        dayType: "平日",
+    },
 
-	runtime: {
-		started: false,
-		lastSpoken: {},
-		lastStopStation: null,
-		lastPosition: null,
-		speedKmh: 0,
-		passStations: new Set(),
-		platformChanges: new Set(),
-		manualTrainNo: null,
-		manualTrainChangeAt: null,
-		lastStopDistance: null,   // ★ 直前の「最後に停車した駅」からの距離
-		// ★ 300m/120m判定用：前回の最近傍駅とその距離
-		prevStationName: null,
-		prevStationDistance: null,
-		prevDistances: {},        // ★ 駅ごとの「前回距離」（300m判定用）
-		routeLocked: false,      // ルートを確定したかどうか
-		routeLine: null,         // "main" / "yuraku" / "toshima" / "sayama"
-		muteUntil: 0,            // ★ 案内開始直後のミュート終了時刻（ms）
-		
-	},
+    runtime: {
+        started: false,
+        lastSpoken: {},
+        lastStopStation: null,
+        lastPosition: null,
+        speedKmh: 0,
+        passStations: new Set(),
+        platformChanges: new Set(),
+        manualTrainNo: null,
+        manualTrainChangeAt: null,
+        lastStopDistance: null,
+        prevStationName: null,
+        prevStationDistance: null,
+        prevDistances: {},
+        routeLocked: false,
+        routeLine: null,
+
+        muteUntil: 0,
+        lastDepartStation: null,
+        lastDepartPrevDist: null,
+    },
 };
 
 // ==== Load datasets ====
 async function loadData() {
-    const [stations, types, dests, ttable, carIcons] = await Promise.all([
-        fetch("./data/stations.json").then((r) => r.json()),
-        fetch("./data/types.json").then((r) => r.json()),
-        fetch("./data/destinations.json").then((r) => r.json()),
-        fetch("./data/train_number_table.json").then((r) => r.json()),
-        fetch("./data/car_icons.json").then((r) => r.json()),
-    ]);
-    state.datasets.stations  = stations;
-    state.datasets.types     = types;
-    state.datasets.dests     = dests;
+    const [stations, types, dests, ttable, carIcons, platforms] =
+        await Promise.all([
+            fetch("./data/stations.json").then((r) => r.json()),
+            fetch("./data/types.json").then((r) => r.json()),
+            fetch("./data/destinations.json").then((r) => r.json()),
+            fetch("./data/train_number_table.json").then((r) => r.json()),
+            fetch("./data/car_icons.json").then((r) => r.json()),
+            fetch("./data/platform.json").then((r) => r.json()),   // ★ 追加
+        ]);
+
+    state.datasets.stations   = stations;
+    state.datasets.types      = types;
+    state.datasets.dests      = dests;
     state.datasets.trainTable = ttable;
-    state.datasets.carIcons  = carIcons;
+    state.datasets.carIcons   = carIcons;
+    state.datasets.platforms  = platforms;                         // ★ 追加
 }
 
 // ==== Speech ====
@@ -234,6 +242,13 @@ function screenSettings() {
 		destSel.appendChild(el("option", { value: d }, d));
 	});
 
+	    // ---- 運転日区分（平日 / 土休日） ----
+    const dayTypeSel = el("select", { id: "dayType" });
+    dayTypeSel.appendChild(el("option", { value: "平日" }, "平日"));
+    dayTypeSel.appendChild(el("option", { value: "土休日" }, "土休日"));
+    dayTypeSel.value = state.config.dayType || "平日";
+
+
 	// ---- 両数（前）：10 / 8 / 7 / 6 / 4 / 2 ボタン選択 ----
 	const carsValues = [10, 8, 7, 6, 4, 2];
 	let selectedCars = null; // 初期値
@@ -390,6 +405,8 @@ function screenSettings() {
 		state.config.type = typeSel.value;
 		state.config.dest = destSel.value;
 		state.config.cars = selectedCars; // 両数（ボタン）
+		// ★ 運転日区分を保存（平日 / 土休日）
+		state.config.dayType = dayTypeSel.value || "平日";
 
 		// 終点で列番変更（後半設定）
 		state.config.endChange = endChange.checked;
@@ -409,24 +426,33 @@ function screenSettings() {
 	};
 
 	// ---- 画面にパーツを配置 ----
-	c.append(
-		el("div", { class: "row" }, [
-			el("label", {}, "列車番号"),
-			trainNo,
-			btnSearch,
-		]),
-		el("div", { class: "grid2" }, [
-			el("div", [el("label", {}, "上り/下り"), dirButtons]),
-			el("div", [el("label", {}, "両数"), carsButtons]),
-		]),
-		el("div", { class: "grid2" }, [
-			el("div", [el("label", {}, "種別"), typeSel]),
-			el("div", [el("label", {}, "行先"), destSel]),
-		]),
-		el("div", { class: "row endchange-row" }, [endChange, el("span", {}, " 終点で列番変更")]),
-		secondWrap,
-		execBtn,
-	);
+    c.append(
+        el("div", { class: "row" }, [
+            el("label", {}, "列車番号"),
+            trainNo,
+            btnSearch,
+        ]),
+        el("div", { class: "grid2" }, [
+            el("div", [el("label", {}, "上り/下り"), dirButtons]),
+            el("div", [el("label", {}, "両数"), carsButtons]),
+        ]),
+        el("div", { class: "grid2" }, [
+            el("div", [el("label", {}, "種別"), typeSel]),
+            el("div", [el("label", {}, "行先"), destSel]),
+        ]),
+        // ★ ここから追加: 運転日
+        el("div", { class: "row" }, [
+            el("label", {}, "運転日"),
+            dayTypeSel,
+        ]),
+        // ★ ここまで追加
+        el("div", { class: "row endchange-row" }, [
+            endChange,
+            el("span", {}, " 終点で列番変更"),
+        ]),
+        secondWrap,
+        execBtn,
+    );
 
 	root.appendChild(c);
 	return root;
@@ -1111,6 +1137,33 @@ function getLineForStation(name) {
 	return null;
 }
 
+// ==== 発着番線取得 ====
+// platform.json: dayType ("平日" / "土休日") → 駅名 → 番線番号 → [列車番号...]
+function getPlatformForStation(stationName) {
+    const platforms = state.datasets.platforms;
+    if (!platforms) return null;
+
+    const dayType = state.config.dayType || "平日";
+    const dayData = platforms[dayType];
+    if (!dayData) return null;
+
+    const stationData = dayData[stationName];
+    if (!stationData) return null;
+
+    const n = parseInt(state.config.trainNo, 10);
+    if (Number.isNaN(n)) return null;
+
+    // 各番線の配列を見て、自列車番号が含まれている番線を探す
+    for (const [platNo, list] of Object.entries(stationData)) {
+        if (!Array.isArray(list)) continue;
+        if (list.includes(n)) {
+            return platNo; // 文字列の "1" "2" ... をそのまま返す
+        }
+    }
+    return null;
+}
+
+
 // 1 本の路線配列の中で、direction（上り/下り）と passStations を考慮して
 // 「次に実際に停車する駅」を探す共通ヘルパー
 function findNextOnLine(line, fromName, direction) {
@@ -1502,31 +1555,49 @@ function maybeSpeak(ns) {
 			prevSameDist <= 200 &&
 			ns.distance > 200;
 
-		if (left200) {
-			const nextName = state.runtime.lastStopStation;
+        if (left200) {
+            const nextName = state.runtime.lastStopStation;
 
-			if (nextName) {
-				const baseNextStop = baseIsStop(nextName);
-				const isNextStop = !state.runtime.passStations.has(nextName);
+            if (nextName) {
+                const baseNextStop = baseIsStop(nextName);
+                const isNextStop   = !state.runtime.passStations.has(nextName);
 
-				const isExtraStopNext = !baseNextStop && isNextStop;
-				const isExtraPassNext = baseNextStop && !isNextStop;
+                const isExtraStopNext = !baseNextStop && isNextStop;
+                const isExtraPassNext = baseNextStop && !isNextStop;
 
-				if (isNextStop) {
-					const word = isExtraStopNext ? "臨時停車" : "停車";
-					speakOnce(
-						"leave200_" + nextName,
-						`次は${nextName}、${word}`,
-					);
-				} else if (isExtraPassNext) {
-					speakOnce(
-						"leave200_" + nextName,
-						`次は${nextName}、臨時通過`,
-					);
-				}
-			}
-			state.runtime.lastStopStation = null;
-		}
+                if (isNextStop) {
+                    const word = isExtraStopNext ? "臨時停車" : "停車";
+
+                    // ★ 発着番線を取得
+                    const plat = getPlatformForStation(nextName);
+
+                    if (plat) {
+                        // 番線が分かる場合 → 「次は池袋、1番、停車」
+                        speakOnce(
+                            "leave200_" + nextName,
+                            `次は${nextName}、${plat}番、${word}`,
+                        );
+                    } else {
+                        // 従来どおり番線なし
+                        speakOnce(
+                            "leave200_" + nextName,
+                            `次は${nextName}、${word}`,
+                        );
+                    }
+                } else if (isExtraPassNext) {
+                    // ★ 臨時通過の案内は、番線は読まない仕様にしています
+                    speakOnce(
+                        "leave200_" + nextName,
+                        `次は${nextName}、臨時通過`,
+                    );
+                }
+            }
+
+            // ★ 使い終わったらリセット
+            state.runtime.lastStopStation = null;
+            state.runtime.lastDepartStation = null;
+            state.runtime.lastDepartPrevDist = null;
+        }
 
 		// ===== (B) 手前 400m の「まもなく○○」案内 =====
 		const crossed400 =
