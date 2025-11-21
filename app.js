@@ -50,6 +50,7 @@ const state = {
 		prevDistances: {},        // ★ 駅ごとの「前回距離」（300m判定用）
 		routeLocked: false,      // ルートを確定したかどうか
 		routeLine: null,         // "main" / "yuraku" / "toshima" / "sayama"
+		muteUntil: 0,            // ★ 案内開始直後のミュート終了時刻（ms）
 		
 	},
 };
@@ -72,25 +73,36 @@ async function loadData() {
 
 // ==== Speech ====
 function speakOnce(key, text) {
-    const now = Date.now();
-    const last = state.runtime.lastSpoken[key] || 0;
-    if (now - last < 30000) return; // 30秒抑止
-    state.runtime.lastSpoken[key] = now;
+	const now = Date.now();
 
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "ja-JP";
+	// ★ 案内開始から20秒間は「start_guidance」以外の音声をミュート
+	if (
+		key !== "start_guidance" &&
+		state.runtime.muteUntil &&
+		now < state.runtime.muteUntil
+	) {
+		return;
+	}
 
-    // ★ 音量反映（0.0〜1.0）
-    const vol = state.config.voiceVolume;
-    utter.volume = typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
+	const last = state.runtime.lastSpoken[key] || 0;
+	if (now - last < 30000) return; // 30秒抑止
+	state.runtime.lastSpoken[key] = now;
 
-    speechSynthesis.speak(utter);
+	const utter = new SpeechSynthesisUtterance(text);
+	utter.lang = "ja-JP";
 
-    // ★ 読み上げ内容を「音声用」表示欄に表示（次の読み上げまで残す）
-    const root = document.getElementById("screen-guidance");
-    if (root && root._speechText) {
-        root._speechText.textContent = text;
-    }
+	// ★ 音量反映（0.0〜1.0）
+	const vol = state.config.voiceVolume;
+	utter.volume =
+		typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
+
+	speechSynthesis.speak(utter);
+
+	// ★ 読み上げ内容を「音声用」表示欄に表示（次の読み上げまで残す）
+	const root = document.getElementById("screen-guidance");
+	if (root && root._speechText) {
+		root._speechText.textContent = text;
+	}
 }
 
 // ==== Train number parser ====
@@ -440,7 +452,10 @@ function screenStart() {
 			// ダイヤ上の基本停車駅から通過駅リストを構築
 			buildPassStationList();
 
-			// ★案内開始の音声
+			// ★ 案内開始から20秒間は他の案内をミュート
+			state.runtime.muteUntil = Date.now() + 20000;
+
+			// ★ 案内開始の音声
 			speakOnce("start_guidance", "案内を開始します");
 
 			document.getElementById("screen-start").classList.remove("active");
@@ -751,13 +766,14 @@ function openVolumePanel() {
             : 1.0) * 100,
     );
 
-    const slider = el("input", {
-        type: "range",
-        min: "0",
-        max: "100",
-        value: String(currentVol),
-        style: "width:100%;",
-    });
+	const slider = el("input", {
+		type: "range",
+		min: "0",
+		max: "100",
+		value: String(currentVol),
+		step: "5",               // ★ 0〜100 を 5% 刻み＝20段階
+		style: "width:100%;",
+	});
 
     const label = el("span", {}, `${currentVol}%`);
 
@@ -1246,6 +1262,35 @@ function updateRouteLock(ns) {
 }
 
 
+// ★ 画面消灯防止用 Wake Lock
+let wakeLock = null;
+
+async function requestWakeLock() {
+	if (!("wakeLock" in navigator)) return;
+	try {
+		wakeLock = await navigator.wakeLock.request("screen");
+	} catch (e) {
+		console.warn("wakeLock request failed:", e);
+	}
+}
+
+function releaseWakeLock() {
+	if (!wakeLock) return;
+	wakeLock
+		.release()
+		.catch(() => {})
+		.finally(() => {
+			wakeLock = null;
+		});
+}
+
+// ★ フォアグラウンド復帰時に、案内中なら再度 Wake Lock を取得
+document.addEventListener("visibilitychange", () => {
+	if (document.visibilityState === "visible" && state.runtime.started) {
+		requestWakeLock();
+	}
+});
+
 let clockTimer = null;
 let gpsTimer = null;
 
@@ -1279,6 +1324,10 @@ function startGuidance() {
 	state.runtime.routeLocked = false;
 	state.runtime.routeLine = null;
 	state.runtime.started = true;
+
+	// ★ 案内画面中は画面消灯を防止
+	requestWakeLock();
+
 	renderGuidance();
 
 	// 時計表示
@@ -1288,11 +1337,15 @@ function startGuidance() {
 			`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 	}, 200);
 
-    // ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
-    startGpsWatch();
+	// ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
+	startGpsWatch();
 }
 
 function stopGuidance() {
+	// ★ 案内終了：状態リセット＆画面消灯許可
+	state.runtime.started = false;
+	releaseWakeLock();
+
 	if (clockTimer) {
 		clearInterval(clockTimer);
 		clockTimer = null;
@@ -1353,53 +1406,57 @@ function nearestStation(lat, lng) {
 }
 
 function onPos(pos) {
-    const { latitude, longitude } = pos.coords;
+	const { latitude, longitude } = pos.coords;
 
-    const now = Date.now();
-    const gpsTime = pos.timestamp;          // ★ 位置情報が取得された本当の時刻(ms)
-    const ageMs = now - gpsTime;            // ★ どれだけ古いか
+	const now = Date.now();
+	const gpsTime = pos.timestamp;          // ★ 位置情報が取得された本当の時刻(ms)
+	const ageMs = now - gpsTime;            // ★ どれだけ古いか
 
-    // ★ 5秒以上古いデータは無視する
-    if (ageMs > 5000) {
-        setGpsStatus("位置情報が古いため無視しました");
-        return; // ★ この更新は使わない
-    }
+	// ★ 5秒以上古いデータは無視する
+	if (ageMs > 5000) {
+		setGpsStatus("位置情報が古いため無視しました");
+		return; // ★ この更新は使わない
+	}
 
-    // ★ ここから先は「新しい」データのみ使用
-    if (state.runtime.lastPosition) {
-        const dt = (gpsTime - state.runtime.lastPosition.time) / 1000;
-        const dist = haversine(
-            state.runtime.lastPosition.lat,
-            state.runtime.lastPosition.lng,
-            latitude,
-            longitude
-        );
-        state.runtime.speedKmh = (dist / dt) * 3.6;
-    }
+	// ★ ここから先は「新しい」データのみ使用
+	if (state.runtime.lastPosition) {
+		const dt = (gpsTime - state.runtime.lastPosition.time) / 1000;
+		const dist = haversine(
+			state.runtime.lastPosition.lat,
+			state.runtime.lastPosition.lng,
+			latitude,
+			longitude
+		);
+		state.runtime.speedKmh = (dist / dt) * 3.6;
+	}
 
-    state.runtime.lastPosition = {
-        lat: latitude,
-        lng: longitude,
-        time: gpsTime   // ★ 最新の本当の時刻
-    };
+	state.runtime.lastPosition = {
+		lat: latitude,
+		lng: longitude,
+		time: gpsTime   // ★ 最新の本当の時刻
+	};
 
-    // ★ 本当の GPS 時刻で表示
-    updateNotes(latitude, longitude, gpsTime);
+	// ★ 本当の GPS 時刻で表示
+	updateNotes(latitude, longitude, gpsTime);
 
-    // ★ 最寄り駅判定
-    const ns = nearestStation(latitude, longitude);
+	// ★ 最寄り駅判定
+	const ns = nearestStation(latitude, longitude);
 
-    // ★ 駅案内ロジック
-    maybeSpeak(ns);
+	// ★ 駅案内ロジック
+	maybeSpeak(ns);
 
-    // ★ 車両アイコン（既存コード）
-    const show =
-        ns && ns.distance <= 300 && !state.runtime.passStations.has(ns.name);
-    band1RenderCars(
-        document.getElementById("screen-guidance")._band1,
-        show,
-        state.config.cars
-    );
+	// ★ 車両アイコン
+	// 通過駅から500m以内では非表示／それ以外では常時表示
+	let show = true;
+	if (ns && state.runtime.passStations.has(ns.name) && ns.distance <= 500) {
+		show = false;
+	}
+
+	band1RenderCars(
+		document.getElementById("screen-guidance")._band1,
+		show,
+		state.config.cars
+	);
 }
 
 function isNonPassenger(t) {
@@ -1407,128 +1464,144 @@ function isNonPassenger(t) {
 }
 
 function maybeSpeak(ns) {
-    if (!ns) return;
+	if (!ns) return;
 
-    // ★ ルート確定
-    updateRouteLock(ns);
+	// ★ ルート確定
+	updateRouteLock(ns);
 
-    const t = state.config.type;
-    const d = state.runtime.speedKmh;
+	const t = state.config.type;
+	const d = state.runtime.speedKmh;
 
-    // ★ 前回の最近傍駅と距離
-    const prevName = state.runtime.prevStationName;
-    const prevDist = state.runtime.prevStationDistance;
-    const prevSameDist = prevName === ns.name ? prevDist : null;
+	// ★ 前回の最近傍駅と距離
+	const prevName = state.runtime.prevStationName;
+	const prevDist = state.runtime.prevStationDistance;
+	const prevSameDist = prevName === ns.name ? prevDist : null;
 
-    // 特記事項
-    otherSpeaks(ns);
+	const isFirstMeasurement =
+		state.runtime.prevStationName === null &&
+		state.runtime.prevStationDistance === null;
 
-    const key = ns.name;
+	// 特記事項
+	otherSpeaks(ns);
 
-    const baseStop = baseIsStop(ns.name);
-    const isStop   = !state.runtime.passStations.has(ns.name);
+	const key = ns.name;
 
-    const isExtraStop = !baseStop && isStop;    // 本来通過→いま停車
-    const isExtraPass = baseStop && !isStop;    // 本来停車→いま通過
+	const baseStop = baseIsStop(ns.name);
+	const isStop = !state.runtime.passStations.has(ns.name);
 
-    if (!isNonPassenger(t)) {
-        // ===== (A) 前駅発車後の「次は○○」案内 =====
-        // 「到着しきった」駅から 200m 以上離れたタイミングで案内
-        if (state.runtime.lastStopStation && ns.distance > 200) {   // ★ 100 → 200
-            const nextName = state.runtime.lastStopStation;
+	const isExtraStop = !baseStop && isStop; // 本来通過→いま停車
+	const isExtraPass = baseStop && !isStop; // 本来停車→いま通過
 
-            if (nextName) {
-                const baseNextStop = baseIsStop(nextName);
-                const isNextStop   = !state.runtime.passStations.has(nextName);
+	if (!isNonPassenger(t)) {
+		// ===== (A) 前駅発車後の「次は○○」案内 =====
+		// 200m 以下の位置から 200m 超に抜けた瞬間のみ発報
+		const left200 =
+			state.runtime.lastStopStation &&
+			!isFirstMeasurement &&
+			prevSameDist != null &&
+			prevSameDist <= 200 &&
+			ns.distance > 200;
 
-                const isExtraStopNext = !baseNextStop && isNextStop;
-                const isExtraPassNext = baseNextStop && !isNextStop;
+		if (left200) {
+			const nextName = state.runtime.lastStopStation;
 
-                if (isNextStop) {
-                    const word = isExtraStopNext ? "臨時停車" : "停車";
-                    speakOnce("leave200_" + nextName, `次は${nextName}、${word}`); // ★ キー名も変更
-                } else if (isExtraPassNext) {
-                    speakOnce("leave200_" + nextName, `次は${nextName}、臨時通過`);
-                }
-            }
-            state.runtime.lastStopStation = null;
-        }
+			if (nextName) {
+				const baseNextStop = baseIsStop(nextName);
+				const isNextStop = !state.runtime.passStations.has(nextName);
 
-        // ===== (B) 手前 400m の「まもなく○○」案内 =====
-        const isFirstMeasurement =
-            state.runtime.prevStationName === null &&
-            state.runtime.prevStationDistance === null;
+				const isExtraStopNext = !baseNextStop && isNextStop;
+				const isExtraPassNext = baseNextStop && !isNextStop;
 
-        const crossed400 =
-            !isFirstMeasurement &&
-            isStop &&
-            ns.distance <= 400 &&                         // ★ 300 → 400
-            (prevSameDist == null || prevSameDist > 400); // ★ 300 → 400
+				if (isNextStop) {
+					const word = isExtraStopNext ? "臨時停車" : "停車";
+					speakOnce(
+						"leave200_" + nextName,
+						`次は${nextName}、${word}`,
+					);
+				} else if (isExtraPassNext) {
+					speakOnce(
+						"leave200_" + nextName,
+						`次は${nextName}、臨時通過`,
+					);
+				}
+			}
+			state.runtime.lastStopStation = null;
+		}
 
-        if (crossed400) {
-            const stopWord = isExtraStop ? "臨時停車" : "停車";
-            speakOnce(
-                "arr400_" + key,
-                `まもなく${ns.name}、${stopWord}、${state.config.cars}両`,
-            );
-        }
+		// ===== (B) 手前 400m の「まもなく○○」案内 =====
+		const crossed400 =
+			!isFirstMeasurement &&
+			isStop &&
+			ns.distance <= 400 &&
+			(prevSameDist == null || prevSameDist > 400);
 
-        // ===== (C) 停止直前の案内：200m クロス時 =====
-        // 200m より外側 → 200m 以内に入った瞬間
-        const crossed200Stop =
-            !isFirstMeasurement &&
-            isStop &&
-            ns.distance <= 200 &&
-            (prevSameDist == null || prevSameDist > 200);
+		if (crossed400) {
+			const stopWord = isExtraStop ? "臨時停車" : "停車";
+			speakOnce(
+				"arr400_" + key,
+				`まもなく${ns.name}、${stopWord}、${state.config.cars}両`,
+			);
+		}
 
-        if (crossed200Stop && d > 5) {
-            const stopWord = isExtraStop ? "臨時停車" : "停車";
+		// ===== (C) 停止直前の案内：200m クロス時 =====
+		// 200m より外側 → 200m 以内に入った瞬間
+		const crossed200Stop =
+			!isFirstMeasurement &&
+			isStop &&
+			ns.distance <= 200 &&
+			(prevSameDist == null || prevSameDist > 200);
 
-            if (
-                state.config.cars === 8 &&
-                (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
-            ) {
-                speakOnce(
-                    "arr200_" + key,
-                    `${stopWord}、8両、${state.config.direction === "上り" ? ns.up8pos : ns.down8pos}あわせ`,
-                );
-            } else if (state.config.cars === 10) {
-                speakOnce("arr200_" + key, `${stopWord}、10両`);
-            } else {
-                speakOnce(
-                    "arr200_" + key,
-                    `${stopWord}、${state.config.cars}両、停止位置注意`,
-                );
-            }
+		if (crossed200Stop && d > 5) {
+			const stopWord = isExtraStop ? "臨時停車" : "停車";
 
-            // ★ (A) 「ある駅に到着しきった段階」の判定を 120m 以下に変更
-            //    → 次の「次は○○」案内のための nextStop をここで覚える
-            if (ns.distance <= 120) {         // ★ 50 → 120
-                const nextName = findNextStopStationName(ns.name);
-                state.runtime.lastStopStation = nextName || null;
-            }
-        }
+			if (
+				state.config.cars === 8 &&
+				(state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
+			) {
+				speakOnce(
+					"arr200_" + key,
+					`${stopWord}、8両、${
+						state.config.direction === "上り"
+							? ns.up8pos
+							: ns.down8pos
+					}あわせ`,
+				);
+			} else if (state.config.cars === 10) {
+				speakOnce("arr200_" + key, `${stopWord}、10両`);
+			} else {
+				speakOnce(
+					"arr200_" + key,
+					`${stopWord}、${state.config.cars}両、停止位置注意`,
+				);
+			}
 
-        // ===== 通過列車の案内（200m / 120m 部分はそのまま） =====
-        if (!isStop && ns.distance <= 200 && d <= 45) {
-            const passWord = isExtraPass ? "臨時通過" : "通過";
-            speakOnce("pass200_" + key, `種別${t}、${passWord}`);
-        }
-        if (!isStop && ns.distance <= 120 && d <= 30) {
-            const passWord = isExtraPass ? "臨時通過" : "通過";
-            speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
-        }
-    } else {
-        // 回送・試運転など
-        if (ns.distance <= 200 && d <= 45)
-            speakOnce("nonp200_" + key, `種別回送、ていつう確認`);
-        if (ns.distance <= 120 && d <= 30)
-            speakOnce("nonp120_" + key, `種別回送、ドアあつかい注意`);
-    }
+			// ★ 「到着しきった」駅を 120m 以内とみなし、次駅を計算
+			if (ns.distance <= 120) {
+				const nextName = findNextStopStationName(ns.name);
+				state.runtime.lastStopStation = nextName || null;
+			}
+		}
 
-    // ★ 次回比較用距離を保存
-    state.runtime.prevStationName = ns.name;
-    state.runtime.prevStationDistance = ns.distance;
+		// ===== 通過列車の案内（200m / 120m 部分はそのまま） =====
+		if (!isStop && ns.distance <= 200 && d <= 45) {
+			const passWord = isExtraPass ? "臨時通過" : "通過";
+			speakOnce("pass200_" + key, `種別${t}、${passWord}`);
+		}
+		if (!isStop && ns.distance <= 120 && d <= 30) {
+			const passWord = isExtraPass ? "臨時通過" : "通過";
+			speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
+		}
+	} else {
+		// 回送・試運転など
+		if (ns.distance <= 200 && d <= 45)
+			speakOnce("nonp200_" + key, `種別回送、ていつう確認`);
+		if (ns.distance <= 120 && d <= 30)
+			speakOnce("nonp120_" + key, `種別回送、ドアあつかい注意`);
+	}
+
+	// ★ 次回比較用距離を保存
+	state.runtime.prevStationName = ns.name;
+	state.runtime.prevStationDistance = ns.distance;
 }
 
 function otherSpeaks(ns) {
