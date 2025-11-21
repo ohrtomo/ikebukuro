@@ -559,6 +559,7 @@ function screenGuidance() {
 	const band5 = el("div", { class: "band band5" }, [
 		el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
 		el("div", { class: "clock", id: "clock" }, "00:00:00"),
+		el("div", { class: "clock", id: "delayInfo" }, ""),   // ★ 遅延表示
 	]);
 
 	root.append(band1, band2, band3, band4, band5);
@@ -596,6 +597,7 @@ function screenGuidance() {
 	root._cellNo = band4.querySelector("#cellNo");
 	root._cellDest = band4.querySelector("#cellDest");
 	root._clock = band5.querySelector("#clock");
+	root._delayInfo = band5.querySelector("#delayInfo");
 
 	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
 	band5.querySelector("#btnMenu").onclick = () => {
@@ -1379,6 +1381,48 @@ function getLineForStation(name) {
 	return null;
 }
 
+// ★ 遅延情報取得用：現在の列車が関係しそうな lineId を返す
+//   ・routeLine が確定していればそれを最優先
+//   ・未確定の場合は行先カテゴリから、必要最小限の路線だけを見る
+function getCurrentLineIdsForDelay() {
+    const ids = new Set();
+    const route = state.runtime.routeLine;        // "main" / "yuraku" / "toshima" / "sayama" / null
+    const destCat = getDestCategory(state.config.dest);  // "main" / "yuraku" / ...
+
+    if (route === "main") {
+        ids.add("L001");  // 池袋線
+    } else if (route === "toshima") {
+        ids.add("L003");  // 豊島線
+    } else if (route === "sayama") {
+        ids.add("L004");  // 狭山線
+    } else if (route === "yuraku") {
+        ids.add("L021");  // 西武有楽町線
+    } else {
+        // ルート未確定時：必要そうな路線だけ 1〜2本見る（可能な限り少なく）
+        if (destCat === "toshima") {
+            ids.add("L001"); // 池袋線区間
+            ids.add("L003"); // 豊島線
+        } else if (destCat === "sayama") {
+            ids.add("L001"); // 池袋線区間
+            ids.add("L004"); // 狭山線
+        } else if (destCat === "yuraku") {
+            ids.add("L001"); // 池袋線区間
+            ids.add("L021"); // 有楽町線
+        } else {
+            // それ以外は池袋線のみ
+            ids.add("L001");
+        }
+    }
+    return Array.from(ids);
+}
+
+// ★ 遅延検索用：現在案内中の列車番号を取得
+//   （必要に応じて manualTrainNo を使いたい場合はここにロジックを追加）
+function getCurrentTrainNoForDelay() {
+    return String(state.config.trainNo || "").trim();
+}
+
+
 // ==== 発着番線取得 ====
 // platform.json: dayType ("平日" / "土休日") → 駅名 → 番線番号 → [列車番号...]
 function getPlatformForStation(stationName) {
@@ -1611,6 +1655,7 @@ document.addEventListener("visibilitychange", () => {
 
 let clockTimer = null;
 let gpsTimer = null;
+let delayTimer = null;   // ★ 遅延更新用
 
 // ★ GPS 監視を行う共通関数（開始画面・案内画面共通）
 function startGpsWatch() {
@@ -1655,8 +1700,11 @@ function startGuidance() {
 			`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 	}, 200);
 
-	// ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
-	startGpsWatch();
+    // ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
+    startGpsWatch();
+
+    // ★ 遅延情報の定期取得を開始
+    startDelayWatch();
 }
 
 function stopGuidance() {
@@ -1672,6 +1720,9 @@ function stopGuidance() {
 		clearInterval(gpsTimer);
 		gpsTimer = null;
 	}
+	
+    // ★ 遅延情報更新も停止
+    stopDelayWatch();
 }
 
 function renderGuidance() {
@@ -1722,6 +1773,94 @@ function nearestStation(lat, lng) {
 	}
 	return best;
 }
+
+// ★ 遅延情報の取得＆画面反映
+async function fetchAndUpdateDelay() {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !state.runtime.started) return;
+
+    const delayEl = root._delayInfo;
+    if (!delayEl) return;
+
+    const trainNo = getCurrentTrainNoForDelay();
+    if (!trainNo) {
+        // 列車番号が未設定なら何も表示しない
+        delayEl.textContent = "";
+        delayEl.style.visibility = "hidden";
+        return;
+    }
+
+    const lineIds = getCurrentLineIdsForDelay();
+    let foundDelay = null;
+    let anyResponse = false;
+
+    for (const lineId of lineIds) {
+        try {
+            const res = await fetch(
+                `https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=${lineId}`,
+            );
+            if (!res.ok) continue;
+            anyResponse = true;
+
+            const data = await res.json();
+            const list = (data && data.train) || [];
+
+            const tr = list.find(
+                (t) => String(t.trainNo) === trainNo,
+            );
+            if (tr) {
+                const d = Number(tr.delay ?? 0);
+                if (!Number.isNaN(d)) {
+                    foundDelay = d;
+                }
+                break;
+            }
+        } catch (e) {
+            // 通信エラーは無視して次の路線へ
+        }
+    }
+
+    if (foundDelay != null) {
+        if (foundDelay > 0) {
+            // 遅延あり：例「遅延 05 分」
+            const m = String(foundDelay).padStart(2, "0");
+            delayEl.textContent = `遅延 ${m} 分`;
+            delayEl.style.visibility = "visible";
+            delayEl.style.opacity = "1";
+        } else {
+            // 遅れ 0 分 → 表示しない
+            delayEl.textContent = "";
+            delayEl.style.visibility = "hidden";
+        }
+    } else {
+        // 自列車の情報がどの路線にも見つからなかった
+        if (anyResponse) {
+            delayEl.textContent = "遅延不明";
+            delayEl.style.visibility = "visible";
+            delayEl.style.opacity = "0.4"; // うすい字
+        } else {
+            // そもそも取得できなかった場合は黙って消しておく
+            delayEl.textContent = "";
+            delayEl.style.visibility = "hidden";
+        }
+    }
+}
+
+// ★ 遅延更新タイマー開始（1分おき）
+function startDelayWatch() {
+    if (delayTimer) return;
+    fetchAndUpdateDelay(); // 起動時に一度実行
+    delayTimer = setInterval(fetchAndUpdateDelay, 60000);
+}
+
+// ★ 遅延更新タイマー停止
+function stopDelayWatch() {
+    if (delayTimer) {
+        clearInterval(delayTimer);
+        delayTimer = null;
+    }
+}
+
 
 function onPos(pos) {
 	const { latitude, longitude } = pos.coords;
