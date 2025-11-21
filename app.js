@@ -698,197 +698,187 @@ function openList(title, list, onPick) {
 	panel.appendChild(wrap);
 }
 
-// 臨時停車・通過 ＋ 着発線変更（統合版）
+// 臨時停車・通過 ＋ 着発線変更（UI: A-1）
 function openStopList() {
-	const modal = document.getElementById("menuModal");
-	const panel = modal.querySelector(".panel");
+    const modal = document.getElementById("menuModal");
+    const panel = modal.querySelector(".panel");
 
-	const stations = state.datasets.stations;
-	if (!stations) return;
+    const stations = state.datasets.stations;
+    if (!stations) return;
 
-	const kind = "stop";
+    const kind = "stop";
 
-	// 既に同じサブ画面が開いていればトグルで閉じる
-	const existing = panel.querySelector(
-		`.menu-subpanel[data-kind="${kind}"]`,
-	);
-	if (existing) {
-		existing.remove();
-		return;
-	}
+    // 既に同じサブ画面が開いていればトグルで閉じる
+    const existing = panel.querySelector(
+        `.menu-subpanel[data-kind="${kind}"]`,
+    );
+    if (existing) {
+        existing.remove();
+        return;
+    }
 
-	// 他のサブ画面は閉じる
-	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    // 他のサブ画面は閉じる
+    panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
 
-	const wrap = el(
-		"div",
-		{ class: "menu-subpanel", "data-kind": kind },
-		[
-			el("hr", { class: "sep" }),
-			el("h3", {}, "臨時停車・通過・着発線変更"),
-		],
-	);
+    const wrap = el(
+        "div",
+        { class: "menu-subpanel", "data-kind": kind },
+        [
+            el("hr", { class: "sep" }),
+            el("h3", {}, "臨時停車・通過・着発線変更"),
+        ],
+    );
 
-	const box = el("div", {
-		style: "max-height:50vh;overflow:auto;font-size:14px;",
-	});
+    const box = el("div", {
+        style: "max-height:50vh;overflow:auto;font-size:14px;",
+    });
 
-	// 駅名の並び順は、これまでの「臨時停車・通過」と同じにする
-	const names = Object.keys(stations);
+    // 駅名の並び順は、これまでの「臨時停車・通過」と同じ
+    const names = Object.keys(stations);
 
-	// platform.json（あれば使用）
-	const platforms = state.datasets.platforms || null;
-	const dayType = state.config.dayType || "平日";
-	const dayData = platforms && platforms[dayType] ? platforms[dayType] : null;
+    // platform.json（あれば使用）
+    const platforms = state.datasets.platforms || null;
+    const dayType = state.config.dayType || "平日";
+    const dayData = platforms && platforms[dayType] ? platforms[dayType] : null;
 
-	const overrides = state.runtime.manualPlatforms || {};
+    const overrides = state.runtime.manualPlatforms || {};
 
-	names.forEach((n) => {
-		// ★ 現在の設定：passStations に入っていれば通過、入っていなければ停車
-		const isCurrentlyPass = state.runtime.passStations.has(n);
-		const isStopNow = !isCurrentlyPass;
+    names.forEach((n) => {
+        // ★ 現在の設定：passStations に入っていれば通過、入っていなければ停車
+        const isCurrentlyPass = state.runtime.passStations.has(n);
+        const isStopNow = !isCurrentlyPass;
 
-		// 駅ごとのコンテナ（A-3：1駅あたり2行構成）
-		const block = el("div", {
-			class: "station-block",
-			"data-station": n,
-			style: "margin-bottom:6px;border-bottom:1px solid #ccc;padding-bottom:4px;",
-		});
+        // 駅ごとのコンテナ
+        const block = el("div", {
+            class: "station-block",
+            "data-station": n,
+            style: "margin-bottom:6px;border-bottom:1px solid #ccc;padding-bottom:4px;",
+        });
 
-		// --- 1行目：臨時停車・通過（チェックボックス） ---
-		const chk = el("input", { type: "checkbox" });
-		chk.checked = isStopNow; // チェック = 停車扱い
+        // 1行構成（A-1）：チェックボックス + 駅名 + 番線ボタン群
+        const row = el("div", {
+            class: "row",
+            style: "display:flex;align-items:center;flex-wrap:wrap;column-gap:4px;row-gap:2px;",
+        });
 
-		const row1 = el("div", { class: "row" }, [
-			el("label", {}, [chk, " ", n]),
-		]);
+        // --- 停車 / 通過 チェック ---
+        const chk = el("input", { type: "checkbox" });
+        chk.checked = isStopNow; // チェック = 停車扱い
 
-		block.appendChild(row1);
+        const label = el("label", {}, [chk, " ", n]);
+        row.appendChild(label);
 
-		// --- 2行目：着発線（番線）ボタン群（横一列） ---
-		let row2;
+        // --- 番線ボタン群（platform.json にデータがある駅のみ） ---
+        const stationPlatMap =
+            dayData && dayData[n] ? dayData[n] : null;
 
-		// この駅に platform.json のデータがあれば番線ボタンを出す
-		const stationPlatMap =
-			dayData && dayData[n] ? dayData[n] : null;
+        if (stationPlatMap) {
+            const platNos = Object.keys(stationPlatMap).sort(
+                (a, b) => parseInt(a, 10) - parseInt(b, 10),
+            );
 
-		if (stationPlatMap) {
-			const platNos = Object.keys(stationPlatMap).sort(
-				(a, b) => parseInt(a, 10) - parseInt(b, 10),
-			);
+            if (platNos.length > 0) {
+                const basePlat = getPlatformForStation(n); // この列車の標準番線（なければ null）
+                const currentOverride = overrides[n] || null;
 
-			if (platNos.length > 0) {
-				const basePlat = getPlatformForStation(n); // この列車の標準番線
-				const currentOverride = overrides[n] || null;
-				const selectedPlat =
-					currentOverride || basePlat || platNos[0];
+                // ★ 選択状態の初期値：
+                //   1) 手動 override があればそれ
+                //   2) なければ basePlat
+                //   3) どちらも無ければ「何も選択しない」
+                let selectedPlat = null;
+                if (currentOverride) {
+                    selectedPlat = currentOverride;
+                } else if (basePlat) {
+                    selectedPlat = basePlat;
+                }
 
-				const btnRow = el("div", {
-					class: "row plat-buttons",
-					style: "margin-left:1.5em;margin-top:2px;",
-				});
+                platNos.forEach((platNo) => {
+                    const btn = el(
+                        "button",
+                        {
+                            class:
+                                "btn secondary" +
+                                (selectedPlat &&
+                                String(platNo) === String(selectedPlat)
+                                    ? " active-selected"
+                                    : ""),
+                            type: "button",
+                            "data-plat": platNo,
+                            // ボタンサイズに対して 1/2 くらいの間隔イメージ
+                            style: "margin-left:4px;padding:2px 6px;",
+                        },
+                        `${platNo}番`,
+                    );
 
-				platNos.forEach((platNo) => {
-					const btn = el(
-						"button",
-						{
-							class:
-								"btn secondary" +
-								(String(platNo) === String(selectedPlat)
-									? " active-selected"
-									: ""),
-							type: "button",
-							"data-plat": platNo,
-							style: "margin-right:4px;padding:2px 6px;",
-						},
-						`${platNo}番`,
-					);
+                    btn.onclick = (e) => {
+                        // 同じ駅内の他番線ボタンの active を外し、このボタンだけ active に
+                        const parent = e.currentTarget.parentElement;
+                        parent
+                            .querySelectorAll("button[data-plat]")
+                            .forEach((b) =>
+                                b.classList.remove("active-selected"),
+                            );
+                        e.currentTarget.classList.add("active-selected");
+                    };
 
-					btn.onclick = (e) => {
-						// 同じ駅内の他番線ボタンの active を外し、このボタンだけ active に
-						const parent = e.currentTarget.parentElement;
-						parent
-							.querySelectorAll("button")
-							.forEach((b) =>
-								b.classList.remove("active-selected"),
-							);
-						e.currentTarget.classList.add("active-selected");
-					};
+                    row.appendChild(btn);
+                });
+            }
+        }
 
-					btnRow.appendChild(btn);
-				});
+        block.appendChild(row);
+        box.appendChild(block);
+    });
 
-				row2 = btnRow;
-			}
-		}
+    const done = el("button", { class: "btn", style: "margin-top:8px;" }, "決定");
+    done.onclick = () => {
+        const newStopSet = new Set();
+        const newOverrides = {};
 
-		// 番線データがない駅は、「番線設定なし」とだけ表示（B:1）
-		if (!row2) {
-			row2 = el(
-				"div",
-				{
-					class: "row",
-					style:
-						"margin-left:1.5em;margin-top:2px;font-size:12px;color:#666;",
-				},
-				"番線設定なし",
-			);
-		}
+        const blocks = box.querySelectorAll(".station-block");
 
-		block.appendChild(row2);
+        blocks.forEach((block) => {
+            const stationName = block.getAttribute("data-station");
+            if (!stationName) return;
 
-		box.appendChild(block);
-	});
+            // 停車／通過の反映
+            const chk = block.querySelector('input[type="checkbox"]');
+            if (chk && chk.checked) {
+                newStopSet.add(stationName); // チェック = 停車駅
+            }
 
-	const done = el("button", { class: "btn", style: "margin-top:8px;" }, "決定");
-	done.onclick = () => {
-		const newStopSet = new Set();
-		const newOverrides = {};
+            // 番線の反映
+            const activePlatBtn = block.querySelector(
+                "button[data-plat].active-selected",
+            );
 
-		const blocks = box.querySelectorAll(".station-block");
+            const basePlat = getPlatformForStation(stationName);
+            const selectedPlat =
+                activePlatBtn && activePlatBtn.getAttribute("data-plat")
+                    ? activePlatBtn.getAttribute("data-plat")
+                    : null;
 
-		blocks.forEach((block) => {
-			const stationName = block.getAttribute("data-station");
-			if (!stationName) return;
+            // ★ 標準番線と異なる場合のみ「着発線変更」として保存
+            if (selectedPlat) {
+                if (!basePlat || String(selectedPlat) !== String(basePlat)) {
+                    newOverrides[stationName] = selectedPlat;
+                }
+            }
+        });
 
-			// 停車／通過の反映
-			const chk = block.querySelector('input[type="checkbox"]');
-			if (chk && chk.checked) {
-				newStopSet.add(stationName); // チェック = 停車駅
-			}
+        // 通過駅 = 全駅 - 停車駅
+        state.runtime.passStations = new Set(
+            names.filter((n) => !newStopSet.has(n)),
+        );
 
-			// 番線の反映
-			const activePlatBtn = block.querySelector(
-				".plat-buttons button.active-selected",
-			);
+        // 着発線変更の反映
+        state.runtime.manualPlatforms = newOverrides;
 
-			const basePlat = getPlatformForStation(stationName);
-			const selectedPlat =
-				activePlatBtn && activePlatBtn.getAttribute("data-plat")
-					? activePlatBtn.getAttribute("data-plat")
-					: null;
+        modal.classList.remove("active");
+    };
 
-			// 標準番線と異なる場合のみ「着発線変更」として保存
-			if (selectedPlat) {
-				if (!basePlat || String(selectedPlat) !== String(basePlat)) {
-					newOverrides[stationName] = selectedPlat;
-				}
-			}
-		});
-
-		// 通過駅 = 全駅 - 停車駅
-		state.runtime.passStations = new Set(
-			names.filter((n) => !newStopSet.has(n)),
-		);
-
-		// 着発線変更の反映
-		state.runtime.manualPlatforms = newOverrides;
-
-		modal.classList.remove("active");
-	};
-
-	wrap.append(box, done);
-	panel.appendChild(wrap);
+    wrap.append(box, done);
+    panel.appendChild(wrap);
 }
 
 // 音量設定・テスト
