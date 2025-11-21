@@ -1753,20 +1753,26 @@ function maybeSpeak(ns) {
             state.runtime.lastDepartPrevDist = null;
         }
 
-		// ===== (B) 手前 400m の「まもなく○○」案内 =====
-		const crossed400 =
-			!isFirstMeasurement &&
-			isStop &&
-			ns.distance <= 400 &&
-			(prevSameDist == null || prevSameDist > 400);
+        // ===== (B) 手前 400m の「まもなく○○」案内 =====
+        const crossed400 =
+            !isFirstMeasurement &&
+            isStop &&
+            ns.distance <= 400 &&
+            (prevSameDist == null || prevSameDist > 400);
 
-		if (crossed400) {
-			const stopWord = isExtraStop ? "臨時停車" : "停車";
-			speakOnce(
-				"arr400_" + key,
-				`まもなく${ns.name}、${stopWord}、${state.config.cars}両`,
-			);
-		}
+        if (crossed400) {
+            const stopWord = isExtraStop ? "臨時停車" : "停車";
+
+            // ★ 基本文言
+            let text = `まもなく${ns.name}、${stopWord}、${state.config.cars}両`;
+
+            // ★ この駅が着発線変更されている場合のみ付加
+            if (isPlatformChanged(ns.name)) {
+                text += "、着発線変更";
+            }
+
+            speakOnce("arr400_" + key, text);
+        }
 
         // ===== (C) 停止直前の案内：200m クロス時 =====
         // 200m より外側 → 200m 以内に入った瞬間
@@ -1779,37 +1785,28 @@ function maybeSpeak(ns) {
         if (crossed200Stop && d > 5) {
             const stopWord = isExtraStop ? "臨時停車" : "停車";
 
-            // ★ この駅で着発線変更されているか
-            const changedHere = isPlatformChanged(ns.name);
-
             if (
                 state.config.cars === 8 &&
                 (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
             ) {
-                let text = `${stopWord}、8両、${
-                    state.config.direction === "上り"
-                        ? ns.up8pos
-                        : ns.down8pos
-                }あわせ`;
-                if (changedHere) {
-                    text += "、着発線変更";
-                }
-                speakOnce("arr200_" + key, text);
+                speakOnce(
+                    "arr200_" + key,
+                    `${stopWord}、8両、${
+                        state.config.direction === "上り"
+                            ? ns.up8pos
+                            : ns.down8pos
+                    }あわせ`,
+                );
             } else if (state.config.cars === 10) {
-                let text = `${stopWord}、10両`;
-                if (changedHere) {
-                    text += "、着発線変更";
-                }
-                speakOnce("arr200_" + key, text);
+                speakOnce("arr200_" + key, `${stopWord}、10両`);
             } else {
-                let text = `${stopWord}、${state.config.cars}両、停止位置注意`;
-                if (changedHere) {
-                    text += "、着発線変更";
-                }
-                speakOnce("arr200_" + key, text);
+                speakOnce(
+                    "arr200_" + key,
+                    `${stopWord}、${state.config.cars}両、停止位置注意`,
+                );
             }
 
-            // ★ 「到着扱い」：停車駅 200m以内に入れば次駅を計算（※ここはすでに変更済みのはず）
+            // ★ 到着扱い：200m 以内なら次駅を覚える（ここはそのまま）
             if (ns.distance <= 200) {
                 if (!state.runtime.lastStopStation) {
                     const nextName = findNextStopStationName(ns.name);
