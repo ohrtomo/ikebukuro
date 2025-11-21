@@ -479,8 +479,8 @@ function screenStart() {
 			// ダイヤ上の基本停車駅から通過駅リストを構築
 			buildPassStationList();
 
-			// ★ 案内開始から20秒間は他の案内をミュート
-			state.runtime.muteUntil = Date.now() + 20000;
+			// ★ 案内開始から10秒間は他の案内をミュート
+			state.runtime.muteUntil = Date.now() + 10000;
 
 			// ★ 案内開始の音声
 			speakOnce("start_guidance", "案内を開始します");
@@ -574,11 +574,6 @@ function screenGuidance() {
 					{ class: "btn secondary", id: "m-stop" },
 					"臨時停車・通過",
 				),
-				el(
-					"button",
-					{ class: "btn secondary", id: "m-platform" },
-					"着発線変更",
-				),
 				el("button", { class: "btn secondary", id: "m-dest" }, "行先変更"),
 				el("button", { class: "btn secondary", id: "m-type" }, "種別変更"),
 				el("button", { class: "btn secondary", id: "m-train" }, "列番変更"),
@@ -632,7 +627,6 @@ function screenGuidance() {
 			state.config.type = v;
 		});
 	modal.querySelector("#m-stop").onclick = () => openStopList();
-	modal.querySelector("#m-platform").onclick = () => openPlatformList();
 	modal.querySelector("#m-train").onclick = () => openTrainChange();
 	modal.querySelector("#m-volume").onclick = () => openVolumePanel();
     modal.querySelector("#m-info").onclick = () => openOperationInfo(); // ★ 追加
@@ -704,12 +698,14 @@ function openList(title, list, onPick) {
 	panel.appendChild(wrap);
 }
 
-// 臨時停車・通過
+// 臨時停車・通過 ＋ 着発線変更（統合版）
 function openStopList() {
 	const modal = document.getElementById("menuModal");
 	const panel = modal.querySelector(".panel");
 
-	const names = Object.keys(state.datasets.stations);
+	const stations = state.datasets.stations;
+	if (!stations) return;
+
 	const kind = "stop";
 
 	// 既に同じサブ画面が開いていればトグルで閉じる
@@ -729,37 +725,164 @@ function openStopList() {
 		{ class: "menu-subpanel", "data-kind": kind },
 		[
 			el("hr", { class: "sep" }),
-			el("h3", {}, "臨時停車・通過"),
+			el("h3", {}, "臨時停車・通過・着発線変更"),
 		],
 	);
 
-	const box = el("div", { style: "max-height:50vh;overflow:auto;" });
+	const box = el("div", {
+		style: "max-height:50vh;overflow:auto;font-size:14px;",
+	});
+
+	// 駅名の並び順は、これまでの「臨時停車・通過」と同じにする
+	const names = Object.keys(stations);
+
+	// platform.json（あれば使用）
+	const platforms = state.datasets.platforms || null;
+	const dayType = state.config.dayType || "平日";
+	const dayData = platforms && platforms[dayType] ? platforms[dayType] : null;
+
+	const overrides = state.runtime.manualPlatforms || {};
 
 	names.forEach((n) => {
 		// ★ 現在の設定：passStations に入っていれば通過、入っていなければ停車
 		const isCurrentlyPass = state.runtime.passStations.has(n);
 		const isStopNow = !isCurrentlyPass;
 
+		// 駅ごとのコンテナ（A-3：1駅あたり2行構成）
+		const block = el("div", {
+			class: "station-block",
+			"data-station": n,
+			style: "margin-bottom:6px;border-bottom:1px solid #ccc;padding-bottom:4px;",
+		});
+
+		// --- 1行目：臨時停車・通過（チェックボックス） ---
 		const chk = el("input", { type: "checkbox" });
 		chk.checked = isStopNow; // チェック = 停車扱い
 
-		const row = el("label", {}, [chk, " ", n]);
-		box.appendChild(row);
+		const row1 = el("div", { class: "row" }, [
+			el("label", {}, [chk, " ", n]),
+		]);
+
+		block.appendChild(row1);
+
+		// --- 2行目：着発線（番線）ボタン群（横一列） ---
+		let row2;
+
+		// この駅に platform.json のデータがあれば番線ボタンを出す
+		const stationPlatMap =
+			dayData && dayData[n] ? dayData[n] : null;
+
+		if (stationPlatMap) {
+			const platNos = Object.keys(stationPlatMap).sort(
+				(a, b) => parseInt(a, 10) - parseInt(b, 10),
+			);
+
+			if (platNos.length > 0) {
+				const basePlat = getPlatformForStation(n); // この列車の標準番線
+				const currentOverride = overrides[n] || null;
+				const selectedPlat =
+					currentOverride || basePlat || platNos[0];
+
+				const btnRow = el("div", {
+					class: "row plat-buttons",
+					style: "margin-left:1.5em;margin-top:2px;",
+				});
+
+				platNos.forEach((platNo) => {
+					const btn = el(
+						"button",
+						{
+							class:
+								"btn secondary" +
+								(String(platNo) === String(selectedPlat)
+									? " active-selected"
+									: ""),
+							type: "button",
+							"data-plat": platNo,
+							style: "margin-right:4px;padding:2px 6px;",
+						},
+						`${platNo}番`,
+					);
+
+					btn.onclick = (e) => {
+						// 同じ駅内の他番線ボタンの active を外し、このボタンだけ active に
+						const parent = e.currentTarget.parentElement;
+						parent
+							.querySelectorAll("button")
+							.forEach((b) =>
+								b.classList.remove("active-selected"),
+							);
+						e.currentTarget.classList.add("active-selected");
+					};
+
+					btnRow.appendChild(btn);
+				});
+
+				row2 = btnRow;
+			}
+		}
+
+		// 番線データがない駅は、「番線設定なし」とだけ表示（B:1）
+		if (!row2) {
+			row2 = el(
+				"div",
+				{
+					class: "row",
+					style:
+						"margin-left:1.5em;margin-top:2px;font-size:12px;color:#666;",
+				},
+				"番線設定なし",
+			);
+		}
+
+		block.appendChild(row2);
+
+		box.appendChild(block);
 	});
 
-	const done = el("button", { class: "btn" }, "決定");
+	const done = el("button", { class: "btn", style: "margin-top:8px;" }, "決定");
 	done.onclick = () => {
-		const checks = box.querySelectorAll("input[type=checkbox]");
 		const newStopSet = new Set();
+		const newOverrides = {};
 
-		checks.forEach((c, i) => {
-			if (c.checked) newStopSet.add(names[i]); // チェック = 停車駅
+		const blocks = box.querySelectorAll(".station-block");
+
+		blocks.forEach((block) => {
+			const stationName = block.getAttribute("data-station");
+			if (!stationName) return;
+
+			// 停車／通過の反映
+			const chk = block.querySelector('input[type="checkbox"]');
+			if (chk && chk.checked) {
+				newStopSet.add(stationName); // チェック = 停車駅
+			}
+
+			// 番線の反映
+			const activePlatBtn = block.querySelector(
+				".plat-buttons button.active-selected",
+			);
+
+			const basePlat = getPlatformForStation(stationName);
+			const selectedPlat =
+				activePlatBtn && activePlatBtn.getAttribute("data-plat")
+					? activePlatBtn.getAttribute("data-plat")
+					: null;
+
+			// 標準番線と異なる場合のみ「着発線変更」として保存
+			if (selectedPlat) {
+				if (!basePlat || String(selectedPlat) !== String(basePlat)) {
+					newOverrides[stationName] = selectedPlat;
+				}
+			}
 		});
 
 		// 通過駅 = 全駅 - 停車駅
 		state.runtime.passStations = new Set(
 			names.filter((n) => !newStopSet.has(n)),
 		);
+
+		// 着発線変更の反映
+		state.runtime.manualPlatforms = newOverrides;
 
 		modal.classList.remove("active");
 	};
