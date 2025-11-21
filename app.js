@@ -1646,12 +1646,17 @@ function maybeSpeak(ns) {
 				);
 			}
 
-			// ★ 「到着しきった」駅を 120m 以内とみなし、次駅を計算
-			if (ns.distance <= 120) {
-				const nextName = findNextStopStationName(ns.name);
-				state.runtime.lastStopStation = nextName || null;
-			}
+			
 		}
+
+		// ★ ここから追加：200m以内に入ったら到着扱い（速度条件なし、クロス条件なし）
+        if (isStop && ns.distance <= 200) {
+            // まだ lastStopStation が未セットのときのみ計算（無駄な上書きを防止）
+            if (!state.runtime.lastStopStation) {
+                const nextName = findNextStopStationName(ns.name);
+                state.runtime.lastStopStation = nextName || null;
+            }
+        }
 
 		// ===== 通過列車の案内（200m / 120m 部分はそのまま） =====
 		if (!isStop && ns.distance <= 200 && d <= 45) {
