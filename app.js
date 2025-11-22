@@ -19,6 +19,7 @@ const state = {
         trainTable: [],
         carIcons: {},
         platforms: null,   // ★ 追加: 発着番線データ
+        stationIds: null,   // ★ 追加: 駅IDマスタ
     },
     config: {
         direction: "上り",
@@ -62,22 +63,31 @@ const state = {
 
 // ==== Load datasets ====
 async function loadData() {
-    const [stations, types, dests, ttable, carIcons, platforms] =
-        await Promise.all([
-            fetch("./data/stations.json").then((r) => r.json()),
-            fetch("./data/types.json").then((r) => r.json()),
-            fetch("./data/destinations.json").then((r) => r.json()),
-            fetch("./data/train_number_table.json").then((r) => r.json()),
-            fetch("./data/car_icons.json").then((r) => r.json()),
-            fetch("./data/platform.json").then((r) => r.json()),   // ★ 追加
-        ]);
+    const [
+        stations,
+        types,
+        dests,
+        ttable,
+        carIcons,
+        platforms,
+        stationIds,              // ★ 追加
+    ] = await Promise.all([
+        fetch("./data/stations.json").then((r) => r.json()),
+        fetch("./data/types.json").then((r) => r.json()),
+        fetch("./data/destinations.json").then((r) => r.json()),
+        fetch("./data/train_number_table.json").then((r) => r.json()),
+        fetch("./data/car_icons.json").then((r) => r.json()),
+        fetch("./data/platform.json").then((r) => r.json()),
+        fetch("./data/stationID.json").then((r) => r.json()),  // ★ 追加
+    ]);
 
-    state.datasets.stations   = stations;
-    state.datasets.types      = types;
-    state.datasets.dests      = dests;
-    state.datasets.trainTable = ttable;
-    state.datasets.carIcons   = carIcons;
-    state.datasets.platforms  = platforms;                         // ★ 追加
+    state.datasets.stations    = stations;
+    state.datasets.types       = types;
+    state.datasets.dests       = dests;
+    state.datasets.trainTable  = ttable;
+    state.datasets.carIcons    = carIcons;
+    state.datasets.platforms   = platforms;
+    state.datasets.stationIds  = stationIds;                   // ★ 追加
 }
 
 // ==== Speech ====
@@ -560,6 +570,7 @@ function screenGuidance() {
 		el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
 		el("div", { class: "clock", id: "clock" }, "00:00:00"),
 		el("div", { class: "clock", id: "delayInfo" }, ""),   // ★ 遅延表示
+        el("div", { class: "clock", id: "nextDepart" }, ""),      // ★ 次駅発車時刻
 	]);
 
 	root.append(band1, band2, band3, band4, band5);
@@ -598,6 +609,7 @@ function screenGuidance() {
 	root._cellDest = band4.querySelector("#cellDest");
 	root._clock = band5.querySelector("#clock");
 	root._delayInfo = band5.querySelector("#delayInfo");
+    root._nextDepart = band5.querySelector("#nextDepart"); 
 
 	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
 	band5.querySelector("#btnMenu").onclick = () => {
@@ -1372,6 +1384,8 @@ function getDestCategory(dest) {
 	return "main"; // 不明な場合は本線扱い
 }
 
+
+
 // ある駅名がどの路線配列に属しているかを返す
 function getLineForStation(name) {
 	if (MAIN_LINE_ORDER.includes(name)) return "main";
@@ -1380,6 +1394,23 @@ function getLineForStation(name) {
 	if (SAYAMA_LINE_ORDER.includes(name)) return "sayama";
 	return null;
 }
+
+// ★ 駅名から stationId を引く（stationID.json を全走査）
+function getStationIdByName(name) {
+    const data = state.datasets.stationIds;
+    if (!data) return null;
+
+    for (const stations of Object.values(data)) {
+        if (!Array.isArray(stations)) continue;
+        for (const s of stations) {
+            if (s.stationName === name) {
+                return s.stationId; // 例: "S0100IK"
+            }
+        }
+    }
+    return null;
+}
+
 
 // ★ 遅延情報取得用：現在の列車が関係しそうな lineId を返す
 //   ・routeLine が確定していればそれを最優先
@@ -1422,6 +1453,133 @@ function getCurrentTrainNoForDelay() {
     return String(state.config.trainNo || "").trim();
 }
 
+// ★ 次の停車駅の発車時刻を取得して表示
+async function fetchAndShowNextDeparture(nextStationName) {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._nextDepart) return;
+
+    const el = root._nextDepart;
+
+    // いったん消してから更新
+    el.textContent = "";
+    el.style.visibility = "hidden";
+
+    const stationId = getStationIdByName(nextStationName);
+    if (!stationId) {
+        // stationID.json に無い駅 → 何も表示しない
+        return;
+    }
+
+    const trainNo = getCurrentTrainNoForDelay();
+    if (!trainNo) return;
+
+    const dirApi = state.config.direction === "上り" ? "up" : "down";
+
+    // この列車が関係しそうな lineId （L001 / L003 / L004 / L021）
+    const lineIds = getCurrentLineIdsForDelay();
+
+    try {
+        const res = await fetch(
+            `https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/${stationId}/departures`,
+        );
+        if (!res.ok) return;
+
+        const data = await res.json();
+
+        // APIのキー揺れ対策：'departure' or '出発'
+        const depList =
+            data.departure ||
+            data.departures ||
+            data["出発"] ||
+            [];
+
+        let found = null;
+
+        for (const dep of depList) {
+            const lineId =
+                dep.lineId ||
+                dep.lineID ||
+                dep["路線ID"] ||
+                null;
+
+            // lineId が分かるときは、自列車の走る路線だけ見る
+            if (lineId && lineIds.length && !lineIds.includes(lineId)) {
+                continue;
+            }
+
+            const details =
+                dep.detail ||
+                dep.details ||
+                dep["detail"] ||
+                [];
+
+            for (const d of details) {
+                const dTrainNo = String(
+                    d.trainNo ||
+                        d["trainNo"] ||
+                        d["列車番号"] ||
+                        "",
+                ).trim();
+
+                if (dTrainNo !== trainNo) continue;
+
+                const dDir =
+                    d.direction ||
+                    d["direction"] ||
+                    d["方向"] ||
+                    null;
+
+                if (dDir && dDir !== dirApi) continue;
+
+                found = d;
+                break;
+            }
+            if (found) break;
+        }
+
+        if (!found) {
+            // 情報が取れなければ無表示
+            return;
+        }
+
+        // 時刻フィールドの揺れ対策
+        let hms =
+            (found.departureTime ||
+                found["departureTime"] ||
+                found["出発時間"] ||
+                found["出発Hms"] ||
+                found["出発HMS"] ||
+                found["出発時刻"] ||
+                ""
+            ).toString().trim();
+
+        if (!hms) return;
+
+        // 数字だけにして、HHMMSSに正規化
+        hms = hms.replace(/\D/g, ""); // 例: "093735"
+
+        if (hms.length === 4) {
+            // HHMM → HHMM00
+            hms = hms + "00";
+        } else if (hms.length === 3) {
+            // HMM → 0HMM00
+            hms = "0" + hms + "00";
+        } else if (hms.length < 3) {
+            return; // さすがに異常値なので無視
+        }
+
+        const padded = hms.slice(-6).padStart(6, "0");
+        const hh = padded.slice(0, 2);
+        const mm = padded.slice(2, 4);
+        const ss = padded.slice(4, 6);
+
+        // 例：「池袋　12:34:00　発」
+        el.textContent = `${nextStationName}　${hh}:${mm}:${ss}　発`;
+        el.style.visibility = "visible";
+    } catch (e) {
+        // 通信エラー時も無表示
+    }
+}
 
 // ==== 発着番線取得 ====
 // platform.json: dayType ("平日" / "土休日") → 駅名 → 番線番号 → [列車番号...]
@@ -1846,6 +2004,14 @@ async function fetchAndUpdateDelay() {
     }
 }
 
+// ★ 次駅発車時刻表示を消す
+function clearNextDepartureDisplay() {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._nextDepart) return;
+    root._nextDepart.textContent = "";
+    root._nextDepart.style.visibility = "hidden";
+}
+
 // ★ 遅延更新タイマー開始（1分おき）
 function startDelayWatch() {
     if (delayTimer) return;
@@ -1962,6 +2128,8 @@ function maybeSpeak(ns) {
         if (left200) {
             const nextName = state.runtime.lastStopStation;
 
+            clearNextDepartureDisplay();
+
             if (nextName) {
                 const baseNextStop = baseIsStop(nextName);
                 const isNextStop   = !state.runtime.passStations.has(nextName);
@@ -1990,6 +2158,9 @@ function maybeSpeak(ns) {
                     }
 
                     speakOnce("leave200_" + nextName, text);
+
+                    fetchAndShowNextDeparture(nextName);
+                    
                 } else if (isExtraPassNext) {
                     // ★ 臨時通過の案内は番線・着発線変更を読まない
                     speakOnce(
