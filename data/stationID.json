@@ -1,0 +1,416 @@
+{
+  "西武有楽町線": [
+    {
+      "stationId": "S0315KT",
+      "stationName": "小竹向原"
+    },
+    {
+      "stationId": "S0802SN",
+      "stationName": "新桜台"
+    },
+    {
+      "stationId": "S0801NR",
+      "stationName": "練馬"
+    }
+  ],
+  "多摩湖線": [
+    {
+      "stationId": "S1427HN",
+      "stationName": "萩山"
+    },
+    {
+      "stationId": "S1429YT",
+      "stationName": "八坂"
+    },
+    {
+      "stationId": "S1430YK",
+      "stationName": "武蔵大和"
+    },
+    {
+      "stationId": "S1431HG",
+      "stationName": "多摩湖"
+    },
+    {
+      "stationId": "S1426HN",
+      "stationName": "一橋学園"
+    },
+    {
+      "stationId": "S1424KK",
+      "stationName": "青梅街道"
+    },
+    {
+      "stationId": "S1423KK",
+      "stationName": "国分寺"
+    }
+  ],
+  "新宿線": [
+    {
+      "stationId": "S1400SS",
+      "stationName": "西武新宿"
+    },
+    {
+      "stationId": "S1401TM",
+      "stationName": "高田馬場"
+    },
+    {
+      "stationId": "S1402TS",
+      "stationName": "下落合"
+    },
+    {
+      "stationId": "S1403NK",
+      "stationName": "中井"
+    },
+    {
+      "stationId": "S1404AO",
+      "stationName": "新井薬師前"
+    },
+    {
+      "stationId": "S1405ND",
+      "stationName": "沼袋"
+    },
+    {
+      "stationId": "S1406NT",
+      "stationName": "野方"
+    },
+    {
+      "stationId": "S1407GT",
+      "stationName": "都立家政"
+    },
+    {
+      "stationId": "S1408SG",
+      "stationName": "鷺ノ宮"
+    },
+    {
+      "stationId": "S1409NM",
+      "stationName": "下井草"
+    },
+    {
+      "stationId": "S1410IZ",
+      "stationName": "井荻"
+    },
+    {
+      "stationId": "S1411KJ",
+      "stationName": "上井草"
+    },
+    {
+      "stationId": "S1412KM",
+      "stationName": "上石神井"
+    },
+    {
+      "stationId": "S1413MK",
+      "stationName": "武蔵関"
+    },
+    {
+      "stationId": "S1414HD",
+      "stationName": "東伏見"
+    },
+    {
+      "stationId": "S1415NS",
+      "stationName": "西武柳沢"
+    },
+    {
+      "stationId": "S1416ZZ",
+      "stationName": "田無"
+    },
+    {
+      "stationId": "S1417HA",
+      "stationName": "花小金井"
+    },
+    {
+      "stationId": "S1418KM",
+      "stationName": "小平"
+    },
+    {
+      "stationId": "S1419HM",
+      "stationName": "久米川"
+    },
+    {
+      "stationId": "S1420HG",
+      "stationName": "東村山"
+    },
+    {
+      "stationId": "S1421YU",
+      "stationName": "所沢"
+    },
+    {
+      "stationId": "S1422MS",
+      "stationName": "航空公園"
+    },
+    {
+      "stationId": "S1423ON",
+      "stationName": "新所沢"
+    },
+    {
+      "stationId": "S1424KH",
+      "stationName": "入曽"
+    },
+    {
+      "stationId": "S1425SR",
+      "stationName": "狭山市"
+    },
+    {
+      "stationId": "S1426TG",
+      "stationName": "新狭山"
+    },
+    {
+      "stationId": "S1427HK",
+      "stationName": "南大塚"
+    },
+    {
+      "stationId": "S1428SN",
+      "stationName": "本川越"
+    }
+  ],
+  "拝島線": [
+    {
+      "stationId": "S1420HG",
+      "stationName": "東村山"
+    },
+    {
+      "stationId": "S1428TR",
+      "stationName": "萩山"
+    },
+    {
+      "stationId": "S1432KO",
+      "stationName": "小川"
+    },
+    {
+      "stationId": "S1433HG",
+      "stationName": "東大和市"
+    },
+    {
+      "stationId": "S1434HK",
+      "stationName": "玉川上水"
+    },
+    {
+      "stationId": "S1435HM",
+      "stationName": "武蔵砂川"
+    },
+    {
+      "stationId": "S1436HS",
+      "stationName": "西武立川"
+    },
+    {
+      "stationId": "S1437HJ",
+      "stationName": "拝島"
+    }
+  ],
+  "多摩川線": [
+    {
+      "stationId": "S2800MS",
+      "stationName": "武蔵境"
+    },
+    {
+      "stationId": "S2801NS",
+      "stationName": "新小金井"
+    },
+    {
+      "stationId": "S2802TZ",
+      "stationName": "多磨"
+    },
+    {
+      "stationId": "S2803NJ",
+      "stationName": "白糸台"
+    },
+    {
+      "stationId": "S2804KK",
+      "stationName": "競艇場前"
+    },
+    {
+      "stationId": "S2805ST",
+      "stationName": "是政"
+    }
+  ],
+  "国分寺線": [
+    {
+      "stationId": "S1423KK",
+      "stationName": "国分寺"
+    },
+    {
+      "stationId": "S1438KG",
+      "stationName": "恋ヶ窪"
+    },
+    {
+      "stationId": "S1439YG",
+      "stationName": "鷹の台"
+    },
+    {
+      "stationId": "S1440ZG",
+      "stationName": "小川"
+    },
+    {
+      "stationId": "S1441KK",
+      "stationName": "東村山"
+    }
+  ],
+  "池袋線": [
+    {
+      "stationId": "S0100IK",
+      "stationName": "池袋"
+    },
+    {
+      "stationId": "S0101SC",
+      "stationName": "椎名町"
+    },
+    {
+      "stationId": "S0102HI",
+      "stationName": "東長崎"
+    },
+    {
+      "stationId": "S0103EK",
+      "stationName": "江古田"
+    },
+    {
+      "stationId": "S0104SD",
+      "stationName": "桜台"
+    },
+    {
+      "stationId": "S0105NE",
+      "stationName": "練馬"
+    },
+    {
+      "stationId": "S0106NM",
+      "stationName": "中村橋"
+    },
+    {
+      "stationId": "S0107HU",
+      "stationName": "富士見台"
+    },
+    {
+      "stationId": "S0108SJ",
+      "stationName": "練馬高野台"
+    },
+    {
+      "stationId": "S0109ST",
+      "stationName": "石神井公園"
+    },
+    {
+      "stationId": "S0110HZ",
+      "stationName": "大泉学園"
+    },
+    {
+      "stationId": "S0111HK",
+      "stationName": "保谷"
+    },
+    {
+      "stationId": "S0112HM",
+      "stationName": "ひばりヶ丘"
+    },
+    {
+      "stationId": "S0113GY",
+      "stationName": "東久留米"
+    },
+    {
+      "stationId": "S0114HB",
+      "stationName": "清瀬"
+    },
+    {
+      "stationId": "S0115SJ",
+      "stationName": "秋津"
+    },
+    {
+      "stationId": "S0116OE",
+      "stationName": "所沢"
+    },
+    {
+      "stationId": "S0117AH",
+      "stationName": "西所沢"
+    },
+    {
+      "stationId": "S0118HB",
+      "stationName": "小手指"
+    },
+    {
+      "stationId": "S0119SG",
+      "stationName": "狭山ヶ丘"
+    },
+    {
+      "stationId": "S0120HO",
+      "stationName": "武蔵藤沢"
+    },
+    {
+      "stationId": "S0121HB",
+      "stationName": "稲荷山公園"
+    },
+    {
+      "stationId": "S0122HR",
+      "stationName": "入間市"
+    },
+    {
+      "stationId": "S0123HS",
+      "stationName": "仏子"
+    },
+    {
+      "stationId": "S0124HN",
+      "stationName": "元加治"
+    },
+    {
+      "stationId": "S0125HS",
+      "stationName": "飯能"
+    },
+    {
+      "stationId": "S0126HS",
+      "stationName": "東飯能"
+    },
+    {
+      "stationId": "S0127HM",
+      "stationName": "元加治（多客臨時）"
+    },
+    {
+      "stationId": "S0128HI",
+      "stationName": "高麗"
+    },
+    {
+      "stationId": "S0129HR",
+      "stationName": "武蔵横手"
+    },
+    {
+      "stationId": "S0130KI",
+      "stationName": "東吾野"
+    },
+    {
+      "stationId": "S0131AK",
+      "stationName": "吾野"
+    },
+    {
+      "stationId": "S0132HO",
+      "stationName": "正丸"
+    },
+    {
+      "stationId": "S0133HS",
+      "stationName": "芦ヶ久保"
+    },
+    {
+      "stationId": "S0134HI",
+      "stationName": "横瀬"
+    },
+    {
+      "stationId": "S0135HS",
+      "stationName": "西武秩父"
+    }
+  ],
+  "狭山線": [
+    {
+      "stationId": "S0117AH",
+      "stationName": "西所沢"
+    },
+    {
+      "stationId": "S0440TZ",
+      "stationName": "西武球場前"
+    }
+  ],
+  "山口線": [
+    {
+      "stationId": "S0440TZ",
+      "stationName": "西武球場前"
+    },
+    {
+      "stationId": "S0441TT",
+      "stationName": "遊園地西"
+    },
+    {
+      "stationId": "S0442YM",
+      "stationName": "西武園ゆうえんち"
+    }
+  ]
+}
