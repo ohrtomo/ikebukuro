@@ -1398,19 +1398,30 @@ function getLineForStation(name) {
 // ★ 駅名から stationId を引く（stationID.json を全走査）
 function getStationIdByName(name) {
     const data = state.datasets.stationIds;
-    if (!data) return null;
+    if (!data || !name) return null;
 
-    for (const stations of Object.values(data)) {
-        if (!Array.isArray(stations)) continue;
-        for (const s of stations) {
-            if (s.stationName === name) {
-                return s.stationId; // 例: "S0100IK"
+    // 正規化：空白除去・全角半角統一・濁点分解は行わない
+    const key = name.trim();
+
+    for (const groupStations of Object.values(data)) {
+        if (!Array.isArray(groupStations)) continue;
+        for (const s of groupStations) {
+            if (!s.stationName) continue;
+
+            const cand = s.stationName.trim();
+
+            // 完全一致（最優先）
+            if (cand === key) return s.stationId;
+
+            // 部分一致（次）
+            // 例：「所沢」「所沢（多客臨時）」などを拾う
+            if (cand.includes(key) || key.includes(cand)) {
+                return s.stationId;
             }
         }
     }
     return null;
 }
-
 
 // ★ 遅延情報取得用：現在の列車が関係しそうな lineId を返す
 //   ・routeLine が確定していればそれを最優先
@@ -1452,6 +1463,31 @@ function getCurrentLineIdsForDelay() {
 function getCurrentTrainNoForDelay() {
     return String(state.config.trainNo || "").trim();
 }
+
+// ★ 出発時刻フィールドを色々な揺れに対応して取り出す
+function extractDepartureHms(detail) {
+    if (!detail) return null;
+
+    // 1) まずは今回あなたが指定している "departureHms"
+    let raw =
+        detail.departureHms ||
+        detail.departureTime ||        // 英語名その1
+        detail["出発時間"] ||          // 日本語キー
+        detail["出発Hms"] ||          // 例に出てきたブレたキー
+        null;
+
+    if (!raw) return null;
+
+    // 数字以外を全部削る & 6桁になるようにゼロ埋め
+    raw = String(raw).replace(/\D/g, "").padStart(6, "0");
+
+    const hh = raw.slice(0, 2);
+    const mm = raw.slice(2, 4);
+    const ss = raw.slice(4, 6);
+
+    return `${hh}:${mm}:${ss}`; // "12:14:00" の形式に整形
+}
+
 
 // ★ 次の停車駅の発車時刻を取得して表示
 async function fetchAndShowNextDeparture(nextStationName) {
@@ -1537,44 +1573,20 @@ async function fetchAndShowNextDeparture(nextStationName) {
             if (found) break;
         }
 
-        if (!found) {
+         if (!found) {
             // 情報が取れなければ無表示
             return;
         }
 
-        // 時刻フィールドの揺れ対策
-        let hms =
-            (found.departureTime ||
-                found["departureTime"] ||
-                found["出発時間"] ||
-                found["出発Hms"] ||
-                found["出発HMS"] ||
-                found["出発時刻"] ||
-                ""
-            ).toString().trim();
-
-        if (!hms) return;
-
-        // 数字だけにして、HHMMSSに正規化
-        hms = hms.replace(/\D/g, ""); // 例: "093735"
-
-        if (hms.length === 4) {
-            // HHMM → HHMM00
-            hms = hms + "00";
-        } else if (hms.length === 3) {
-            // HMM → 0HMM00
-            hms = "0" + hms + "00";
-        } else if (hms.length < 3) {
-            return; // さすがに異常値なので無視
+        // ★ departureHms（＋揺れ対策）から "HH:MM:SS" を取り出す
+        const hms = extractDepartureHms(found);
+        if (!hms) {
+            // 時刻が取れなければ表示しない
+            return;
         }
 
-        const padded = hms.slice(-6).padStart(6, "0");
-        const hh = padded.slice(0, 2);
-        const mm = padded.slice(2, 4);
-        const ss = padded.slice(4, 6);
-
         // 例：「池袋　12:34:00　発」
-        el.textContent = `${nextStationName}　${hh}:${mm}:${ss}　発`;
+        el.textContent = `${nextStationName}　${hms}　発`;
         el.style.visibility = "visible";
     } catch (e) {
         // 通信エラー時も無表示
