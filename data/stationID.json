@@ -289,59 +289,59 @@
       "stationName": "大泉学園"
     },
     {
-      "stationId": "S0111HK",
+      "stationId": "S0120HO",
       "stationName": "保谷"
     },
     {
-      "stationId": "S0112HM",
+      "stationId": "S0121HB",
       "stationName": "ひばりヶ丘"
     },
     {
-      "stationId": "S0113GY",
+      "stationId": "S0122HR",
       "stationName": "東久留米"
     },
     {
-      "stationId": "S0114HB",
+      "stationId": "S0130KI",
       "stationName": "清瀬"
     },
     {
-      "stationId": "S0115SJ",
+      "stationId": "S0131AK",
       "stationName": "秋津"
     },
     {
-      "stationId": "S0116OE",
+      "stationId": "S0440TZ",
       "stationName": "所沢"
     },
     {
-      "stationId": "S0117AH",
+      "stationId": "S0145NT",
       "stationName": "西所沢"
     },
     {
-      "stationId": "S0118HB",
+      "stationId": "S0150KS",
       "stationName": "小手指"
     },
     {
-      "stationId": "S0119SG",
+      "stationId": "S0151SG",
       "stationName": "狭山ヶ丘"
     },
     {
-      "stationId": "S0120HO",
+      "stationId": "S0152MH",
       "stationName": "武蔵藤沢"
     },
     {
-      "stationId": "S0121HB",
+      "stationId": "S0153IN",
       "stationName": "稲荷山公園"
     },
     {
-      "stationId": "S0122HR",
+      "stationId": "S0154IM",
       "stationName": "入間市"
     },
     {
-      "stationId": "S0123HS",
+      "stationId": "S0155BU",
       "stationName": "仏子"
     },
     {
-      "stationId": "S0124HN",
+      "stationId": "S0156MJ",
       "stationName": "元加治"
     },
     {
@@ -349,7 +349,7 @@
       "stationName": "飯能"
     },
     {
-      "stationId": "S0126HS",
+      "stationId": "S0160HA",
       "stationName": "東飯能"
     },
     {
@@ -395,7 +395,11 @@
       "stationName": "西所沢"
     },
     {
-      "stationId": "S0440TZ",
+      "stationId": "S0210SI",
+      "stationName": "下山口"
+    },
+    {
+      "stationId": "S0215SK",
       "stationName": "西武球場前"
     }
   ],
