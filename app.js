@@ -1511,8 +1511,8 @@ async function fetchAndShowNextDeparture(nextStationName) {
 
     const dirApi = state.config.direction === "上り" ? "up" : "down";
 
-    // この列車が関係しそうな lineId （L001 / L003 / L004 / L021）
-    const lineIds = getCurrentLineIdsForDelay();
+    // ★★ ココの lineIds 取得は削除
+    // const lineIds = getCurrentLineIdsForDelay();
 
     try {
         const res = await fetch(
@@ -1532,16 +1532,16 @@ async function fetchAndShowNextDeparture(nextStationName) {
         let found = null;
 
         for (const dep of depList) {
-            const lineId =
-                dep.lineId ||
-                dep.lineID ||
-                dep["路線ID"] ||
-                null;
-
-            // lineId が分かるときは、自列車の走る路線だけ見る
-            if (lineId && lineIds.length && !lineIds.includes(lineId)) {
-                continue;
-            }
+            // ★★ lineId フィルタも削除
+            // const lineId =
+            //     dep.lineId ||
+            //     dep.lineID ||
+            //     dep["路線ID"] ||
+            //     null;
+            //
+            // if (lineId && lineIds.length && !lineIds.includes(lineId)) {
+            //     continue;
+            // }
 
             const details =
                 dep.detail ||
@@ -1573,17 +1573,14 @@ async function fetchAndShowNextDeparture(nextStationName) {
             if (found) break;
         }
 
-         if (!found) {
+        if (!found) {
             // 情報が取れなければ無表示
             return;
         }
 
-        // ★ departureHms（＋揺れ対策）から "HH:MM:SS" を取り出す
+        // ★ ここは先ほどの extractDepartureHms を利用
         const hms = extractDepartureHms(found);
-        if (!hms) {
-            // 時刻が取れなければ表示しない
-            return;
-        }
+        if (!hms) return;
 
         // 例：「池袋　12:34:00　発」
         el.textContent = `${nextStationName}　${hms}　発`;
