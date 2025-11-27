@@ -128,13 +128,16 @@ input[type="text"], select, input[type="number"] {
     object-fit: contain;
 }
 
-/* 音声停止ボタンの通常時 */
-.btn.voice-toggle {
-    background-color: #cc5555;  /* 少し落ち着いた赤 */
+/* 音声停止ボタンがオンのときの見た目 */
+.btn.muted,
+.btn.secondary.muted {
+    background-color: #b44;  /* くすんだ赤系 */
+    color: #fff;
+    border-color: #922;
 }
 
-/* 音声停止ボタン押下中（くすんだ赤） */
-.btn.voice-toggle.muted {
-    background-color: #884444;
-    opacity: 0.85;
+/* ホバー時に少し濃く */
+.btn.muted:hover,
+.btn.secondary.muted:hover {
+    background-color: #a33;
 }
