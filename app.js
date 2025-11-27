@@ -61,7 +61,8 @@ const state = {
         startupMode: false,         // 起動モード中かどうか
         startupFixed: false,        // 起動モードで一度「現在駅」を確定したか
         startupCandidate: null,     // 起動判定中の候補駅名
-        startupCount: 0,            // 同じ駅を何回連続で見たか        
+        startupCount: 0,            // 同じ駅を何回連続で見たか  
+        voiceMuted: false,      // 一時ミュートフラグ
     },
 };
 
@@ -120,7 +121,14 @@ function speakOnce(key, text) {
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = "ja-JP";
 
-    const vol = state.config.voiceVolume;
+    // ★ 音量反映（0.0〜1.0）＋一時ミュート
+    let vol = state.config.voiceVolume;
+
+    // 「音声停止」ボタン押下中は強制 0
+    if (state.runtime.voiceMuted) {
+        vol = 0;
+    }
+
     utter.volume =
         typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
 
@@ -576,12 +584,20 @@ function screenGuidance() {
 		el("div", { class: "cell", id: "cellDest" }, "----"),
 	]);
 	const band5 = el("div", { class: "band band5" }, [
-		el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
-		el("div", { class: "clock", id: "clock" }, "00:00:00"),
-		el("div", { class: "clock", id: "delayInfo" }, ""),   // ★ 遅延表示
-        el("div", { class: "clock", id: "nextDepart" }, ""),      // ★ 次駅発車時刻
-        el("div", { class: "clock", id: "nextDepartDebug" }, ""), // ★ デバッグ用
-	]);
+        el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
+
+        // ★ 音声停止ボタン（トグルでミュート）
+        el(
+            "button",
+            { class: "btn secondary", id: "btnVoiceMute" },
+            "音声停止"
+        ),
+
+        el("div", { class: "clock", id: "clock" }, "00:00:00"),
+        el("div", { class: "clock", id: "delayInfo" }, ""),        // ★ 遅延表示
+        el("div", { class: "clock", id: "nextDepart" }, ""),       // ★ 次駅発車時刻
+        el("div", { class: "clock", id: "nextDepartDebug" }, ""),  // ★ デバッグ用
+    ]);
 
 	root.append(band1, band2, band3, band4, band5);
 
@@ -622,6 +638,7 @@ function screenGuidance() {
 	root._delayInfo = band5.querySelector("#delayInfo");
     root._nextDepart = band5.querySelector("#nextDepart"); 
     root._nextDepartDebug = band5.querySelector("#nextDepartDebug"); 
+    root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
 	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
 	band5.querySelector("#btnMenu").onclick = () => {
@@ -668,6 +685,22 @@ function screenGuidance() {
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
+
+    // ★ 音声停止ボタンの動作
+    if (root._btnVoiceMute) {
+        root._btnVoiceMute.onclick = () => {
+            // フラグをトグル
+            state.runtime.voiceMuted = !state.runtime.voiceMuted;
+
+            if (state.runtime.voiceMuted) {
+                // ミュート中: ボタンをくすんだ赤に
+                root._btnVoiceMute.classList.add("muted");
+            } else {
+                // ミュート解除
+                root._btnVoiceMute.classList.remove("muted");
+            }
+        };
+    }
 
 
 	return root;
@@ -1946,8 +1979,17 @@ function startGpsWatch() {
 }
 
 function startGuidance() {
+    // ★ runtime のショートカット
     const rt = state.runtime;
 
+    // ★ 案内開始時は一時ミュート解除
+    rt.voiceMuted = false;
+    const g = document.getElementById("screen-guidance");
+    if (g && g._btnVoiceMute) {
+        g._btnVoiceMute.classList.remove("muted");
+    }
+
+    // ★ ルート情報・フラグを初期化
     rt.routeLocked = false;
     rt.routeLine = null;
     rt.started = true;
@@ -1967,7 +2009,6 @@ function startGuidance() {
     startStartupLocationDetection();
 
     // ★ UI の残りもリセット（遅延表示・次発時刻・音声表示・GPS表示）
-    const g = document.getElementById("screen-guidance");
     if (g) {
         if (g._speechText) g._speechText.textContent = "";
         if (g._gpsStatus) g._gpsStatus.textContent = "";
@@ -1979,16 +2020,16 @@ function startGuidance() {
     }
 
     // ★ 案内画面中は画面消灯を防止
-	requestWakeLock();
+    requestWakeLock();
 
-	renderGuidance();
+    renderGuidance();
 
-	// 時計表示
-	clockTimer = setInterval(() => {
-		const d = new Date();
-		document.getElementById("screen-guidance")._clock.textContent =
-			`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-	}, 200);
+    // 時計表示
+    clockTimer = setInterval(() => {
+        const d = new Date();
+        document.getElementById("screen-guidance")._clock.textContent =
+            `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+    }, 200);
 
     // ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
     startGpsWatch();
@@ -1998,9 +2039,10 @@ function startGuidance() {
 }
 
 function stopGuidance() {
-	// ★ 案内終了：状態リセット＆画面消灯許可
-	state.runtime.started = false;
-	releaseWakeLock();
+    // ★ 案内終了：状態リセット＆画面消灯許可
+    state.runtime.started = false;
+    state.runtime.voiceMuted = false;   // ★ 追加
+    releaseWakeLock();
 
 	if (clockTimer) {
 		clearInterval(clockTimer);
