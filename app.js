@@ -662,7 +662,7 @@ function screenGuidance() {
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
-    
+
 	// ★ 追加: 「とじる」ボタンのハンドラ
     modal.querySelector("#m-close").onclick = () => {
         modal.classList.remove("active");
@@ -1447,33 +1447,35 @@ function getStationIdByName(name) {
 //   ・未確定の場合は行先カテゴリから、必要最小限の路線だけを見る
 function getCurrentLineIdsForDelay() {
     const ids = new Set();
-    const route = state.runtime.routeLine;        // "main" / "yuraku" / "toshima" / "sayama" / null
-    const destCat = getDestCategory(state.config.dest);  // "main" / "yuraku" / ...
+    const route   = state.runtime.routeLine;           // "main" / "yuraku" / "toshima" / "sayama" / null
+    const destCat = getDestCategory(state.config.dest);
 
+    // --- ルート確定済みの場合 ---
     if (route === "main") {
-        ids.add("L001");  // 池袋線
+        ids.add("L001");        // 池袋線
     } else if (route === "toshima") {
-        ids.add("L003");  // 豊島線
+        ids.add("L003");        // 豊島線
     } else if (route === "sayama") {
-        ids.add("L004");  // 狭山線
+        ids.add("L002");        // 狭山線（★ 修正）
     } else if (route === "yuraku") {
-        ids.add("L021");  // 西武有楽町線
+        ids.add("L005");        // 有楽町線（★ 修正）
     } else {
-        // ルート未確定時：必要そうな路線だけ 1〜2本見る（可能な限り少なく）
+        // --- ルート未確定の場合（行先から推定） ---
         if (destCat === "toshima") {
-            ids.add("L001"); // 池袋線区間
-            ids.add("L003"); // 豊島線
+            ids.add("L001");    // 池袋線区間
+            ids.add("L003");    // 豊島線
         } else if (destCat === "sayama") {
-            ids.add("L001"); // 池袋線区間
-            ids.add("L004"); // 狭山線
+            ids.add("L001");    // 池袋線区間
+            ids.add("L002");    // 狭山線（★ 修正）
         } else if (destCat === "yuraku") {
-            ids.add("L001"); // 池袋線区間
-            ids.add("L021"); // 有楽町線
+            ids.add("L001");    // 池袋線区間
+            ids.add("L005");    // 有楽町線（★ 修正）
         } else {
-            // それ以外は池袋線のみ
+            // それ以外は池袋線だけ見る
             ids.add("L001");
         }
     }
+
     return Array.from(ids);
 }
 
@@ -1790,55 +1792,97 @@ function findNextStopStationName(fromName) {
 	return null;
 }
 
-// ==== ルート確定ロジック ====
-// ns: nearestStation() の結果オブジェクト
+// ==== ルート確定ロジック（池袋線 / 狭山線 / 有楽町線 / 豊島線） ====
+// ns: nearestStation() の結果オブジェクト { name, distance, ... }
 function updateRouteLock(ns) {
-	if (!ns) return;
+    if (!ns) return;
 
-	// すでに確定済みなら何もしない
-	if (state.runtime.routeLocked && state.runtime.routeLine) return;
+    const dir  = state.config.direction;  // "上り" / "下り"
+    const dest = state.config.dest;       // 行先（例: "小竹向原", "豊島園", "西武球場前" など）
 
-	const dir = state.config.direction;      // "上り" / "下り"
-	const destCat = getDestCategory(state.config.dest); // "main" / "yuraku" / ...
+    // これまでの判定結果
+    let newRoute = state.runtime.routeLine || null;
+    // routeLine の値はこれまで通り:
+    //   "main"   = 池袋線
+    //   "sayama" = 狭山線
+    //   "yuraku" = 有楽町線
+    //   "toshima"= 豊島線
 
-	// 1) 池袋線 下り：東長崎 を通過したら「本線」で確定
-	//    → ここから先、新桜台が近づいても有楽町線は無視したい
-	if (dir === "下り" && ns.name === "東長崎") {
-		state.runtime.routeLocked = true;
-		state.runtime.routeLine = "main";
-		return;
-	}
+    // --- ① 狭山線（西武球場前 / 西所沢 周辺） --------------------------
 
-	// 2) 練馬 付近でルート確定
-	if (ns.name === "練馬") {
-		let line = "main";
+    // 最寄り駅が西武球場前 → 狭山線（とくに上りは確実に狭山線）
+    if (ns.name === "西武球場前") {
+        newRoute = "sayama";
+    }
 
-		// 練馬から上りで有楽町線方面（小竹向原行き） → 有楽町線
-		if (dir === "上り" && destCat === "yuraku") {
-			line = "yuraku";
-		}
-		// 練馬から下りで豊島線方面（豊島園行き） → 豊島線
-		else if (dir === "下り" && destCat === "toshima") {
-			line = "toshima";
-		}
-		// それ以外 → 池袋線本線として扱う
+    // 西所沢 200m 以内
+    if (ns.name === "西所沢" && ns.distance <= 200) {
+        if (dir === "下り") {
+            // 下りで西所沢→(下山口 / 西武球場前) 行き = 狭山線
+            if (dest === "下山口" || dest === "西武球場前") {
+                newRoute = "sayama";
+            } else {
+                newRoute = "main"; // 池袋線
+            }
+        } else if (dir === "上り") {
+            // 上りで西所沢 200m 以内
+            // 行先が「西所沢」→ 狭山線（西所沢行き折返し想定）
+            if (dest === "西所沢") {
+                newRoute = "sayama";
+            } else {
+                newRoute = "main"; // 池袋線
+            }
+        }
+    }
 
-		state.runtime.routeLocked = true;
-		state.runtime.routeLine = line;
-		return;
-	}
+    // --- ② 有楽町線・豊島線・池袋線（練馬・小竹向原・豊島園 周辺） ----
 
-	// 3) 西所沢で狭山線 or 本線を確定（お好みで）
-	if (ns.name === "西所沢") {
-		if (dir === "下り" && destCat === "sayama") {
-			state.runtime.routeLocked = true;
-			state.runtime.routeLine = "sayama";
-		} else {
-			state.runtime.routeLocked = true;
-			state.runtime.routeLine = "main";
-		}
-		return;
-	}
+    // 最寄り駅が小竹向原 → 有楽町線（特に下り有楽町線列車）
+    if (ns.name === "小竹向原") {
+        if (dir === "下り") {
+            newRoute = "yuraku";
+        }
+        // 上り方向については、練馬側の判定に任せる（池袋線系からの乗り入れ）
+    }
+
+    // ★ 豊島園：練馬とは無関係に、最寄り駅が豊島園かつ上り → 豊島線
+    //   （上り豊島園＝練馬方面に向かう列車）
+    if (ns.name === "豊島園" && dir === "上り") {
+        newRoute = "toshima";
+    }
+
+    // 練馬 200m 以内にいる場合は、その都度判定
+    if (ns.name === "練馬" && ns.distance <= 200) {
+        if (dir === "上り") {
+            // 上り：小竹向原行きなら有楽町線、それ以外は池袋線
+            if (dest === "小竹向原") {
+                newRoute = "yuraku";
+            } else {
+                newRoute = "main"; // 池袋線
+            }
+        } else if (dir === "下り") {
+            // 下り：豊島園行きなら豊島線、それ以外は池袋線
+            if (dest === "豊島園") {
+                newRoute = "toshima";
+            } else {
+                newRoute = "main"; // 池袋線
+            }
+        }
+    }
+
+    // 東長崎 300m 以内 & 下り → 池袋線 確定（有楽町線分岐より先）
+    if (ns.name === "東長崎" && dir === "下り" && ns.distance <= 300) {
+        newRoute = "main"; // 池袋線
+    }
+
+    // --- ③ 判定結果の反映 ---------------------------------------------
+
+    // newRoute が決まっていれば反映（上書き可）
+    if (newRoute && newRoute !== state.runtime.routeLine) {
+        state.runtime.routeLine  = newRoute;
+        state.runtime.routeLocked = true;  // 「決まっている」フラグとしてだけ使用
+        // console.log("routeLine updated:", newRoute); // デバッグ用（必要なら）
+    }
 }
 
 
