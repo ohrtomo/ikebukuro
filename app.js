@@ -571,6 +571,7 @@ function screenGuidance() {
 		el("div", { class: "clock", id: "clock" }, "00:00:00"),
 		el("div", { class: "clock", id: "delayInfo" }, ""),   // ★ 遅延表示
         el("div", { class: "clock", id: "nextDepart" }, ""),      // ★ 次駅発車時刻
+        el("div", { class: "clock", id: "nextDepartDebug" }, ""), // ★ デバッグ用
 	]);
 
 	root.append(band1, band2, band3, band4, band5);
@@ -610,6 +611,7 @@ function screenGuidance() {
 	root._clock = band5.querySelector("#clock");
 	root._delayInfo = band5.querySelector("#delayInfo");
     root._nextDepart = band5.querySelector("#nextDepart"); 
+    root._nextDepartDebug = band5.querySelector("#nextDepartDebug"); 
 
 	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
 	band5.querySelector("#btnMenu").onclick = () => {
@@ -1489,36 +1491,60 @@ function extractDepartureHms(detail) {
 }
 
 
-// ★ 次の停車駅の発車時刻を取得して表示
+// ★ 次の停車駅の発車時刻を取得して表示（デバッグ付き）
 async function fetchAndShowNextDeparture(nextStationName) {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._nextDepart) return;
 
     const el = root._nextDepart;
+    const dbg = root._nextDepartDebug;   // ★ デバッグ表示用
 
     // いったん消してから更新
     el.textContent = "";
     el.style.visibility = "hidden";
+    if (dbg) {
+        dbg.textContent = "";
+        dbg.style.visibility = "hidden";
+    }
 
+    // --- 駅ID 取得 ---
     const stationId = getStationIdByName(nextStationName);
     if (!stationId) {
         // stationID.json に無い駅 → 何も表示しない
+        if (dbg) {
+            dbg.textContent = "駅IDなし";
+            dbg.style.visibility = "visible";
+        }
         return;
     }
 
+    // --- 列車番号 取得 ---
     const trainNo = getCurrentTrainNoForDelay();
-    if (!trainNo) return;
+    if (!trainNo) {
+        if (dbg) {
+            dbg.textContent = "列番なし";
+            dbg.style.visibility = "visible";
+        }
+        return;
+    }
 
     const dirApi = state.config.direction === "上り" ? "up" : "down";
 
-    // ★★ ココの lineIds 取得は削除
-    // const lineIds = getCurrentLineIdsForDelay();
+    if (dbg) {
+        dbg.textContent = `取得中: ${nextStationName} / ${stationId}`;
+        dbg.style.visibility = "visible";
+    }
 
     try {
-        const res = await fetch(
-            `https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/${stationId}/departures`,
-        );
-        if (!res.ok) return;
+        const url = `https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/${stationId}/departures`;
+        const res = await fetch(url);
+
+        if (!res.ok) {
+            if (dbg) {
+                dbg.textContent = `HTTPエラー: ${res.status}`;
+            }
+            return;
+        }
 
         const data = await res.json();
 
@@ -1532,16 +1558,7 @@ async function fetchAndShowNextDeparture(nextStationName) {
         let found = null;
 
         for (const dep of depList) {
-            // ★★ lineId フィルタも削除
-            // const lineId =
-            //     dep.lineId ||
-            //     dep.lineID ||
-            //     dep["路線ID"] ||
-            //     null;
-            //
-            // if (lineId && lineIds.length && !lineIds.includes(lineId)) {
-            //     continue;
-            // }
+            // ★★ iPad 対応のため、ここでは lineId で絞り込まない ★★
 
             const details =
                 dep.detail ||
@@ -1552,9 +1569,9 @@ async function fetchAndShowNextDeparture(nextStationName) {
             for (const d of details) {
                 const dTrainNo = String(
                     d.trainNo ||
-                        d["trainNo"] ||
-                        d["列車番号"] ||
-                        "",
+                    d["trainNo"] ||
+                    d["列車番号"] ||
+                    "",
                 ).trim();
 
                 if (dTrainNo !== trainNo) continue;
@@ -1565,6 +1582,7 @@ async function fetchAndShowNextDeparture(nextStationName) {
                     d["方向"] ||
                     null;
 
+                // direction が取れる場合だけ照合
                 if (dDir && dDir !== dirApi) continue;
 
                 found = d;
@@ -1574,19 +1592,35 @@ async function fetchAndShowNextDeparture(nextStationName) {
         }
 
         if (!found) {
-            // 情報が取れなければ無表示
+            if (dbg) {
+                dbg.textContent = "該当列車なし";
+            }
             return;
         }
 
-        // ★ ここは先ほどの extractDepartureHms を利用
+        // ★ 時刻フィールドの揺れをまとめて処理
         const hms = extractDepartureHms(found);
-        if (!hms) return;
+        if (!hms) {
+            if (dbg) {
+                dbg.textContent = "時刻フィールド不明";
+            }
+            return;
+        }
 
         // 例：「池袋　12:34:00　発」
         el.textContent = `${nextStationName}　${hms}　発`;
         el.style.visibility = "visible";
+
+        if (dbg) {
+            dbg.textContent = "";
+            dbg.style.visibility = "hidden";
+        }
     } catch (e) {
-        // 通信エラー時も無表示
+        // 通信エラー時
+        if (dbg) {
+            dbg.textContent = "通信エラー";
+            dbg.style.visibility = "visible";
+        }
     }
 }
 

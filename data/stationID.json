@@ -9,7 +9,7 @@
       "stationName": "新桜台"
     },
     {
-      "stationId": "S0801NR",
+      "stationId": "S0105NE",
       "stationName": "練馬"
     }
   ],
@@ -129,7 +129,7 @@
       "stationName": "東村山"
     },
     {
-      "stationId": "S1421YU",
+      "stationId": "S0440TZ",
       "stationName": "所沢"
     },
     {
@@ -345,11 +345,11 @@
       "stationName": "元加治"
     },
     {
-      "stationId": "S0125HS",
+      "stationId": "S0160HA",
       "stationName": "飯能"
     },
     {
-      "stationId": "S0160HA",
+      "stationId": "S0161HA",
       "stationName": "東飯能"
     },
     {
@@ -391,7 +391,7 @@
   ],
   "狭山線": [
     {
-      "stationId": "S0117AH",
+      "stationId": "S0145NT",
       "stationName": "西所沢"
     },
     {
