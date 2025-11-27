@@ -58,6 +58,10 @@ const state = {
         lastDepartStation: null,
         lastDepartPrevDist: null,
 		manualPlatforms: {},
+        startupMode: false,         // 起動モード中かどうか
+        startupFixed: false,        // 起動モードで一度「現在駅」を確定したか
+        startupCandidate: null,     // 起動判定中の候補駅名
+        startupCount: 0,            // 同じ駅を何回連続で見たか        
     },
 };
 
@@ -92,36 +96,40 @@ async function loadData() {
 
 // ==== Speech ====
 function speakOnce(key, text) {
-	const now = Date.now();
+    const now = Date.now();
 
-	// ★ 案内開始から20秒間は「start_guidance」以外の音声をミュート
-	if (
-		key !== "start_guidance" &&
-		state.runtime.muteUntil &&
-		now < state.runtime.muteUntil
-	) {
-		return;
-	}
+    // ★ 案内開始前（start画面・設定画面など）では一切しゃべらない
+    //   ただし "start_guidance" は案内開始後に使うので例外扱い
+    if (!state.runtime.started && key !== "start_guidance") {
+        return;
+    }
 
-	const last = state.runtime.lastSpoken[key] || 0;
-	if (now - last < 30000) return; // 30秒抑止
-	state.runtime.lastSpoken[key] = now;
+    // ★ 案内開始から10秒間は「start_guidance」以外の音声をミュート
+    if (
+        key !== "start_guidance" &&
+        state.runtime.muteUntil &&
+        now < state.runtime.muteUntil
+    ) {
+        return;
+    }
 
-	const utter = new SpeechSynthesisUtterance(text);
-	utter.lang = "ja-JP";
+    const last = state.runtime.lastSpoken[key] || 0;
+    if (now - last < 30000) return; // 30秒抑止
+    state.runtime.lastSpoken[key] = now;
 
-	// ★ 音量反映（0.0〜1.0）
-	const vol = state.config.voiceVolume;
-	utter.volume =
-		typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "ja-JP";
 
-	speechSynthesis.speak(utter);
+    const vol = state.config.voiceVolume;
+    utter.volume =
+        typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
 
-	// ★ 読み上げ内容を「音声用」表示欄に表示（次の読み上げまで残す）
-	const root = document.getElementById("screen-guidance");
-	if (root && root._speechText) {
-		root._speechText.textContent = text;
-	}
+    speechSynthesis.speak(utter);
+
+    const root = document.getElementById("screen-guidance");
+    if (root && root._speechText) {
+        root._speechText.textContent = text;
+    }
 }
 
 // ==== Train number parser ====
@@ -492,12 +500,13 @@ function screenStart() {
 			// ★ 案内開始から10秒間は他の案内をミュート
 			state.runtime.muteUntil = Date.now() + 10000;
 
-			// ★ 案内開始の音声
-			speakOnce("start_guidance", "案内を開始します");
-
 			document.getElementById("screen-start").classList.remove("active");
 			document.getElementById("screen-guidance").classList.add("active");
 			startGuidance();
+
+			// ★ 案内開始の音声
+			speakOnce("start_guidance", "案内を開始します");
+
 		} else if (e.target.id === "btn-cancel") {
 			document.getElementById("screen-start").classList.remove("active");
 			document.getElementById("screen-settings").classList.add("active");
@@ -591,9 +600,10 @@ function screenGuidance() {
 				el("button", { class: "btn secondary", id: "m-type" }, "種別変更"),
 				el("button", { class: "btn secondary", id: "m-train" }, "列番変更"),
 				el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),// 音量設定
-                // ★ 運行情報ボタン追加
+                el("button", { class: "btn secondary", id: "m-reset" }, "地点リセット"),
+                // ★ 運行情報ボタン
 				el("button", { class: "btn secondary", id: "m-info" }, "運行情報"),
-				// ★ メニューを簡単に閉じるための「とじる」ボタンを追加
+				// ★ 「とじる」ボタン
                 el("button", { class: "btn secondary", id: "m-close" }, "とじる"),
 			]),
 		]),
@@ -645,7 +655,14 @@ function screenGuidance() {
 	modal.querySelector("#m-stop").onclick = () => openStopList();
 	modal.querySelector("#m-train").onclick = () => openTrainChange();
 	modal.querySelector("#m-volume").onclick = () => openVolumePanel();
-    modal.querySelector("#m-info").onclick = () => openOperationInfo(); // ★ 追加
+    modal.querySelector("#m-info").onclick = () => openOperationInfo();
+    // ★ 「地点リセット」：現在位置から改めて「現在駅＋次駅」を判定
+    modal.querySelector("#m-reset").onclick = () => {
+        startStartupLocationDetection(); // 起動モードに戻す
+        modal.classList.remove("active");
+        panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    };
+    
 	// ★ 追加: 「とじる」ボタンのハンドラ
     modal.querySelector("#m-close").onclick = () => {
         modal.classList.remove("active");
@@ -1885,11 +1902,39 @@ function startGpsWatch() {
 }
 
 function startGuidance() {
-	state.runtime.routeLocked = false;
-	state.runtime.routeLine = null;
-	state.runtime.started = true;
+    const rt = state.runtime;
 
-	// ★ 案内画面中は画面消灯を防止
+    rt.routeLocked = false;
+    rt.routeLine = null;
+    rt.started = true;
+
+    // ★ 前回案内の残りをリセット
+    rt.lastSpoken = {};
+    rt.lastStopStation = null;
+    rt.lastPosition = null;
+    rt.speedKmh = 0;
+    rt.prevStationName = null;
+    rt.prevStationDistance = null;
+    rt.lastDepartStation = null;
+    rt.lastDepartPrevDist = null;
+    rt.lastStopDistance = null;
+
+    // ★ 起動モード開始（現在地から「現在駅＋次駅」を判定する）
+    startStartupLocationDetection();
+
+    // ★ UI の残りもリセット（遅延表示・次発時刻・音声表示・GPS表示）
+    const g = document.getElementById("screen-guidance");
+    if (g) {
+        if (g._speechText) g._speechText.textContent = "";
+        if (g._gpsStatus) g._gpsStatus.textContent = "";
+        if (g._delayInfo) {
+            g._delayInfo.textContent = "";
+            g._delayInfo.style.visibility = "hidden";
+        }
+        clearNextDepartureDisplay();
+    }
+
+    // ★ 案内画面中は画面消灯を防止
 	requestWakeLock();
 
 	renderGuidance();
@@ -2055,6 +2100,110 @@ function clearNextDepartureDisplay() {
     root._nextDepart.style.visibility = "hidden";
 }
 
+// ★ 起動判定モードを開始（地点リセット共通）
+function startStartupLocationDetection() {
+    const rt = state.runtime;
+
+    rt.startupMode = true;
+    rt.startupFixed = false;
+    rt.startupCandidate = null;
+    rt.startupCount = 0;
+
+    // 位置に依存する情報をリセット
+    rt.prevStationName = null;
+    rt.prevStationDistance = null;
+    rt.lastStopStation = null;
+    rt.lastDepartStation = null;
+    rt.lastDepartPrevDist = null;
+    rt.lastStopDistance = null;
+
+    // 次駅発車時刻もいったんクリア
+    clearNextDepartureDisplay();
+}
+
+// ★ 「駅に停車中」と確定したときの初期化
+function initStartupAtStation(stationName) {
+    const rt = state.runtime;
+
+    // 念のため、この駅は停車扱いにしておく（臨時停車など）
+    rt.passStations.delete(stationName);
+
+    // 現在の停車駅情報
+    rt.prevStationName = stationName;
+    rt.prevStationDistance = 0;
+    rt.lastDepartStation = stationName;
+    rt.lastDepartPrevDist = 0;
+    rt.lastStopDistance = 0;
+
+    // 次に停車する駅を決定して保存
+    const nextName = findNextStopStationName(stationName);
+    rt.lastStopStation = nextName || null;
+
+    // 次駅の発車時刻は、実際に「次は○○」を喋るタイミングで取得するので、
+    // ここでは表示だけ消しておく
+    clearNextDepartureDisplay();
+}
+
+// ★ 「駅間を走行中」にスタートしたときの初期化
+function initStartupBetween(ns) {
+    const rt = state.runtime;
+
+    // 「最後に見た駅」として最近傍駅を入れておくが、
+    // lastStopStation はあえて null のままにして、
+    // 次の駅での到着処理から通常ロジックに乗せる
+    rt.prevStationName = ns.name;
+    rt.prevStationDistance = ns.distance;
+
+    rt.lastStopStation = null;
+    rt.lastDepartStation = null;
+    rt.lastDepartPrevDist = null;
+    rt.lastStopDistance = null;
+
+    clearNextDepartureDisplay();
+}
+
+// ★ 起動モード中の「現在駅＋次駅」判定ロジック
+function handleStartupPosition(ns) {
+    const rt = state.runtime;
+    if (!rt.startupMode || !ns) return;
+
+    const speed = rt.speedKmh || 0;
+
+    // すでに確定済みなら何もしない
+    if (rt.startupFixed) {
+        rt.startupMode = false;
+        return;
+    }
+
+    // 1) 「走行中にスタートした」とみなす条件
+    //    ・速度が十分速い or 駅からある程度離れている
+    if (speed >= 10 || ns.distance > 200) {
+        initStartupBetween(ns);
+        rt.startupMode = false;
+        rt.startupFixed = true;
+        return;
+    }
+
+    // 2) 「駅に停車中」とみなす条件
+    //    ・駅から 200m 以内
+    //    ・速度 5km/h 未満
+    //    ・同じ駅を 3回連続で検出
+    if (ns.distance <= 200 && speed < 5) {
+        if (rt.startupCandidate === ns.name) {
+            rt.startupCount = (rt.startupCount || 0) + 1;
+        } else {
+            rt.startupCandidate = ns.name;
+            rt.startupCount = 1;
+        }
+
+        if (rt.startupCount >= 3) {
+            initStartupAtStation(ns.name);
+            rt.startupMode = false;
+            rt.startupFixed = true;
+        }
+    }
+}
+
 // ★ 遅延更新タイマー開始（1分おき）
 function startDelayWatch() {
     if (delayTimer) return;
@@ -2107,6 +2256,9 @@ function onPos(pos) {
 
 	// ★ 最寄り駅判定
 	const ns = nearestStation(latitude, longitude);
+
+    // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行
+    handleStartupPosition(ns);
 
 	// ★ 駅案内ロジック
 	maybeSpeak(ns);
