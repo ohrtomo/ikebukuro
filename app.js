@@ -629,8 +629,6 @@ function screenStart() {
 			document.getElementById("screen-guidance").classList.add("active");
 			startGuidance();
 
-			// ★ 案内開始の音声
-			speakOnce("start_guidance", "案内を開始します");
 
 		} else if (e.target.id === "btn-cancel") {
 			document.getElementById("screen-start").classList.remove("active");
@@ -2078,12 +2076,18 @@ document.addEventListener("visibilitychange", () => {
 });
 
 let clockTimer = null;
-let gpsTimer = null;
 let delayTimer = null;   // ★ 遅延更新用
+// ★ watchPosition 用
+let gpsWatchId = null;
+
+// ★ 速度の履歴（移動平均＋外れ値対策用）
+const gpsSpeedHistory = [];
+const GPS_SPEED_HISTORY_SIZE = 5;
 
 // ★ GPS 監視を行う共通関数（開始画面・案内画面共通）
+//    watchPosition でブラウザに継続追跡させる
 function startGpsWatch() {
-    if (gpsTimer) return;
+    if (gpsWatchId) return;  // すでに開始済みなら何もしない
 
     if (!navigator.geolocation) {
         alert("GPS使用不可");
@@ -2091,21 +2095,46 @@ function startGpsWatch() {
         return;
     }
 
-    gpsTimer = setInterval(() => {
-        navigator.geolocation.getCurrentPosition(
-            onPos,
-            () => {
-                // ★ 位置情報が取得できない場合
-                setGpsStatus("位置情報が取得できません");
-            },
-            {
-                enableHighAccuracy: true,
-                maximumAge: 0,
-                timeout: 5000,
-            },
-        );
-    }, 1000);
+    gpsWatchId = navigator.geolocation.watchPosition(
+        (pos) => {
+            // ★ ① 精度チェック（accuracyが大きすぎるものは破棄）
+            const acc = pos.coords.accuracy ?? 9999;
+            if (acc > 200) {
+                setGpsStatus(`位置情報の精度が低いため無視しました（約${acc.toFixed(0)}m）`);
+                return;
+            }
+
+            // ★ ② 取得時刻が古すぎるデータも捨てる（念のため）
+            const now = Date.now();
+            const gpsTime = pos.timestamp;
+            const ageMs = now - gpsTime;
+            if (ageMs > 10000) {  // 10秒以上前のデータは使わない
+                setGpsStatus("位置情報が古いため無視しました");
+                return;
+            }
+
+            // ★ ③ 実処理は従来通り onPos に渡す
+            onPos(pos);
+        },
+        (err) => {
+            setGpsStatus("位置情報が取得できません");
+        },
+        {
+            enableHighAccuracy: true,
+            maximumAge: 3000,   // ★ 最大 3秒前までは許容
+            timeout: 10000,     // ★ 10秒待ってダメならエラー
+        }
+    );
 }
+
+// ★ GPS監視停止
+function stopGpsWatch() {
+    if (gpsWatchId != null) {
+        navigator.geolocation.clearWatch(gpsWatchId);
+        gpsWatchId = null;
+    }
+}
+
 
 function startGuidance() {
     // ★ runtime のショートカット
@@ -2177,10 +2206,8 @@ function stopGuidance() {
 		clearInterval(clockTimer);
 		clockTimer = null;
 	}
-	if (gpsTimer) {
-		clearInterval(gpsTimer);
-		gpsTimer = null;
-	}
+    // ★ GPSも停止
+    stopGpsWatch();
 	
     // ★ 遅延情報更新も停止
     stopDelayWatch();
@@ -2436,60 +2463,92 @@ function stopDelayWatch() {
 
 
 function onPos(pos) {
-	const { latitude, longitude } = pos.coords;
+    const { latitude, longitude } = pos.coords;
 
-	const now = Date.now();
-	const gpsTime = pos.timestamp;          // ★ 位置情報が取得された本当の時刻(ms)
-	const ageMs = now - gpsTime;            // ★ どれだけ古いか
+    const now = Date.now();
+    const gpsTime = pos.timestamp;
+    const ageMs = now - gpsTime;
 
-	// ★ 5秒以上古いデータは無視する
-	if (ageMs > 5000) {
-		setGpsStatus("位置情報が古いため無視しました");
-		return; // ★ この更新は使わない
-	}
+    // ★ 追加保険：watchPosition 側でもチェックしているが、ここでも10秒以上前は無視
+    if (ageMs > 10000) {
+        setGpsStatus("位置情報が古いため無視しました");
+        return;
+    }
 
-	// ★ ここから先は「新しい」データのみ使用
-	if (state.runtime.lastPosition) {
-		const dt = (gpsTime - state.runtime.lastPosition.time) / 1000;
-		const dist = haversine(
-			state.runtime.lastPosition.lat,
-			state.runtime.lastPosition.lng,
-			latitude,
-			longitude
-		);
-		state.runtime.speedKmh = (dist / dt) * 3.6;
-	}
+    // ★ 速度計算（瞬間値 → 外れ値除去 → 中央値で滑らかに）
+    let newSpeedKmh = state.runtime.speedKmh || 0;
 
-	state.runtime.lastPosition = {
-		lat: latitude,
-		lng: longitude,
-		time: gpsTime   // ★ 最新の本当の時刻
-	};
+    if (state.runtime.lastPosition) {
+        const dt = (gpsTime - state.runtime.lastPosition.time) / 1000; // 秒
 
-	// ★ 本当の GPS 時刻で表示
-	updateNotes(latitude, longitude, gpsTime);
+        // dt が極端に小さすぎ/大きすぎると速度が壊れるので除外
+        if (dt > 0.3 && dt < 30) {
+            const dist = haversine(
+                state.runtime.lastPosition.lat,
+                state.runtime.lastPosition.lng,
+                latitude,
+                longitude
+            );
+            const instSpeed = (dist / dt) * 3.6; // km/h
 
-	// ★ 最寄り駅判定
-	const ns = nearestStation(latitude, longitude);
+            const prev = state.runtime.speedKmh ?? instSpeed;
+
+            // ★ 外れ値チェック：1回の更新で ±60km/h 以上変化したらおかしいとみなして無視
+            if (Math.abs(instSpeed - prev) < 60) {
+                // 履歴に追加
+                gpsSpeedHistory.push(instSpeed);
+                if (gpsSpeedHistory.length > GPS_SPEED_HISTORY_SIZE) {
+                    gpsSpeedHistory.shift();
+                }
+
+                // ★ 中央値（Median）を採用：ジャンプに強い
+                const sorted = [...gpsSpeedHistory].sort((a, b) => a - b);
+                const mid = Math.floor(sorted.length / 2);
+                const median =
+                    sorted.length % 2 === 1
+                        ? sorted[mid]
+                        : (sorted[mid - 1] + sorted[mid]) / 2;
+
+                newSpeedKmh = median;
+            } else {
+                // ★ 外れ値だったので、速度は前回のまま
+                newSpeedKmh = prev;
+            }
+        }
+    }
+
+    state.runtime.speedKmh = newSpeedKmh;
+
+    // ★ 最新位置を保存
+    state.runtime.lastPosition = {
+        lat: latitude,
+        lng: longitude,
+        time: gpsTime
+    };
+
+    // ★ 本当の GPS 時刻で表示
+    updateNotes(latitude, longitude, gpsTime);
+
+    // ★ 最寄り駅判定（ルートロック付き）
+    const ns = nearestStation(latitude, longitude);
 
     // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行
     handleStartupPosition(ns);
 
-	// ★ 駅案内ロジック
-	maybeSpeak(ns);
+    // ★ 駅案内ロジック
+    maybeSpeak(ns);
 
-	// ★ 車両アイコン
-	// 通過駅から500m以内では非表示／それ以外では常時表示
-	let show = true;
-	if (ns && state.runtime.passStations.has(ns.name) && ns.distance <= 500) {
-		show = false;
-	}
+    // ★ 車両アイコン
+    let show = true;
+    if (ns && state.runtime.passStations.has(ns.name) && ns.distance <= 500) {
+        show = false;
+    }
 
-	band1RenderCars(
-		document.getElementById("screen-guidance")._band1,
-		show,
-		state.config.cars
-	);
+    band1RenderCars(
+        document.getElementById("screen-guidance")._band1,
+        show,
+        state.config.cars
+    );
 }
 
 function isNonPassenger(t) {
