@@ -193,7 +193,103 @@ function el(tag, attrs = {}, children = []) {
 	return e;
 }
 
-// ==== Screens ====
+// ==== 日本の祝日判定 ====
+
+// 春分の日（だいたい 3/20 前後）、秋分の日（だいたい 9/23 前後）
+// 2000〜2099年向けの近似式
+function vernalEquinoxDay(year) {
+    // 2000〜2099 年の近似式
+    return Math.floor(
+        20.8431 +
+        0.242194 * (year - 1980) -
+        Math.floor((year - 1980) / 4)
+    );
+}
+
+function autumnEquinoxDay(year) {
+    // 2000〜2099 年の近似式
+    return Math.floor(
+        23.2488 +
+        0.242194 * (year - 1980) -
+        Math.floor((year - 1980) / 4)
+    );
+}
+
+// 月内の「第 n ○曜日」を返すヘルパー（例: 第2月曜など）
+function nthWeekdayOfMonth(year, month, weekday, nth) {
+    // month: 1〜12, weekday: 0(日)〜6(土), nth: 1,2,3...
+    const first = new Date(year, month - 1, 1);
+    const firstW = first.getDay();
+    let day = 1 + ((7 + weekday - firstW) % 7) + (nth - 1) * 7;
+    return day;
+}
+
+// 「元々の祝日」（振替休日や国民の休日を含まない）を判定
+function isBaseJapaneseHoliday(date) {
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1; // 1〜12
+    const d = date.getDate();
+
+    // 固定日
+    if (m === 1 && d === 1) return true;      // 元日
+    if (m === 2 && d === 11) return true;     // 建国記念の日
+    if (m === 2 && d === 23 && y >= 2020) return true; // 天皇誕生日（令和）
+    if (m === 4 && d === 29) return true;     // 昭和の日
+    if (m === 5 && d === 3) return true;      // 憲法記念日
+    if (m === 5 && d === 4) return true;      // みどりの日
+    if (m === 5 && d === 5) return true;      // こどもの日
+    if (m === 8 && d === 11 && y >= 2016) return true; // 山の日
+    if (m === 11 && d === 3) return true;     // 文化の日
+    if (m === 11 && d === 23) return true;    // 勤労感謝の日
+
+    // ハッピーマンデー制の祝日
+    // 成人の日: 1月第2月曜
+    if (m === 1 && d === nthWeekdayOfMonth(y, 1, 1, 2)) return true;
+    // 海の日: 7月第3月曜
+    if (m === 7 && d === nthWeekdayOfMonth(y, 7, 1, 3)) return true;
+    // 敬老の日: 9月第3月曜
+    if (m === 9 && d === nthWeekdayOfMonth(y, 9, 1, 3)) return true;
+    // スポーツの日: 10月第2月曜
+    if (m === 10 && d === nthWeekdayOfMonth(y, 10, 1, 2)) return true;
+
+    // 春分の日
+    if (m === 3 && d === vernalEquinoxDay(y)) return true;
+    // 秋分の日
+    if (m === 9 && d === autumnEquinoxDay(y)) return true;
+
+    return false;
+}
+
+// 祝日 + 振替休日 + 国民の休日 をまとめて判定
+function isJapaneseHoliday(date) {
+    // まず元の祝日そのもの
+    if (isBaseJapaneseHoliday(date)) return true;
+
+    const wd = date.getDay(); // 0(日)〜6(土)
+
+    // 振替休日（簡易版）
+    // ・今回の日が月〜水あたりで、
+    // ・1日前が祝日かつ日曜日、なら振替休日とみなす
+    if (wd >= 1 && wd <= 3) {
+        const prev = new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1);
+        if (isBaseJapaneseHoliday(prev) && prev.getDay() === 0) {
+            return true;
+        }
+    }
+
+    // 国民の休日（簡易版）
+    // ・火〜木で、前日と翌日が祝日の場合
+    if (wd >= 2 && wd <= 4) {
+        const prev = new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1);
+        const next = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+        if (isBaseJapaneseHoliday(prev) && isBaseJapaneseHoliday(next)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // ==== Screens ====
 function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
@@ -269,11 +365,27 @@ function screenSettings() {
 		destSel.appendChild(el("option", { value: d }, d));
 	});
 
-	    // ---- 運転日区分（平日 / 土休日） ----
+    // ---- 運転日区分（平日 / 土休日） ----
     const dayTypeSel = el("select", { id: "dayType" });
     dayTypeSel.appendChild(el("option", { value: "平日" }, "平日"));
     dayTypeSel.appendChild(el("option", { value: "土休日" }, "土休日"));
-    dayTypeSel.value = state.config.dayType || "平日";
+
+    // ★ 起動時に今日の日付から自動判定
+    (function autoSelectDayType() {
+        const today = new Date();
+        const wd = today.getDay(); // 0:日曜, 1:月曜, ... 6:土曜
+
+        // 祝日 or 土日 → 「土休日」
+        const isHol = isJapaneseHoliday(today);
+        const isWeekend = (wd === 0 || wd === 6);
+
+        const autoDayType = (isHol || isWeekend) ? "土休日" : "平日";
+
+        // 設定にも反映
+        state.config.dayType = autoDayType;
+        // セレクトボックスにも反映
+        dayTypeSel.value = autoDayType;
+    })();
 
 
 	// ---- 両数（前）：10 / 8 / 7 / 6 / 4 / 2 ボタン選択 ----
