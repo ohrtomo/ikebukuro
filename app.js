@@ -1560,11 +1560,11 @@ function getLineForStation(name) {
 }
 
 // ★ 駅名から stationId を引く（stationID.json を全走査）
+//    → 駅名は「完全一致」のみで検索する
 function getStationIdByName(name) {
     const data = state.datasets.stationIds;
     if (!data || !name) return null;
 
-    // 正規化：空白除去・全角半角統一・濁点分解は行わない
     const key = name.trim();
 
     for (const groupStations of Object.values(data)) {
@@ -1574,12 +1574,8 @@ function getStationIdByName(name) {
 
             const cand = s.stationName.trim();
 
-            // 完全一致（最優先）
-            if (cand === key) return s.stationId;
-
-            // 部分一致（次）
-            // 例：「所沢」「所沢（多客臨時）」などを拾う
-            if (cand.includes(key) || key.includes(cand)) {
+            // ★ 完全一致のみ
+            if (cand === key) {
                 return s.stationId;
             }
         }
@@ -2480,177 +2476,181 @@ function isNonPassenger(t) {
 }
 
 function maybeSpeak(ns) {
-	if (!ns) return;
+    if (!ns) return;
 
-	// ★ ルート確定
-	updateRouteLock(ns);
+    // ★ ルート確定
+    updateRouteLock(ns);
 
-	const t = state.config.type;
-	const d = state.runtime.speedKmh;
+    const t = state.config.type;
+    const d = state.runtime.speedKmh;
 
-	// ★ 前回の最近傍駅と距離
-	const prevName = state.runtime.prevStationName;
-	const prevDist = state.runtime.prevStationDistance;
-	const prevSameDist = prevName === ns.name ? prevDist : null;
+    // ★ 回送/試運転/臨時かどうか（ドア扱い注意の制御に使う）
+    const isNonP = isNonPassenger(t);
 
-	const isFirstMeasurement =
-		state.runtime.prevStationName === null &&
-		state.runtime.prevStationDistance === null;
+    // ★ 前回の最近傍駅と距離
+    const prevName = state.runtime.prevStationName;
+    const prevDist = state.runtime.prevStationDistance;
+    const prevSameDist = prevName === ns.name ? prevDist : null;
 
-	// 特記事項
-	otherSpeaks(ns);
+    const isFirstMeasurement =
+        state.runtime.prevStationName === null &&
+        state.runtime.prevStationDistance === null;
 
-	const key = ns.name;
+    // 特記事項
+    otherSpeaks(ns);
 
-	const baseStop = baseIsStop(ns.name);
-	const isStop = !state.runtime.passStations.has(ns.name);
+    const key = ns.name;
 
-	const isExtraStop = !baseStop && isStop; // 本来通過→いま停車
-	const isExtraPass = baseStop && !isStop; // 本来停車→いま通過
+    const baseStop = baseIsStop(ns.name);
+    const isStop = !state.runtime.passStations.has(ns.name);
 
-	if (!isNonPassenger(t)) {
-		// ===== (A) 前駅発車後の「次は○○」案内 =====
-		// 200m 以下の位置から 200m 超に抜けた瞬間のみ発報
-		const left200 =
-			state.runtime.lastStopStation &&
-			!isFirstMeasurement &&
-			prevSameDist != null &&
-			prevSameDist <= 200 &&
-			ns.distance > 200;
+    const isExtraStop = !baseStop && isStop; // 本来通過→いま停車
+    const isExtraPass = baseStop && !isStop; // 本来停車→いま通過
 
-        if (left200) {
-            const nextName = state.runtime.lastStopStation;
+    // ===== (A) 前駅発車後の「次は○○」案内 =====
+    // 200m 以下の位置から 200m 超に抜けた瞬間のみ発報
+    const left200 =
+        state.runtime.lastStopStation &&
+        !isFirstMeasurement &&
+        prevSameDist != null &&
+        prevSameDist <= 200 &&
+        ns.distance > 200;
 
-            clearNextDepartureDisplay();
+    if (left200) {
+        const nextName = state.runtime.lastStopStation;
 
-            if (nextName) {
-                const baseNextStop = baseIsStop(nextName);
-                const isNextStop   = !state.runtime.passStations.has(nextName);
+        clearNextDepartureDisplay();
 
-                const isExtraStopNext = !baseNextStop && isNextStop;
-                const isExtraPassNext = baseNextStop && !isNextStop;
+        if (nextName) {
+            const baseNextStop = baseIsStop(nextName);
+            const isNextStop   = !state.runtime.passStations.has(nextName);
 
-                if (isNextStop) {
-                    const word = isExtraStopNext ? "臨時停車" : "停車";
+            const isExtraStopNext = !baseNextStop && isNextStop;
+            const isExtraPassNext = baseNextStop && !isNextStop;
 
-                    // ★ 実際に案内する番線（手動変更を反映）
-                    const plat = getEffectivePlatformForStation(nextName);
+            if (isNextStop) {
+                const word = isExtraStopNext ? "臨時停車" : "停車";
 
-                    let text;
-                    if (plat) {
-                        // 標準／手動を含め「番線あり」の場合
-                        text = `次は${nextName}、${plat}番、${word}`;
-                    } else {
-                        // 番線情報が無い場合は従来どおり
-                        text = `次は${nextName}、${word}`;
-                    }
+                // ★ 実際に案内する番線（手動変更を反映）
+                const plat = getEffectivePlatformForStation(nextName);
 
-                    // ★ 手動で標準と違う番線に変更されている場合のみ「着発線変更」を付加
-                    if (isPlatformChanged(nextName)) {
-                        text += "、着発線変更";
-                    }
-
-                    speakOnce("leave200_" + nextName, text);
-
-                    fetchAndShowNextDeparture(nextName);
-                    
-                } else if (isExtraPassNext) {
-                    // ★ 臨時通過の案内は番線・着発線変更を読まない
-                    speakOnce(
-                        "leave200_" + nextName,
-                        `次は${nextName}、臨時通過`,
-                    );
+                let text;
+                if (plat) {
+                    text = `次は${nextName}、${plat}番、${word}`;
+                } else {
+                    text = `次は${nextName}、${word}`;
                 }
-            }
 
-            // ★ 使い終わったらリセット
-            state.runtime.lastStopStation = null;
-            state.runtime.lastDepartStation = null;
-            state.runtime.lastDepartPrevDist = null;
-        }
+                // ★ 手動で標準と違う番線に変更されている場合のみ「着発線変更」を付加
+                if (isPlatformChanged(nextName)) {
+                    text += "、着発線変更";
+                }
 
-        // ===== (B) 手前 400m の「まもなく○○」案内 =====
-        const crossed400 =
-            !isFirstMeasurement &&
-            isStop &&
-            ns.distance <= 400 &&
-            (prevSameDist == null || prevSameDist > 400);
+                speakOnce("leave200_" + nextName, text);
 
-        if (crossed400) {
-            const stopWord = isExtraStop ? "臨時停車" : "停車";
+                // ★ 次駅発車時刻表示
+                fetchAndShowNextDeparture(nextName);
 
-            // ★ 基本文言
-            let text = `まもなく${ns.name}、${stopWord}、${state.config.cars}両`;
-
-            // ★ この駅が着発線変更されている場合のみ付加
-            if (isPlatformChanged(ns.name)) {
-                text += "、着発線変更";
-            }
-
-            speakOnce("arr400_" + key, text);
-        }
-
-        // ===== (C) 停止直前の案内：200m クロス時 =====
-        // 200m より外側 → 200m 以内に入った瞬間
-        const crossed200Stop =
-            !isFirstMeasurement &&
-            isStop &&
-            ns.distance <= 200 &&
-            (prevSameDist == null || prevSameDist > 200);
-
-        if (crossed200Stop && d > 5) {
-            const stopWord = isExtraStop ? "臨時停車" : "停車";
-
-            if (
-                state.config.cars === 8 &&
-                (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
-            ) {
+            } else if (isExtraPassNext) {
+                // ★ 臨時通過の案内（回送/試運転/臨時でも同じ文言）
                 speakOnce(
-                    "arr200_" + key,
-                    `${stopWord}、8両、${
-                        state.config.direction === "上り"
-                            ? ns.up8pos
-                            : ns.down8pos
-                    }あわせ`,
-                );
-            } else if (state.config.cars === 10) {
-                speakOnce("arr200_" + key, `${stopWord}、10両`);
-            } else {
-                speakOnce(
-                    "arr200_" + key,
-                    `${stopWord}、${state.config.cars}両、停止位置注意`,
+                    "leave200_" + nextName,
+                    `次は${nextName}、臨時通過`,
                 );
             }
-
-            // ★ 到着扱い：200m 以内なら次駅を覚える（ここはそのまま）
-            if (ns.distance <= 200) {
-                if (!state.runtime.lastStopStation) {
-                    const nextName = findNextStopStationName(ns.name);
-                    state.runtime.lastStopStation = nextName || null;
-                }
-            }
         }
 
-		// ===== 通過列車の案内（200m / 120m 部分はそのまま） =====
-		if (!isStop && ns.distance <= 200 && d <= 45) {
-			const passWord = isExtraPass ? "臨時通過" : "通過";
-			speakOnce("pass200_" + key, `種別${t}、${passWord}`);
-		}
-		if (!isStop && ns.distance <= 120 && d <= 30) {
-			const passWord = isExtraPass ? "臨時通過" : "通過";
-			speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
-		}
-	} else {
-		// 回送・試運転など
-		if (ns.distance <= 200 && d <= 45)
-			speakOnce("nonp200_" + key, `種別回送、ていつう確認`);
-		if (ns.distance <= 120 && d <= 30)
-			speakOnce("nonp120_" + key, `種別回送、ドアあつかい注意`);
-	}
+        // ★ 使い終わったらリセット
+        state.runtime.lastStopStation = null;
+        state.runtime.lastDepartStation = null;
+        state.runtime.lastDepartPrevDist = null;
+    }
 
-	// ★ 次回比較用距離を保存
-	state.runtime.prevStationName = ns.name;
-	state.runtime.prevStationDistance = ns.distance;
+    // ===== (B) 手前 400m の「まもなく○○」案内 =====
+    const crossed400 =
+        !isFirstMeasurement &&
+        isStop &&
+        ns.distance <= 400 &&
+        (prevSameDist == null || prevSameDist > 400);
+
+    if (crossed400) {
+        const stopWord = isExtraStop ? "臨時停車" : "停車";
+
+        let text = `まもなく${ns.name}、${stopWord}、${state.config.cars}両`;
+
+        // ★ この駅が着発線変更されている場合のみ付加
+        if (isPlatformChanged(ns.name)) {
+            text += "、着発線変更";
+        }
+
+        speakOnce("arr400_" + key, text);
+
+        // ★ 回送・試運転・臨時は 400m 案内の直後に「ドア扱い注意」
+        if (isNonP) {
+            speakOnce("door400_" + key, "ドア扱い注意");
+        }
+    }
+
+    // ===== (C) 停止直前の案内：200m クロス時 =====
+    // 200m より外側 → 200m 以内に入った瞬間
+    const crossed200Stop =
+        !isFirstMeasurement &&
+        isStop &&
+        ns.distance <= 200 &&
+        (prevSameDist == null || prevSameDist > 200);
+
+    if (crossed200Stop && d > 5) {
+        const stopWord = isExtraStop ? "臨時停車" : "停車";
+
+        if (
+            state.config.cars === 8 &&
+            (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
+        ) {
+            speakOnce(
+                "arr200_" + key,
+                `${stopWord}、8両、${
+                    state.config.direction === "上り"
+                        ? ns.up8pos
+                        : ns.down8pos
+                }あわせ`,
+            );
+        } else if (state.config.cars === 10) {
+            speakOnce("arr200_" + key, `${stopWord}、10両`);
+        } else {
+            speakOnce(
+                "arr200_" + key,
+                `${stopWord}、${state.config.cars}両、停止位置注意`,
+            );
+        }
+
+        // ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
+        if (isNonP) {
+            speakOnce("door200_" + key, "ドア扱い注意");
+        }
+
+        // ★ 到着扱い：200m 以内なら次駅を覚える（ここはそのまま）
+        if (ns.distance <= 200) {
+            if (!state.runtime.lastStopStation) {
+                const nextName = findNextStopStationName(ns.name);
+                state.runtime.lastStopStation = nextName || null;
+            }
+        }
+    }
+
+    // ===== 通過列車の案内 =====
+    // （客扱い列車・回送・試運転・臨時すべて共通）
+    if (!isStop && ns.distance <= 200 && d <= 45) {
+        const passWord = isExtraPass ? "臨時通過" : "通過";
+        speakOnce("pass200_" + key, `種別${t}、${passWord}`);
+    }
+    if (!isStop && ns.distance <= 120 && d <= 30) {
+        const passWord = isExtraPass ? "臨時通過" : "通過";
+        speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
+    }
+
+    // ★ 次回比較用距離を保存
+    state.runtime.prevStationName = ns.name;
+    state.runtime.prevStationDistance = ns.distance;
 }
 
 function otherSpeaks(ns) {
