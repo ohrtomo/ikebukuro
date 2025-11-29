@@ -509,61 +509,65 @@ function screenSettings() {
 	};
 
 	// ---- 実行ボタン ----
-	const execBtn = el("button", { class: "btn" }, "実行");
-	execBtn.onclick = () => {
+    const execBtn = el("button", { class: "btn" }, "実行");
+    execBtn.onclick = () => {
 
-    // --- ★ 必須チェック ---
-    if (!trainNo.value.trim()) {
-        alert("列車番号を入力してください。");
-        return;
-    }
+        // --- ★ 必須チェック ---
+        if (!trainNo.value.trim()) {
+            alert("列車番号を入力してください。");
+            return;
+        }
+        if (!selectedDir) {
+            alert("上り/下りを選択してください。");
+            return;
+        }
+        if (!typeSel.value) {
+             alert("種別を選択してください。");
+            return;
+        }
+        if (!destSel.value) {
+            alert("行先を選択してください。");
+            return;
+        }
+        if (!selectedCars) {
+            alert("両数を選択してください。");
+            return;
+        }
+        // --- ★ 必須チェックここまで ---
 
-    if (!selectedDir) {
-        alert("上り/下りを選択してください。");
-        return;
-    }
+        // 前半設定
+         state.config.trainNo   = trainNo.value.trim();
+        state.config.direction = selectedDir;
+        state.config.type      = typeSel.value;
+        state.config.dest      = destSel.value;
+        state.config.cars      = selectedCars;
+        state.config.dayType   = dayTypeSel.value || "平日";
 
-    if (!typeSel.value) {
-        alert("種別を選択してください。");
-        return;
-    }
+        // 終点で列番変更
+        state.config.endChange = endChange.checked;
+        if (endChange.checked) {
+            state.config.second.trainNo = trainNo2.value.trim();
+            state.config.second.type    = typeSel2.value;
+            state.config.second.dest    = destSel2.value;
+            state.config.second.cars    = state.config.cars;
+        }
 
-    if (!destSel.value) {
-        alert("行先を選択してください。");
-        return;
-    }
+        // ★ ここから遷移分岐
+        const nonPassenger = isNonPassenger(state.config.type);
 
-    if (!selectedCars) {
-        alert("両数を選択してください。");
-        return;
-    }
-    // --- ★ 必須チェック ここまで ---
+        document.getElementById("screen-settings").classList.remove("active");
 
-		// 前半設定
-		state.config.trainNo = trainNo.value.trim();
-		state.config.direction = selectedDir; // 方向はボタンで選んだ値
-		state.config.type = typeSel.value;
-		state.config.dest = destSel.value;
-		state.config.cars = selectedCars; // 両数（ボタン）
-		// ★ 運転日区分を保存（平日 / 土休日）
-		state.config.dayType = dayTypeSel.value || "平日";
-
-		// 終点で列番変更（後半設定）
-		state.config.endChange = endChange.checked;
-		if (endChange.checked) {
-			state.config.second.trainNo = trainNo2.value.trim();
-			state.config.second.type = typeSel2.value;
-			state.config.second.dest = destSel2.value;
-			// 後半の両数は前半と同じに固定（変更不可）
-			state.config.second.cars = state.config.cars;
-		}
-
-        // ★ 開始画面に遷移した時点で GPS を開始
-        startGpsWatch();
-
-		document.getElementById("screen-settings").classList.remove("active");
-		document.getElementById("screen-start").classList.add("active");
-	};
+        if (nonPassenger) {
+            // 回送・試運転・臨時 → 追加停車駅の画面へ
+            renderNonPassengerExtraStopsScreen();
+            document.getElementById("screen-extra-stops").classList.add("active");
+            // ※ GPS は extra 画面の「開始画面へ」ボタンで startGpsWatch() を呼ぶ
+        } else {
+            // それ以外 → 直ちに開始画面へ & GPS開始
+            startGpsWatch();
+            document.getElementById("screen-start").classList.add("active");
+        }
+    };    
 
 	// ---- 画面にパーツを配置 ----
     c.append(
@@ -2855,67 +2859,6 @@ function renderNonPassengerExtraStopsScreen() {
     });
 }
 
-// ---- 実行ボタン ----
-const execBtn = el("button", { class: "btn" }, "実行");
-execBtn.onclick = () => {
-
-    // --- ★ 必須チェック（既存） ---
-    if (!trainNo.value.trim()) {
-        alert("列車番号を入力してください。");
-        return;
-    }
-    if (!selectedDir) {
-        alert("上り/下りを選択してください。");
-        return;
-    }
-    if (!typeSel.value) {
-        alert("種別を選択してください。");
-        return;
-    }
-    if (!destSel.value) {
-        alert("行先を選択してください。");
-        return;
-    }
-    if (!selectedCars) {
-        alert("両数を選択してください。");
-        return;
-    }
-    // --- ★ 必須チェックここまで ---
-
-    // 前半設定
-    state.config.trainNo = trainNo.value.trim();
-    state.config.direction = selectedDir;
-    state.config.type = typeSel.value;
-    state.config.dest = destSel.value;
-    state.config.cars = selectedCars;
-    state.config.dayType = dayTypeSel.value || "平日";
-
-    // 終点で列番変更
-    state.config.endChange = endChange.checked;
-    if (endChange.checked) {
-        state.config.second.trainNo = trainNo2.value.trim();
-        state.config.second.type = typeSel2.value;
-        state.config.second.dest = destSel2.value;
-        state.config.second.cars = state.config.cars;
-    }
-
-    // ★ ここから遷移分岐
-    const nonPassenger = isNonPassenger(state.config.type);
-
-    document.getElementById("screen-settings").classList.remove("active");
-
-    if (nonPassenger) {
-        // 回送・試運転・臨時 → 追加停車駅の画面へ
-        renderNonPassengerExtraStopsScreen();  // ★ リスト描画
-        document
-            .getElementById("screen-extra-stops")
-            .classList.add("active");
-    } else {
-        // それ以外は従来通り：この時点で GPS 開始 → 開始画面へ
-        startGpsWatch();
-        document.getElementById("screen-start").classList.add("active");
-    }
-};
 
 window.addEventListener("load", async () => {
 	await loadData();
