@@ -21,10 +21,10 @@ input[type="text"], select, input[type="number"] {
 .screen { display: none; }
 .screen.active { display: block; }
 
-/* Guidance layout: 5 bands (2:2:2:1:1) */
+/* Guidance layout: 6 bands (2:2:2:1:1:1 に拡張) */
 .guidance {
   display: grid;
-  grid-template-rows: 3fr 3fr 2fr 1fr 1fr;
+  grid-template-rows: 3fr 3fr 2fr 1fr 1fr 1fr; /* ★ 5→6行に */
   height: 100vh;
   width: 100%;
   overflow: hidden;
@@ -99,6 +99,22 @@ input[type="text"], select, input[type="number"] {
 .list { display: grid; gap: 8px; }
 .sep { border: none; border-top: 1px solid #333; margin: 16px 0; }
 .small { font-size: 12px; color: #aaa; }
+
+/* --- 6段目：次駅発車時刻 --- */
+.band6 {
+  background: #000;
+  border-top: 1px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+}
+
+.band6 #nextDepart {
+  font-size: clamp(16px, 4.5vw, 28px);
+  font-weight: 800;
+  text-align: center;
+}
 
 /* Start screen */
 .centered { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
