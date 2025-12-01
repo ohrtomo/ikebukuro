@@ -1571,12 +1571,66 @@ function getDestCategory(dest) {
 
 // ある駅名がどの路線配列に属しているかを返す
 function getLineForStation(name) {
-	if (MAIN_LINE_ORDER.includes(name)) return "main";
-	if (YURAKU_LINE_ORDER.includes(name)) return "yuraku";
-	if (TOSHIMA_LINE_ORDER.includes(name)) return "toshima";
-	if (SAYAMA_LINE_ORDER.includes(name)) return "sayama";
-	return null;
+    // ★ まず、すでにルートが確定している場合はその路線を優先する
+    const rt = state.runtime.routeLine;
+
+    if (rt === "main"   && MAIN_LINE_ORDER.includes(name))   return "main";
+    if (rt === "yuraku" && YURAKU_LINE_ORDER.includes(name)) return "yuraku";
+    if (rt === "toshima"&& TOSHIMA_LINE_ORDER.includes(name))return "toshima";
+    if (rt === "sayama" && SAYAMA_LINE_ORDER.includes(name)) return "sayama";
+
+    // ★ ルート未確定 or 上の条件に当てはまらない駅は従来どおり
+    if (MAIN_LINE_ORDER.includes(name))   return "main";
+    if (YURAKU_LINE_ORDER.includes(name)) return "yuraku";
+    if (TOSHIMA_LINE_ORDER.includes(name))return "toshima";
+    if (SAYAMA_LINE_ORDER.includes(name)) return "sayama";
+
+    return null;
 }
+
+// ある駅が、lockedLine（main / toshima / sayama / yuraku）に属してよいかどうか
+function stationBelongsToLockedLine(name, lockedLine) {
+    if (!lockedLine) return true; // ルート未確定なら全駅候補
+
+    // 池袋線本線
+    if (lockedLine === "main") {
+        // 本線上の駅はもちろんOK
+        if (MAIN_LINE_ORDER.includes(name)) return true;
+
+        // 練馬は豊島線・有楽町線との共通駅として、mainでも拾いたい
+        if (name === "練馬") return true;
+
+        // 西所沢も狭山線との共通駅として拾っておく
+        if (name === "西所沢") return true;
+
+        return false;
+    }
+
+    // 豊島線ロック時：豊島線＋練馬（共通駅）を許可
+    if (lockedLine === "toshima") {
+        if (TOSHIMA_LINE_ORDER.includes(name)) return true;
+        if (name === "練馬") return true;  // ← ココが今回の肝
+        return false;
+    }
+
+    // 狭山線ロック時：狭山線＋西所沢（共通駅）を許可
+    if (lockedLine === "sayama") {
+        if (SAYAMA_LINE_ORDER.includes(name)) return true;
+        if (name === "西所沢") return true;
+        return false;
+    }
+
+    // 有楽町線ロック時：有楽町線＋小竹向原＋練馬（共通駅）を許可
+    if (lockedLine === "yuraku") {
+        if (YURAKU_LINE_ORDER.includes(name)) return true;
+        if (name === "小竹向原" || name === "練馬") return true;
+        return false;
+    }
+
+    // 想定外の値はとりあえず制限しない
+    return true;
+}
+
 
 // ★ 駅名から stationId を引く（stationID.json を全走査）
 //    → 駅名は「完全一致」のみで検索する
@@ -2241,23 +2295,19 @@ function nearestStation(lat, lng) {
 	const lockedLine = state.runtime.routeLine;
 
 	for (const [name, info] of Object.entries(state.datasets.stations)) {
-		if (info.lat == null || info.lng == null) continue;
+ 	   if (info.lat == null || info.lng == null) continue;
 
-		// ★ ルート確定済みなら、別路線の駅は無視
-		if (lockedLine) {
-			const line = getLineForStation(name); // "main" / "yuraku" / ...
+ 	   // ★ ルート確定済みなら、そのルートに属さない駅は基本除外
+ 	   //    ただし、練馬・西所沢・小竹向原などの「共通駅」は許可する
+ 	   if (!stationBelongsToLockedLine(name, lockedLine)) {
+ 	       continue;
+ 	   }
 
-			// line が判定できて、かつ確定ルートと異なる場合はスキップ
-			if (line && line !== lockedLine) {
-				continue;
-			}
-		}
-
-		const d = haversine(lat, lng, info.lat, info.lng);
-		if (d < bestD) {
-			bestD = d;
-			best = { name, ...info, distance: d };
-		}
+ 	   const d = haversine(lat, lng, info.lat, info.lng);
+ 	   if (d < bestD) {
+ 	       bestD = d;
+  	      best = { name, ...info, distance: d };
+  	  }
 	}
 	return best;
 }
