@@ -2721,51 +2721,51 @@ function maybeSpeak(ns) {
         }
     }
 
-    // ===== (C) 停止直前の案内：200m クロス時 =====
-    // 200m より外側 → 200m 以内に入った瞬間
-    const crossed200Stop =
-        !isFirstMeasurement &&
-        isStop &&
-        ns.distance <= 200 &&
-        (prevSameDist == null || prevSameDist > 200);
+	// ===== (C) 停止直前の案内：200m クロス時 =====
+	// 200m より外側 → 200m 以内に入った瞬間
+	const crossed200Stop =
+		!isFirstMeasurement &&
+		isStop &&
+		ns.distance <= 200 &&
+		(prevSameDist == null || prevSameDist > 200);
 
-    if (crossed200Stop && d > 5) {
-        const stopWord = isExtraStop ? "臨時停車" : "停車";
+	// ★ 速度条件 d > 5 は撤廃して、距離条件だけで判定
+	if (crossed200Stop) {
+		const stopWord = isExtraStop ? "臨時停車" : "停車";
 
-        if (
-            state.config.cars === 8 &&
-            (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
-        ) {
-            speakOnce(
-                "arr200_" + key,
-                `${stopWord}、8両、${
-                    state.config.direction === "上り"
-                        ? ns.up8pos
-                        : ns.down8pos
-                }あわせ`,
-            );
-        } else if (state.config.cars === 10) {
-            speakOnce("arr200_" + key, `${stopWord}、10両`);
-        } else {
-            speakOnce(
-                "arr200_" + key,
-                `${stopWord}、${state.config.cars}両、停止位置注意`,
-            );
-        }
+		// 到着案内（速度に関係なく一度だけ出す）
+		if (
+			state.config.cars === 8 &&
+			(state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
+		) {
+			speakOnce(
+				"arr200_" + key,
+				`${stopWord}、8両、${
+					state.config.direction === "上り"
+						? ns.up8pos
+						: ns.down8pos
+				}あわせ`,
+			);
+		} else if (state.config.cars === 10) {
+			speakOnce("arr200_" + key, `${stopWord}、10両`);
+		} else {
+			speakOnce(
+				"arr200_" + key,
+				`${stopWord}、${state.config.cars}両、停止位置注意`,
+			);
+		}
 
-        // ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
-        if (isNonP) {
-            speakOnce("door200_" + key, "ドア扱い注意");
-        }
+		// ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
+		if (isNonP) {
+			speakOnce("door200_" + key, "ドア扱い注意");
+		}
 
-        // ★ 到着扱い：200m 以内なら次駅を覚える（ここはそのまま）
-        if (ns.distance <= 200) {
-            if (!state.runtime.lastStopStation) {
-                const nextName = findNextStopStationName(ns.name);
-                state.runtime.lastStopStation = nextName || null;
-            }
-        }
-    }
+		// ★ 次駅情報は必ずセット（この後の「次は〜」案内用）
+		if (!state.runtime.lastStopStation) {
+			const nextName = findNextStopStationName(ns.name);
+			state.runtime.lastStopStation = nextName || null;
+		}
+	}
 
     // ===== 通過列車の案内 =====
     // （客扱い列車・回送・試運転・臨時すべて共通）
