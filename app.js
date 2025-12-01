@@ -709,9 +709,8 @@ function screenGuidance() {
         ),
 
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
-        el("div", { class: "clock", id: "delayInfo" }, ""),        // ★ 遅延表示
-        el("div", { class: "clock", id: "nextDepart" }, ""),       // ★ 次駅発車時刻
-        el("div", { class: "clock", id: "nextDepartDebug" }, ""),  // ★ デバッグ用
+        el("div", { class: "clock", id: "delayInfo" }, ""),   // ★ 遅延表示
+        el("div", { class: "clock", id: "nextDepart" }, ""),  // ★ 次駅発車時刻（ここだけ使う）
     ]);
 
 	root.append(band1, band2, band3, band4, band5);
@@ -752,7 +751,6 @@ function screenGuidance() {
 	root._clock = band5.querySelector("#clock");
 	root._delayInfo = band5.querySelector("#delayInfo");
     root._nextDepart = band5.querySelector("#nextDepart"); 
-    root._nextDepartDebug = band5.querySelector("#nextDepartDebug"); 
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
 	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
@@ -1657,12 +1655,22 @@ function getStationIdByName(name) {
 }
 
 // ★ 遅延情報取得用：現在の列車が関係しそうな lineId を返す
-//   ・routeLine が確定していればそれを最優先
-//   ・未確定の場合は行先カテゴリから、必要最小限の路線だけを見る
 function getCurrentLineIdsForDelay() {
     const ids = new Set();
     const route   = state.runtime.routeLine;           // "main" / "yuraku" / "toshima" / "sayama" / null
     const destCat = getDestCategory(state.config.dest);
+    const dest    = state.config.dest;
+
+    // ★ 狭山線内のみの列車（西所沢↔西武球場前・下山口）は
+    //   常に狭山線ID（L002）のみを参照する
+    const isSayamaOnly =
+        route === "sayama" &&
+        (dest === "西所沢" || dest === "西武球場前" || dest === "下山口");
+    
+    if (isSayamaOnly) {
+        ids.add("L002");        // 狭山線
+        return Array.from(ids);
+    }
 
     // --- ルート確定済みの場合 ---
     if (route === "main") {
@@ -1670,9 +1678,9 @@ function getCurrentLineIdsForDelay() {
     } else if (route === "toshima") {
         ids.add("L003");        // 豊島線
     } else if (route === "sayama") {
-        ids.add("L002");        // 狭山線（★ 修正）
+        ids.add("L002");        // 狭山線
     } else if (route === "yuraku") {
-        ids.add("L005");        // 有楽町線（★ 修正）
+        ids.add("L005");        // 有楽町線
     } else {
         // --- ルート未確定の場合（行先から推定） ---
         if (destCat === "toshima") {
@@ -1680,13 +1688,12 @@ function getCurrentLineIdsForDelay() {
             ids.add("L003");    // 豊島線
         } else if (destCat === "sayama") {
             ids.add("L001");    // 池袋線区間
-            ids.add("L002");    // 狭山線（★ 修正）
+            ids.add("L002");    // 狭山線
         } else if (destCat === "yuraku") {
             ids.add("L001");    // 池袋線区間
-            ids.add("L005");    // 有楽町線（★ 修正）
+            ids.add("L005");    // 有楽町線
         } else {
-            // それ以外は池袋線だけ見る
-            ids.add("L001");
+            ids.add("L001");    // それ以外は池袋線だけ
         }
     }
 
@@ -1724,58 +1731,38 @@ function extractDepartureHms(detail) {
 }
 
 
-// ★ 次の停車駅の発車時刻を取得して表示（デバッグ付き）
+// ★ 次の停車駅の発車時刻を取得して表示
 async function fetchAndShowNextDeparture(nextStationName) {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._nextDepart) return;
 
     const el = root._nextDepart;
-    const dbg = root._nextDepartDebug;   // ★ デバッグ表示用
 
     // いったん消してから更新
     el.textContent = "";
     el.style.visibility = "hidden";
-    if (dbg) {
-        dbg.textContent = "";
-        dbg.style.visibility = "hidden";
-    }
 
     // --- 駅ID 取得 ---
     const stationId = getStationIdByName(nextStationName);
     if (!stationId) {
         // stationID.json に無い駅 → 何も表示しない
-        if (dbg) {
-            dbg.textContent = "駅IDなし";
-            dbg.style.visibility = "visible";
-        }
         return;
     }
 
     // --- 列車番号 取得 ---
     const trainNo = getCurrentTrainNoForDelay();
     if (!trainNo) {
-        if (dbg) {
-            dbg.textContent = "列番なし";
-            dbg.style.visibility = "visible";
-        }
         return;
     }
 
     const dirApi = state.config.direction === "上り" ? "up" : "down";
-
-    if (dbg) {
-        dbg.textContent = `取得中: ${nextStationName} / ${stationId}`;
-        dbg.style.visibility = "visible";
-    }
 
     try {
         const url = `https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/${stationId}/departures`;
         const res = await fetch(url);
 
         if (!res.ok) {
-            if (dbg) {
-                dbg.textContent = `HTTPエラー: ${res.status}`;
-            }
+            // HTTP エラー時も何も表示しない
             return;
         }
 
@@ -1791,7 +1778,7 @@ async function fetchAndShowNextDeparture(nextStationName) {
         let found = null;
 
         for (const dep of depList) {
-            // ★★ iPad 対応のため、ここでは lineId で絞り込まない ★★
+            // ★ iPad 対応のため、ここでは lineId で絞り込まない
 
             const details =
                 dep.detail ||
@@ -1825,18 +1812,13 @@ async function fetchAndShowNextDeparture(nextStationName) {
         }
 
         if (!found) {
-            if (dbg) {
-                dbg.textContent = "該当列車なし";
-            }
+            // 該当列車が無い場合も特に何も出さない
             return;
         }
 
         // ★ 時刻フィールドの揺れをまとめて処理
         const hms = extractDepartureHms(found);
         if (!hms) {
-            if (dbg) {
-                dbg.textContent = "時刻フィールド不明";
-            }
             return;
         }
 
@@ -1844,16 +1826,9 @@ async function fetchAndShowNextDeparture(nextStationName) {
         el.textContent = `${nextStationName}　${hms}　発`;
         el.style.visibility = "visible";
 
-        if (dbg) {
-            dbg.textContent = "";
-            dbg.style.visibility = "hidden";
-        }
     } catch (e) {
-        // 通信エラー時
-        if (dbg) {
-            dbg.textContent = "通信エラー";
-            dbg.style.visibility = "visible";
-        }
+        // 通信エラー時も、状態表示は行わない（何も出さない）
+        return;
     }
 }
 
@@ -2500,7 +2475,7 @@ function handleStartupPosition(ns) {
 function startDelayWatch() {
     if (delayTimer) return;
     fetchAndUpdateDelay(); // 起動時に一度実行
-    delayTimer = setInterval(fetchAndUpdateDelay, 60000);
+    delayTimer = setInterval(fetchAndUpdateDelay, 20000);
 }
 
 // ★ 遅延更新タイマー停止
