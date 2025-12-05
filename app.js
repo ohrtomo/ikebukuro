@@ -3196,80 +3196,83 @@ function init() {
 
 // ★ 追加停車駅画面のリストを描画
 function renderNonPassengerExtraStopsScreen() {
-	const root = document.getElementById("screen-extra-stops");
-	if (!root) return;
+    const root = document.getElementById("screen-extra-stops");
+    if (!root) return;
 
-	const container = root.querySelector("#extraStopsContainer");
-	if (!container) return;
+    // まず既存のブロックを全部消す（念のため二重クリア）
+    root.querySelectorAll(".extra-station-block").forEach((el) => el.remove());
 
-	container.innerHTML = "";
+    // コンテナを取得（なければ作る）
+    let container = root.querySelector("#extraStopsContainer");
+    if (!container) {
+        container = el("div", { class: "container", id: "extraStopsContainer" });
+        const btnRow = root.querySelector("#extraStopsButtons");
+        if (btnRow) {
+            root.insertBefore(container, btnRow);
+        } else {
+            root.appendChild(container);
+        }
+    } else {
+        container.innerHTML = "";
+    }
 
-	const stations = state.datasets.stations;
-	if (!stations) {
-		container.appendChild(
-			el("div", { class: "row" }, "stations.json が読み込まれていません。")
-		);
-		return;
-	}
+    const stations = state.datasets.stations;
+    if (!stations) {
+        container.appendChild(
+            el("div", { class: "row" }, "stations.json が読み込まれていません。"),
+        );
+        return;
+    }
 
-	const names = Object.keys(stations);
+    const names = Object.keys(stations);
 
-	// ★ モードに応じて参照する Set を切り替え
-	const mode = state.runtime.extraStopsMode || "first";
-	let extraSet;
-	if (mode === "second") {
-		extraSet = state.runtime.nonPassengerExtraStopsSecond || new Set();
-	} else {
-		extraSet = state.runtime.nonPassengerExtraStops || new Set();
-	}
+    // ★ モードに応じて、どの種別で「必須停車駅」を判定するか決める
+    const mode = state.runtime.extraStopsMode || "first";
 
-	names.forEach((n) => {
-		// ★ モードに応じて参照する Set と、「ダイヤ上の種別」を切り替え
-		const mode = state.runtime.extraStopsMode || "first";
+    let extraSet;
+    let baseType;
 
-		let extraSet;
-		let baseType;
+    if (mode === "second") {
+        // 変更後列車（回送・臨時など）の追加停車駅
+        extraSet = state.runtime.nonPassengerExtraStopsSecond || new Set();
+        baseType = state.config.second.type || "";
+    } else {
+        // 変更前列車（1本目）の追加停車駅
+        extraSet = state.runtime.nonPassengerExtraStops || new Set();
+        baseType = state.config.type || "";
+    }
 
-		if (mode === "second") {
-		    // 変更後列車（回送・臨時など）の追加停車駅
-		    extraSet = state.runtime.nonPassengerExtraStopsSecond || new Set();
-		    baseType = state.config.second.type || "";   // ← 変更後の種別で必須停車駅を判定
-		} else {
-		    // 変更前列車（1本目）の追加停車駅
-		    extraSet = state.runtime.nonPassengerExtraStops || new Set();
-		    baseType = state.config.type || "";          // ← 変更前の種別で必須停車駅を判定
-		}
+    names.forEach((n) => {
+        // ★ ここがポイント：モードごとの種別で「ダイヤ上必須停車駅」を判定
+        const base = baseIsStopRawForType(n, baseType);
 
-		names.forEach((n) => {
-		    // ★ ここを「そのモードの種別」に基づいて判定するよう変更
-		    const base = baseIsStopRawForType(n, baseType);  // ダイヤ上の必須停車駅
-		
-		    const block = el("div", {
-		        class: "extra-station-block",
-		        "data-station": n,
-		        "data-base": base ? "1" : "0",
-		        style: "margin-bottom:4px;border-bottom:1px solid #ccc;padding-bottom:2px;",
-		    });
-		
-		    const row = el("div", {
-		        class: "row",
-		        style: "display:flex;align-items:center;gap:4px;",
-		    });
-		
-		    const chk = el("input", { type: "checkbox" });
-		    if (base) {
-		        chk.checked = true;
-		        chk.disabled = true;          // 必須停車駅はチェック固定
-		    } else {
-		        chk.checked = extraSet.has(n); // 任意停車駅はモード別 Set を参照
-		    }
-		
- 		   const label = el("label", {}, [chk, " ", n]);
- 		   row.appendChild(label);
- 		   block.appendChild(row);
- 		   container.appendChild(block);
-		});
-	});
+        const block = el("div", {
+            class: "extra-station-block",
+            "data-station": n,
+            "data-base": base ? "1" : "0",
+            style: "margin-bottom:4px;border-bottom:1px solid #ccc;padding-bottom:2px;",
+        });
+
+        const row = el("div", {
+            class: "row",
+            style: "display:flex;align-items:center;gap:4px;",
+        });
+
+        const chk = el("input", { type: "checkbox" });
+        if (base) {
+            // ダイヤ上必須停車駅 → 常に停車＆変更不可
+            chk.checked  = true;
+            chk.disabled = true;
+        } else {
+            // 任意停車駅 → 追加停車セットに含まれていればチェック
+            chk.checked = extraSet.has(n);
+        }
+
+        const label = el("label", {}, [chk, " ", n]);
+        row.appendChild(label);
+        block.appendChild(row);
+        container.appendChild(block);
+    });
 }
 
 
