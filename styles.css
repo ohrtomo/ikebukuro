@@ -23,13 +23,17 @@ input[type="text"], select, input[type="number"] {
 
 /* Guidance layout: 6 bands (2:2:2:1:1:1 に拡張) */
 .guidance {
-  display: grid;
   grid-template-rows: 3fr 3fr 2fr 1fr 1fr 1fr; /* ★ 5→6行に */
   height: 100vh;
   width: 100%;
   overflow: hidden;
 }
 .band { display: flex; align-items: center; justify-content: center; padding: 8px; }
+
+/* 追加：案内画面が active のときだけ grid にする */
+.screen.guidance.active {
+  display: grid;
+}
 
 /* --- Band1 (両数) --- */
 .diamond {
