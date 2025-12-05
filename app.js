@@ -20,6 +20,7 @@ const state = {
         carIcons: {},
         platforms: null,   // ★ 追加: 発着番線データ
         stationIds: null,   // ★ 追加: 駅IDマスタ
+        nonPassengerTypes: null,   // ★ 追加：回送/臨時の細分類
     },
     config: {
         direction: "上り",
@@ -76,7 +77,8 @@ async function loadData() {
         ttable,
         carIcons,
         platforms,
-        stationIds,              // ★ 追加
+        stationIds,
+        nonPassengerTypes,  
     ] = await Promise.all([
         fetch("./data/stations.json").then((r) => r.json()),
         fetch("./data/types.json").then((r) => r.json()),
@@ -84,7 +86,8 @@ async function loadData() {
         fetch("./data/train_number_table.json").then((r) => r.json()),
         fetch("./data/car_icons.json").then((r) => r.json()),
         fetch("./data/platform.json").then((r) => r.json()),
-        fetch("./data/stationID.json").then((r) => r.json()),  // ★ 追加
+        fetch("./data/stationID.json").then((r) => r.json()),
+        fetch("./data/nonpassenger_types.json").then((r) => r.json()),
     ]);
 
     state.datasets.stations    = stations;
@@ -93,7 +96,8 @@ async function loadData() {
     state.datasets.trainTable  = ttable;
     state.datasets.carIcons    = carIcons;
     state.datasets.platforms   = platforms;
-    state.datasets.stationIds  = stationIds;                   // ★ 追加
+    state.datasets.stationIds  = stationIds;
+    state.datasets.nonPassengerTypes = nonPassengerTypes; 
 }
 
 // ==== Speech ====
@@ -141,34 +145,81 @@ function speakOnce(key, text) {
     }
 }
 
+// ★ 列車番号と運転日区分から「回送A」「臨時B」などを取得
+function getNonPassengerTypeByTrainNo(trainNo) {
+    const map = state.datasets.nonPassengerTypes;
+    if (!map) return null;
+
+    const dayType = state.config.dayType || "平日";  // 「平日」「土休日」
+    const table = map[dayType];
+    if (!table) return null;
+
+    const key = String(trainNo).trim();
+    return table[key] || null;  // 該当なしなら null
+}
+
+// ★ 「回送A」＋方向 → 種別一覧にある正式名称へ変換
+//    例: base="回送A", direction="上り" → "回送A上"（types.json に存在する場合）
+function resolveNonPassengerDisplayType(base, direction) {
+    if (!base) return null;
+    const typesList = state.datasets.types || [];
+    const dirSuffix = direction === "上り" ? "上" : "下";
+
+    // 回送系：まず「回送A上/下」が types にあるか確認
+    if (/^回送/.test(base)) {
+        const cand = base + dirSuffix;          // 例: 回送A上
+        if (typesList.includes(cand)) {
+            return cand;
+        }
+    }
+
+    // 「臨時A」や「回送I」「回送J」など、方向を付けないもの
+    if (typesList.includes(base)) {
+        return base;
+    }
+
+    // どうしても見つからなければ、そのまま返す（安全側）
+    return base;
+}
+
 // ==== Train number parser ====
 // 対応: 「開始〜終了」範囲 && 奇数→右 / 偶数→左 行先
 // 偶数→上り / 奇数→下り
 function parseTrainNo(trainNo) {
-	const n = parseInt(String(trainNo), 10);
-	if (Number.isNaN(n)) return null;
-	let found = null;
+    const n = parseInt(String(trainNo), 10);
+    if (Number.isNaN(n)) return null;
+    let found = null;
 
-	for (const row of state.datasets.trainTable) {
-		const start = parseInt(row["列車番号"], 10);
-		const end = parseInt(row["Unnamed: 1"], 10);
-		if (!Number.isNaN(start) && !Number.isNaN(end) && n >= start && n <= end) {
-			const type = row["種別"] || "";
+    for (const row of state.datasets.trainTable) {
+        const start = parseInt(row["列車番号"], 10);
+        const end   = parseInt(row["Unnamed: 1"], 10);
+        if (!Number.isNaN(start) && !Number.isNaN(end) && n >= start && n <= end) {
 
-			// 左側: 行先 / 右側: Unnamed: 4
-			const destLeft = row["行先"] || "";
-			const destRight = row["Unnamed: 4"] || "";
+            let type = row["種別"] || "";
 
-			// 偶数→左側（上り系） / 奇数→右側（下り系）
-			const dest = n % 2 === 0 ? destLeft : destRight;
+            // 左側: 行先 / 右側: Unnamed: 4
+            const destLeft  = row["行先"]   || "";
+            const destRight = row["Unnamed: 4"] || "";
 
-			// 偶数→上り / 奇数→下り
-			const direction = n % 2 === 0 ? "上り" : "下り";
+            // 偶数→左側（上り系） / 奇数→右側（下り系）
+            const dest = n % 2 === 0 ? destLeft : destRight;
 
-			found = { type, dest, direction };
-		}
-	}
-	return found;
+            // 偶数→上り / 奇数→下り
+            const direction = n % 2 === 0 ? "上り" : "下り";
+
+            // ★ 回送／臨時／試運転なら、別表４から細分類を取得して種別名を上書き
+            if (/(回送|臨時|試運転)/.test(type)) {
+                const baseSub = getNonPassengerTypeByTrainNo(n); // 例: "回送A", "臨時B"
+                if (baseSub) {
+                    // 「種別一覧(types.json)に存在する正式名称」に変換
+                    type = resolveNonPassengerDisplayType(baseSub, direction);
+                }
+            }
+
+            found = { type, dest, direction };
+        }
+    }
+    return found;
 }
 
 // ==== Element creation helper ====
@@ -553,20 +604,23 @@ function screenSettings() {
         }
 
         // ★ ここから遷移分岐
-        const nonPassenger = isNonPassenger(state.config.type);
+    const nonPassenger = isNonPassenger(state.config.type);
 
-        document.getElementById("screen-settings").classList.remove("active");
+    document.getElementById("screen-settings").classList.remove("active");
 
-        if (nonPassenger) {
-            // 回送・試運転・臨時 → 追加停車駅の画面へ
-            renderNonPassengerExtraStopsScreen();
-            document.getElementById("screen-extra-stops").classList.add("active");
-            // ※ GPS は extra 画面の「開始画面へ」ボタンで startGpsWatch() を呼ぶ
-        } else {
-            // それ以外 → 直ちに開始画面へ & GPS開始
-            startGpsWatch();
-            document.getElementById("screen-start").classList.add("active");
-        }
+    if (nonPassenger) {
+        // ★ 回送・試運転・臨時：追加停車駅の選択を毎回リセット
+        state.runtime.nonPassengerExtraStops = new Set();
+
+        // 回送・試運転・臨時 → 追加停車駅の画面へ
+        renderNonPassengerExtraStopsScreen();
+        document.getElementById("screen-extra-stops").classList.add("active");
+        // ※ GPS は extra 画面の「開始画面へ」ボタンで startGpsWatch() を呼ぶ
+    } else {
+        // それ以外 → 直ちに開始画面へ & GPS開始
+        startGpsWatch();
+        document.getElementById("screen-start").classList.add("active");
+    }
     };    
 
 	// ---- 画面にパーツを配置 ----
