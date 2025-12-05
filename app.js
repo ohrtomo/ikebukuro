@@ -29,12 +29,16 @@ const state = {
         cars: 10,
         trainNo: "",
         endChange: false,
-        second: { type: "", dest: "", cars: 10, trainNo: "" },
 
-        // ★ 音量（0.0〜1.0）: 初期値は最大
+        second: {
+            type: "",
+            dest: "",
+            cars: 10,
+            trainNo: "",
+            changeStation: "",   // ★ 追加：変更となる駅
+        },
+
         voiceVolume: 1.0,
-
-        // ★ 追加: 運転日区分（平日 / 土休日）
         dayType: "平日",
     },
 
@@ -65,6 +69,11 @@ const state = {
         startupCount: 0,            // 同じ駅を何回連続で見たか  
         voiceMuted: false,      // 一時ミュートフラグ
         nonPassengerExtraStops: new Set(), // ★追加：回送・試運転・臨時の「追加停車駅」
+        // ★ 追加：途中駅列情変更用フラグ
+        midChangePending: false,          // まだこれから途中駅で列情変更を行う
+        midChangeApplied: false,          // 途中駅列情変更を論理的に適用済み（以降は後の列車）
+        midChangeArrivalHandled: false,   // 変更駅到着時のUI更新を済ませたか
+        midChangeConfirmTimer: null,      // 15秒後の「列情確認」タイマー
     },
 };
 
@@ -477,7 +486,7 @@ function screenSettings() {
 		}),
 	);
 
-	// ---- 終点で列番変更 ON/OFF ----
+	// ---- 途中駅で列情変更 ON/OFF ----
 	const endChange = el("input", { type: "checkbox", id: "endChange" });
 	const secondWrap = el("div", { id: "secondConfig", style: "display:none;" });
 	endChange.onchange = () => {
@@ -499,6 +508,13 @@ function screenSettings() {
 
 	state.datasets.dests.forEach((d) => {
 		destSel2.appendChild(el("option", { value: d }, d));
+	});
+
+  	  // ★ 変更となる駅（途中で列情変更を行う駅）
+	const changeStationSel = el("select", { id: "changeStation" });
+	changeStationSel.appendChild(el("option", { value: "" }, ""));
+	state.datasets.dests.forEach((d) => {
+ 	   changeStationSel.appendChild(el("option", { value: d }, d));
 	});
 
 	// ★ 後半：列番から種別・行先を検索するボタン
@@ -531,6 +547,12 @@ function screenSettings() {
 			el("div", {}, [el("label", {}, "種別(後)"), typeSel2]),
 			el("div", {}, [el("label", {}, "行先(後)"), destSel2]),
 		]),
+
+            // ★ 変更となる駅
+    	el("div", { class: "row" }, [
+    	    el("label", {}, "変更となる駅"),
+    	    changeStationSel,
+    	]),
 
 		// 両数(後) は入力欄をなくしてラベルだけ
 		el("div", { class: "row" }, [el("label", {}, "両数(後)"), carsLabel2]),
@@ -584,6 +606,39 @@ function screenSettings() {
             alert("両数を選択してください。");
             return;
         }
+
+            // --- ★ 途中駅で列情変更用のチェック ---
+        if (endChange.checked) {
+            if (!trainNo2.value.trim()) {
+                alert("変更後の列車番号を入力してください。");
+                return;
+            }
+            if (!typeSel2.value) {
+                alert("変更後の種別を選択してください。");
+                return;
+            }
+            if (!destSel2.value) {
+                alert("変更後の行先を選択してください。");
+                return;
+            }
+            if (!changeStationSel.value) {
+                alert("変更となる駅を選択してください。");
+                return;
+            }
+    
+            const n1 = parseInt(trainNo.value.trim(), 10);
+            const n2 = parseInt(trainNo2.value.trim(), 10);
+            if (Number.isNaN(n1) || Number.isNaN(n2)) {
+                alert("列車番号が正しくありません。");
+                return;
+            }
+            // ★ 偶数同士／奇数同士でなければエラー（方向が一致していない）
+            if ((n1 % 2 + 2) % 2 !== (n2 % 2 + 2) % 2) {
+                alert("変更前と変更後の列車番号は、同じ方向（偶数/奇数）にしてください。");
+                return;
+            }
+        }
+
         // --- ★ 必須チェックここまで ---
 
         // 前半設定
@@ -594,13 +649,31 @@ function screenSettings() {
         state.config.cars      = selectedCars;
         state.config.dayType   = dayTypeSel.value || "平日";
 
-        // 終点で列番変更
+        // 途中駅で列情変更
         state.config.endChange = endChange.checked;
         if (endChange.checked) {
-            state.config.second.trainNo = trainNo2.value.trim();
-            state.config.second.type    = typeSel2.value;
-            state.config.second.dest    = destSel2.value;
-            state.config.second.cars    = state.config.cars;
+            state.config.second.trainNo       = trainNo2.value.trim();
+            state.config.second.type          = typeSel2.value;
+            state.config.second.dest          = destSel2.value;
+            state.config.second.cars          = state.config.cars;
+            state.config.second.changeStation = changeStationSel.value;
+
+            // ★ runtime 初期化（この後 startGuidance でも整理しますが念のため）
+            state.runtime.midChangePending        = true;
+            state.runtime.midChangeApplied        = false;
+            state.runtime.midChangeArrivalHandled = false;
+            if (state.runtime.midChangeConfirmTimer) {
+                clearTimeout(state.runtime.midChangeConfirmTimer);
+                state.runtime.midChangeConfirmTimer = null;
+            }
+        } else {
+            state.runtime.midChangePending        = false;
+            state.runtime.midChangeApplied        = false;
+            state.runtime.midChangeArrivalHandled = false;
+            if (state.runtime.midChangeConfirmTimer) {
+                clearTimeout(state.runtime.midChangeConfirmTimer);
+                state.runtime.midChangeConfirmTimer = null;
+            }
         }
 
         // ★ ここから遷移分岐
@@ -646,7 +719,7 @@ function screenSettings() {
         // ★ ここまで追加
         el("div", { class: "row endchange-row" }, [
             endChange,
-            el("span", {}, " 終点で列番変更"),
+            el("span", {}, " 途中駅で列情変更"),
         ]),
         secondWrap,
         execBtn,
@@ -2236,6 +2309,15 @@ function startGuidance() {
     rt.routeLine = null;
     rt.started = true;
 
+    // ★ 途中駅列情変更フラグ初期化
+    rt.midChangePending        = !!(state.config.endChange && state.config.second.trainNo && state.config.second.changeStation);
+    rt.midChangeApplied        = false;
+    rt.midChangeArrivalHandled = false;
+    if (rt.midChangeConfirmTimer) {
+        clearTimeout(rt.midChangeConfirmTimer);
+        rt.midChangeConfirmTimer = null;
+    }
+
     // ★ 前回案内の残りをリセット
     rt.lastSpoken = {};
     rt.lastStopStation = null;
@@ -2295,6 +2377,12 @@ function stopGuidance() {
 	
     // ★ 遅延情報更新も停止
     stopDelayWatch();
+
+    // ★ 途中駅列情変更のタイマーも解除
+    if (state.runtime.midChangeConfirmTimer) {
+        clearTimeout(state.runtime.midChangeConfirmTimer);
+        state.runtime.midChangeConfirmTimer = null;
+    }
 }
 
 function renderGuidance() {
@@ -2678,49 +2766,75 @@ function maybeSpeak(ns) {
 
     if (left200) {
         const nextName = state.runtime.lastStopStation;
-
+    
         clearNextDepartureDisplay();
 
         if (nextName) {
+            // ★ ここで「途中駅で列情変更」の対象かどうかを判定
+            const cfg2 = state.config.second || {};
+            const isMidChangeTarget =
+               state.config.endChange &&
+                state.runtime.midChangePending &&
+                cfg2.changeStation &&
+                nextName === cfg2.changeStation;
+    
+            // ★ 対象なら、ここで列車情報を変更（論理的にはこの先は後の列車）
+            if (isMidChangeTarget) {
+                state.config.trainNo = cfg2.trainNo || state.config.trainNo;
+                state.config.type    = cfg2.type   || state.config.type;
+                state.config.dest    = cfg2.dest   || state.config.dest;
+                state.config.cars    = cfg2.cars   || state.config.cars;
+    
+                // 停車パターンを変更後種別で再構築
+                buildPassStationList();
+    
+                state.runtime.midChangePending = false;
+                state.runtime.midChangeApplied = true;
+            }
+    
+            // ★ ここから先の判定は、すでに変更後種別で行われる
             const baseNextStop = baseIsStop(nextName);
             const isNextStop   = !state.runtime.passStations.has(nextName);
-
+    
             const isExtraStopNext = !baseNextStop && isNextStop;
             const isExtraPassNext = baseNextStop && !isNextStop;
-
+    
             if (isNextStop) {
                 const word = isExtraStopNext ? "臨時停車" : "停車";
-
-                // ★ 実際に案内する番線（手動変更を反映）
+    
                 const plat = getEffectivePlatformForStation(nextName);
-
+    
                 let text;
                 if (plat) {
                     text = `次は${nextName}、${plat}番、${word}`;
                 } else {
                     text = `次は${nextName}、${word}`;
                 }
-
-                // ★ 手動で標準と違う番線に変更されている場合のみ「着発線変更」を付加
+    
                 if (isPlatformChanged(nextName)) {
                     text += "、着発線変更";
                 }
-
+    
+                // ★ まず「次は〜」を案内
                 speakOnce("leave200_" + nextName, text);
-
-                // ★ 次駅発車時刻表示
+    
+                // ★ 途中駅列情変更の対象であれば、続けて「列情変更」「方向幕確認」
+                if (isMidChangeTarget) {
+                    speakOnce("midchange_change", "列情変更");
+                    speakOnce("midchange_maku", "方向幕確認");
+                }
+    
+                // ★ 次駅発車時刻は「変更後の列車番号」で取得
                 fetchAndShowNextDeparture(nextName);
-
+    
             } else if (isExtraPassNext) {
-                // ★ 臨時通過の案内（回送/試運転/臨時でも同じ文言）
                 speakOnce(
                     "leave200_" + nextName,
                     `次は${nextName}、臨時通過`,
                 );
             }
         }
-
-        // ★ 使い終わったらリセット
+    
         state.runtime.lastStopStation = null;
         state.runtime.lastDepartStation = null;
         state.runtime.lastDepartPrevDist = null;
@@ -2795,6 +2909,42 @@ function maybeSpeak(ns) {
 			const nextName = findNextStopStationName(ns.name);
 			state.runtime.lastStopStation = nextName || null;
 		}
+
+            // ★ ここから追加：途中駅列情変更の「変更駅」に到着したタイミング
+        const cfg2 = state.config.second || {};
+        const isChangeStation =
+            state.runtime.midChangeApplied &&
+            !state.runtime.midChangeArrivalHandled &&
+            cfg2.changeStation &&
+            ns.name === cfg2.changeStation;
+
+        if (isChangeStation) {
+            const root = document.getElementById("screen-guidance");
+            if (root) {
+                // 案内画面の種別・列番・行先を変更後のものに更新
+                if (root._badgeType) {
+                    root._badgeType.className = "badge " + typeClass(state.config.type);
+                    root._badgeType.textContent = state.config.type;
+                }
+                if (root._cellNo) {
+                    root._cellNo.textContent = state.config.trainNo;
+                }
+                if (root._cellDest) {
+                    root._cellDest.textContent = state.config.dest;
+                }
+            }
+    
+            // 15秒後に「列情確認」
+            if (state.runtime.midChangeConfirmTimer) {
+                clearTimeout(state.runtime.midChangeConfirmTimer);
+            }
+            state.runtime.midChangeConfirmTimer = setTimeout(() => {
+                speakOnce("midchange_confirm", "列情確認");
+            }, 15000);
+    
+            state.runtime.midChangeArrivalHandled = true;
+        }
+    
 	}
 
     // ===== 通過列車の案内 =====
