@@ -74,6 +74,12 @@ const state = {
         midChangeApplied: false,          // 途中駅列情変更を論理的に適用済み（以降は後の列車）
         midChangeArrivalHandled: false,   // 変更駅到着時のUI更新を済ませたか
         midChangeConfirmTimer: null,      // 15秒後の「列情確認」タイマー
+        nonPassengerExtraStops: new Set(),        // 現在有効なセット（1本目 or 2本目）
+	    nonPassengerExtraStopsSecond: new Set(),  // 変更後列車用
+
+    	// 追加停車駅設定用キュー
+    	extraStopsQueue: [],
+    	extraStopsMode: null,   // "first" or "second"
     },
 };
 
@@ -421,10 +427,24 @@ function screenSettings() {
 	// 行先（前）
 	const destSel = el("select", { id: "dest" });
 	destSel.appendChild(el("option", { value: "" }, ""));  // ★ 未選択用
-	
 	state.datasets.dests.forEach((d) => {
 		destSel.appendChild(el("option", { value: d }, d));
 	});
+
+	// ★ 変更となる駅（途中で列情変更する駅）
+	const changeStationSel = el("select", { id: "changeStation" });
+	changeStationSel.appendChild(el("option", { value: "" }, ""));
+	state.datasets.dests.forEach((d) => {
+		changeStationSel.appendChild(el("option", { value: d }, d));
+	});
+
+	// 行先を変更したら、「変更となる駅」が未選択または
+	// もともと行先と一致していた場合は、自動で追従させる
+	destSel.onchange = () => {
+		if (!changeStationSel.value || changeStationSel.value === state.config.dest) {
+			changeStationSel.value = destSel.value || "";
+		}
+	};
 
     // ---- 運転日区分（平日 / 土休日） ----
     const dayTypeSel = el("select", { id: "dayType" });
@@ -489,8 +509,15 @@ function screenSettings() {
 	// ---- 途中駅で列情変更 ON/OFF ----
 	const endChange = el("input", { type: "checkbox", id: "endChange" });
 	const secondWrap = el("div", { id: "secondConfig", style: "display:none;" });
+
 	endChange.onchange = () => {
 		secondWrap.style.display = endChange.checked ? "block" : "none";
+		if (endChange.checked) {
+			// ★ チェックを入れた瞬間に「変更となる駅」を行先で初期化
+			if (destSel.value) {
+				changeStationSel.value = destSel.value;
+			}
+		}
 	};
 
 	// ---- 後半：列番・種別・行先（両数は固定で表示のみ） ----
@@ -510,12 +537,6 @@ function screenSettings() {
 		destSel2.appendChild(el("option", { value: d }, d));
 	});
 
-  	  // ★ 変更となる駅（途中で列情変更を行う駅）
-	const changeStationSel = el("select", { id: "changeStation" });
-	changeStationSel.appendChild(el("option", { value: "" }, ""));
-	state.datasets.dests.forEach((d) => {
- 	   changeStationSel.appendChild(el("option", { value: d }, d));
-	});
 
 	// ★ 後半：列番から種別・行先を検索するボタン
 	const btnSearch2 = el(
@@ -677,24 +698,31 @@ function screenSettings() {
         }
 
         // ★ ここから遷移分岐
-    const nonPassenger = isNonPassenger(state.config.type);
+    const nonPassengerFirst  = isNonPassenger(state.config.type);
+    const nonPassengerSecond = state.config.endChange && isNonPassenger(state.config.second.type);
+
+    // 追加停車駅設定キューを構築
+    state.runtime.extraStopsQueue = [];
+    if (nonPassengerFirst)  state.runtime.extraStopsQueue.push("first");
+    if (nonPassengerSecond) state.runtime.extraStopsQueue.push("second");
+    
+    document.getElementById("screen-settings").classList.remove("active");
+
+    if (state.runtime.extraStopsQueue.length > 0) {
+    	// 追加停車駅設定からスタート
+    	const mode = state.runtime.extraStopsQueue.shift();
+    	state.runtime.extraStopsMode = mode;
+    	renderNonPassengerExtraStopsScreen();
+    	document.getElementById("screen-extra-stops").classList.add("active");
+    } else {
+    	// 回送・試運転・臨時が一切ない場合 → そのまま開始画面へ
+    	startGpsWatch();
+    	document.getElementById("screen-start").classList.add("active");
+    }
 
     document.getElementById("screen-settings").classList.remove("active");
 
-    if (nonPassenger) {
-        // ★ 回送・試運転・臨時：追加停車駅の選択を毎回リセット
-        state.runtime.nonPassengerExtraStops = new Set();
 
-        // 回送・試運転・臨時 → 追加停車駅の画面へ
-        renderNonPassengerExtraStopsScreen();
-        document.getElementById("screen-extra-stops").classList.add("active");
-        // ※ GPS は extra 画面の「開始画面へ」ボタンで startGpsWatch() を呼ぶ
-    } else {
-        // それ以外 → 直ちに開始画面へ & GPS開始
-        startGpsWatch();
-        document.getElementById("screen-start").classList.add("active");
-    }
-    };    
 
 	// ---- 画面にパーツを配置 ----
     c.append(
@@ -2329,6 +2357,10 @@ function startGuidance() {
     rt.lastDepartPrevDist = null;
     rt.lastStopDistance = null;
 
+	// ★ 追加停車駅：スタート時は 1本目を有効に
+	rt.nonPassengerExtraStops = new Set(rt.nonPassengerExtraStops || []);
+	// （2本目用の nonPassengerExtraStopsSecond は midChange で適用）    
+
     // ★ 起動モード開始（現在地から「現在駅＋次駅」を判定する）
     startStartupLocationDetection();
 
@@ -2784,6 +2816,11 @@ function maybeSpeak(ns) {
                 state.config.type    = cfg2.type   || state.config.type;
                 state.config.dest    = cfg2.dest   || state.config.dest;
                 state.config.cars    = cfg2.cars   || state.config.cars;
+
+                // ★ 変更後列車用の追加停車駅セットを有効化
+	            state.runtime.nonPassengerExtraStops = new Set(
+	            	state.runtime.nonPassengerExtraStopsSecond || []
+                );
     
                 // 停車パターンを変更後種別で再構築
                 buildPassStationList();
@@ -3054,31 +3091,57 @@ function screenExtraStops() {
 
     // ボタンの動作
     root.addEventListener("click", (e) => {
-        if (e.target.id === "extraBack") {
-            // 設定画面に戻る
-            root.classList.remove("active");
-            document.getElementById("screen-settings").classList.add("active");
-        } else if (e.target.id === "extraNext") {
-            // チェックされた駅を nonPassengerExtraStops に保存して開始画面へ
-            const newExtras = new Set();
-            const blocks = root.querySelectorAll(".extra-station-block");
-
-            blocks.forEach((block) => {
-                const name = block.getAttribute("data-station");
-                const base = block.getAttribute("data-base") === "1";
-                const chk = block.querySelector('input[type="checkbox"]');
-                if (!base && chk && chk.checked) {
-                    newExtras.add(name);
-                }
-            });
-
-            state.runtime.nonPassengerExtraStops = newExtras;
-
-            // GPS開始 → 開始画面へ
-            startGpsWatch();
-            root.classList.remove("active");
-            document.getElementById("screen-start").classList.add("active");
-        }
+    	if (e.target.id === "extraBack") {
+    		// 設定画面に戻る
+    		state.runtime.extraStopsQueue = [];
+    		state.runtime.extraStopsMode  = null;
+    		root.classList.remove("active");
+	    	document.getElementById("screen-settings").classList.add("active");
+    
+	    } else if (e.target.id === "extraNext") {
+	    	// チェックされた駅を保存
+	    	const newExtras = new Set();
+	    	const blocks = root.querySelectorAll(".extra-station-block");
+    
+	    	blocks.forEach((block) => {
+	    		const name = block.getAttribute("data-station");
+    			const base = block.getAttribute("data-base") === "1";
+    			const chk = block.querySelector('input[type="checkbox"]');
+    			if (!base && chk && chk.checked) {
+    				newExtras.add(name);
+    			}
+    		});
+    
+    		const mode = state.runtime.extraStopsMode || "first";
+    		if (mode === "second") {
+    			state.runtime.nonPassengerExtraStopsSecond = newExtras;
+    		} else {
+    			// 1本目（従来の回送など）
+    			state.runtime.nonPassengerExtraStops = newExtras;
+    		}
+    
+    		// ★ 次のモードがあれば再度この画面を使う
+    		if (state.runtime.extraStopsQueue && state.runtime.extraStopsQueue.length > 0) {
+    			const nextMode = state.runtime.extraStopsQueue.shift();
+    			state.runtime.extraStopsMode = nextMode;
+    			renderNonPassengerExtraStopsScreen();  // 次のモードで再描画
+    			// 画面はそのまま（screen-extra-stops のまま）
+    			return;
+    		}
+    
+    		// ★ もうキューが無い → ここで初めて開始画面へ
+    		state.runtime.extraStopsMode = null;
+    
+    		// 案内開始時のデフォルトは 1本目のセット
+    		state.runtime.nonPassengerExtraStops = new Set(
+    			state.runtime.nonPassengerExtraStops || []
+    		);
+    
+    		// GPS開始 → 開始画面へ
+    		startGpsWatch();
+    		root.classList.remove("active");
+    		document.getElementById("screen-start").classList.add("active");
+    	}
     });
 
     return root;
@@ -3095,57 +3158,61 @@ function init() {
 
 // ★ 追加停車駅画面のリストを描画
 function renderNonPassengerExtraStopsScreen() {
-    const root = document.getElementById("screen-extra-stops");
-    if (!root) return;
+	const root = document.getElementById("screen-extra-stops");
+	if (!root) return;
 
-    const container = root.querySelector("#extraStopsContainer");
-    if (!container) return;
+	const container = root.querySelector("#extraStopsContainer");
+	if (!container) return;
 
-    container.innerHTML = "";
+	container.innerHTML = "";
 
-    const stations = state.datasets.stations;
-    if (!stations) {
-        container.appendChild(
-            el("div", { class: "row" }, "stations.json が読み込まれていません。")
-        );
-        return;
-    }
+	const stations = state.datasets.stations;
+	if (!stations) {
+		container.appendChild(
+			el("div", { class: "row" }, "stations.json が読み込まれていません。")
+		);
+		return;
+	}
 
-    const names = Object.keys(stations);
+	const names = Object.keys(stations);
 
-    // すでに選んである追加停車駅
-    const extraSet = state.runtime.nonPassengerExtraStops || new Set();
+	// ★ モードに応じて参照する Set を切り替え
+	const mode = state.runtime.extraStopsMode || "first";
+	let extraSet;
+	if (mode === "second") {
+		extraSet = state.runtime.nonPassengerExtraStopsSecond || new Set();
+	} else {
+		extraSet = state.runtime.nonPassengerExtraStops || new Set();
+	}
 
-    // openStopList のレイアウトに倣った、シンプルな1行構成
-    names.forEach((n) => {
-        // ダイヤ上の必須停車駅（解除不可）
-        const base = baseIsStopRaw(n);
+	names.forEach((n) => {
+		const base = baseIsStopRaw(n);  // ダイヤ上の必須停車駅
 
-        const block = el("div", {
-            class: "extra-station-block",
-            "data-station": n,
-            "data-base": base ? "1" : "0",
-            style: "margin-bottom:4px;border-bottom:1px solid #ccc;padding-bottom:2px;",
-        });
+		const block = el("div", {
+			class: "extra-station-block",
+			"data-station": n,
+			"data-base": base ? "1" : "0",
+			style: "margin-bottom:4px;border-bottom:1px solid #ccc;padding-bottom:2px;",
+		});
 
-        const row = el("div", {
-            class: "row",
-            style: "display:flex;align-items:center;gap:4px;",
-        });
+		const row = el("div", {
+			class: "row",
+			style: "display:flex;align-items:center;gap:4px;",
+		});
 
-        const chk = el("input", { type: "checkbox" });
-        if (base) {
-            chk.checked = true;
-            chk.disabled = true; // 必須停車駅は外せない
-        } else {
-            chk.checked = extraSet.has(n); // 過去の選択を反映
-        }
+		const chk = el("input", { type: "checkbox" });
+		if (base) {
+			chk.checked = true;
+			chk.disabled = true;
+		} else {
+			chk.checked = extraSet.has(n);  // ★ モードに応じた Set を参照
+		}
 
-        const label = el("label", {}, [chk, " ", n]);
-        row.appendChild(label);
-        block.appendChild(row);
-        container.appendChild(block);
-    });
+		const label = el("label", {}, [chk, " ", n]);
+		row.appendChild(label);
+		block.appendChild(row);
+		container.appendChild(block);
+	});
 }
 
 
