@@ -602,7 +602,7 @@ function screenSettings() {
 		}
 	};
 
-	// ---- 実行ボタン ----
+    // ---- 実行ボタン ----
     const execBtn = el("button", { class: "btn" }, "実行");
     execBtn.onclick = () => {
 
@@ -616,7 +616,7 @@ function screenSettings() {
             return;
         }
         if (!typeSel.value) {
-             alert("種別を選択してください。");
+            alert("種別を選択してください。");
             return;
         }
         if (!destSel.value) {
@@ -628,7 +628,7 @@ function screenSettings() {
             return;
         }
 
-            // --- ★ 途中駅で列情変更用のチェック ---
+        // --- ★ 途中駅で列情変更用のチェック ---
         if (endChange.checked) {
             if (!trainNo2.value.trim()) {
                 alert("変更後の列車番号を入力してください。");
@@ -646,7 +646,7 @@ function screenSettings() {
                 alert("変更となる駅を選択してください。");
                 return;
             }
-    
+
             const n1 = parseInt(trainNo.value.trim(), 10);
             const n2 = parseInt(trainNo2.value.trim(), 10);
             if (Number.isNaN(n1) || Number.isNaN(n2)) {
@@ -663,7 +663,7 @@ function screenSettings() {
         // --- ★ 必須チェックここまで ---
 
         // 前半設定
-         state.config.trainNo   = trainNo.value.trim();
+        state.config.trainNo   = trainNo.value.trim();
         state.config.direction = selectedDir;
         state.config.type      = typeSel.value;
         state.config.dest      = destSel.value;
@@ -679,7 +679,7 @@ function screenSettings() {
             state.config.second.cars          = state.config.cars;
             state.config.second.changeStation = changeStationSel.value;
 
-            // ★ runtime 初期化（この後 startGuidance でも整理しますが念のため）
+            // ★ runtime 初期化
             state.runtime.midChangePending        = true;
             state.runtime.midChangeApplied        = false;
             state.runtime.midChangeArrivalHandled = false;
@@ -698,33 +698,38 @@ function screenSettings() {
         }
 
         // ★ ここから遷移分岐
-    const nonPassengerFirst  = isNonPassenger(state.config.type);
-    const nonPassengerSecond = state.config.endChange && isNonPassenger(state.config.second.type);
+        const nonPassengerFirst  = isNonPassenger(state.config.type);
+        const nonPassengerSecond =
+            state.config.endChange && isNonPassenger(state.config.second.type);
 
-    // 追加停車駅設定キューを構築
-    state.runtime.extraStopsQueue = [];
-    if (nonPassengerFirst)  state.runtime.extraStopsQueue.push("first");
-    if (nonPassengerSecond) state.runtime.extraStopsQueue.push("second");
-    
-    document.getElementById("screen-settings").classList.remove("active");
+        // 追加停車駅設定キューを構築
+        state.runtime.extraStopsQueue = [];
+        if (nonPassengerFirst)  state.runtime.extraStopsQueue.push("first");
+        if (nonPassengerSecond) state.runtime.extraStopsQueue.push("second");
 
-    if (state.runtime.extraStopsQueue.length > 0) {
-    	// 追加停車駅設定からスタート
-    	const mode = state.runtime.extraStopsQueue.shift();
-    	state.runtime.extraStopsMode = mode;
-    	renderNonPassengerExtraStopsScreen();
-    	document.getElementById("screen-extra-stops").classList.add("active");
-    } else {
-    	// 回送・試運転・臨時が一切ない場合 → そのまま開始画面へ
-    	startGpsWatch();
-    	document.getElementById("screen-start").classList.add("active");
-    }
+        // 設定画面を一旦閉じる
+        document
+            .getElementById("screen-settings")
+            .classList.remove("active");
 
-    document.getElementById("screen-settings").classList.remove("active");
+        if (state.runtime.extraStopsQueue.length > 0) {
+            // 追加停車駅設定からスタート
+            const mode = state.runtime.extraStopsQueue.shift();
+            state.runtime.extraStopsMode = mode;
+            renderNonPassengerExtraStopsScreen();
+            document
+                .getElementById("screen-extra-stops")
+                .classList.add("active");
+        } else {
+            // 回送・試運転・臨時が一切ない場合 → そのまま開始画面へ
+            startGpsWatch();
+            document
+                .getElementById("screen-start")
+                .classList.add("active");
+        }
+    };  // ★ ここが抜けていた
 
-
-
-	// ---- 画面にパーツを配置 ----
+    // ---- 画面にパーツを配置 ----
     c.append(
         el("div", { class: "row" }, [
             el("label", {}, "列車番号"),
@@ -753,8 +758,8 @@ function screenSettings() {
         execBtn,
     );
 
-	root.appendChild(c);
-	return root;
+    root.appendChild(c);
+    return root;
 }
 
 function screenStart() {
