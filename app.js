@@ -2656,7 +2656,8 @@ function handleStartupPosition(ns) {
     }
 
     // 1) 「走行中にスタートした」とみなす条件
-    //    ・速度が十分速い or 駅からある程度離れている
+    //    ・速度が十分速い（>=10km/h）
+    //    ・または 駅から 200m より外側
     if (speed >= 10 || ns.distance > 200) {
         initStartupBetween(ns);
         rt.startupMode = false;
@@ -2666,9 +2667,8 @@ function handleStartupPosition(ns) {
 
     // 2) 「駅に停車中」とみなす条件
     //    ・駅から 200m 以内
-    //    ・速度 5km/h 未満
     //    ・同じ駅を 3回連続で検出
-    if (ns.distance <= 200 && speed < 5) {
+    if (ns.distance <= 200) {
         if (rt.startupCandidate === ns.name) {
             rt.startupCount = (rt.startupCount || 0) + 1;
         } else {
@@ -2683,6 +2683,7 @@ function handleStartupPosition(ns) {
         }
     }
 }
+
 
 // ★ 遅延更新タイマー開始（1分おき）
 function startDelayWatch() {
@@ -2915,12 +2916,12 @@ function maybeSpeak(ns) {
         state.runtime.lastDepartPrevDist = null;
     }
 
-    // ===== (B) 手前 400m の「まもなく○○」案内 =====
+    // ===== (B) 手前 450m の「まもなく○○」案内 =====
     const crossed400 =
         !isFirstMeasurement &&
         isStop &&
-        ns.distance <= 400 &&
-        (prevSameDist == null || prevSameDist > 400);
+        ns.distance <= 450 &&
+        (prevSameDist == null || prevSameDist > 450);
 
     if (crossed400) {
         const stopWord = isExtraStop ? "臨時停車" : "停車";
@@ -2934,7 +2935,7 @@ function maybeSpeak(ns) {
 
         speakOnce("arr400_" + key, text);
 
-        // ★ 回送・試運転・臨時は 400m 案内の直後に「ドア扱い注意」
+        // ★ 回送・試運転・臨時は 450m 案内の直後に「ドア扱い注意」
         if (isNonP) {
             speakOnce("door400_" + key, "ドア扱い注意");
         }
@@ -2985,7 +2986,7 @@ function maybeSpeak(ns) {
 			state.runtime.lastStopStation = nextName || null;
 		}
 
-            // ★ ここから追加：途中駅列情変更の「変更駅」に到着したタイミング
+        // ★ ここから追加：途中駅列情変更の「変更駅」に到着したタイミング
         const cfg2 = state.config.second || {};
         const isChangeStation =
             state.runtime.midChangeApplied &&
@@ -3038,6 +3039,7 @@ function maybeSpeak(ns) {
     state.runtime.prevStationDistance = ns.distance;
 }
 
+
 function otherSpeaks(ns) {
     const h = new Date();
     const hh = h.getHours(), mm = h.getMinutes();
@@ -3045,7 +3047,7 @@ function otherSpeaks(ns) {
     const before0100 = hh < 1;
     const timeOK = after1555 || before0100;
 
-    // 練馬：100m 内 → 外 に出た瞬間
+    // ★ 有楽町線乗り入れ時（練馬 → 小竹向原行き）搭載かばん確認
     if (
         state.config.direction === "上り" &&
         state.config.dest === "小竹向原" &&
@@ -3056,10 +3058,11 @@ function otherSpeaks(ns) {
                 ? state.runtime.prevStationDistance
                 : null;
 
+        // ★ 150m 以下 → 150m 以上 に出た瞬間で発話（変更）
         const crossedOut =
             prevDist != null &&
-            prevDist <= 100 &&
-            ns.distance > 100;
+            prevDist <= 150 &&
+            ns.distance > 150;
 
         if (crossedOut) {
             speakOnce("rule-nerima", "搭載かばん、確認");
@@ -3076,12 +3079,10 @@ function otherSpeaks(ns) {
         speakOnce("rule-tokorozawa", "列車無線チャンネル切り替え");
     }
 
-    // ★ 椎名町（池袋行・上り・夕方〜深夜）
-    //    150m 以下 → 150m 以上 に抜けた瞬間で発話
+    // ★ 椎名町（池袋行・上り）150m確認
     if (
         state.config.direction === "上り" &&
         state.config.dest === "池袋" &&
-        timeOK &&
         ns.name === "椎名町"
     ) {
         const prevDist =
@@ -3092,13 +3093,20 @@ function otherSpeaks(ns) {
         const crossed150Out =
             prevDist != null &&
             prevDist <= 150 &&
-            ns.distance >= 150;   // ★ 「150m以下」→「150m以上」に出た瞬間
+            ns.distance >= 150;
 
         if (crossed150Out) {
-            speakOnce("rule-shiinamachi", "ドアかいひかた、確認");
+            // ★ 時間帯に関係なく「方向幕確認」
+            speakOnce("rule-shiinamachi-maku", "方向幕確認");
+
+            // ★ 従来通り、夕方〜深夜のみ「ドアかいひかた、確認」
+            if (timeOK) {
+                speakOnce("rule-shiinamachi", "ドアかいひかた、確認");
+            }
         }
     }
 }
+
 
 // ★ 回送・試運転・臨時用 追加停車駅設定画面
 function screenExtraStops() {
