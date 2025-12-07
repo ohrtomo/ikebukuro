@@ -80,6 +80,10 @@ const state = {
     	// 追加停車駅設定用キュー
     	extraStopsQueue: [],
     	extraStopsMode: null,   // "first" or "second"
+        undergroundMode: false,               // 地下モード中かどうか
+        undergroundLastToStationName: null,   // trains API の最新 toStationName
+        undergroundSource: null,              // "downButton" / "autoUp" / "menu" など任意
+
     },
 };
 
@@ -726,8 +730,15 @@ function screenSettings() {
             document
                 .getElementById("screen-start")
                 .classList.add("active");
+
+            // ★ 下り列車なら「地下起動」ボタンを表示
+            const startRoot = document.getElementById("screen-start");
+            if (startRoot && startRoot._updateUndergroundButtonVisibility) {
+                startRoot._updateUndergroundButtonVisibility();
+            }
         }
-    };  // ★ ここが抜けていた
+    }
+
 
     // ---- 画面にパーツを配置 ----
     c.append(
@@ -763,40 +774,82 @@ function screenSettings() {
 }
 
 function screenStart() {
-	const root = el("div", { class: "screen", id: "screen-start" });
-	const center = el("div", { class: "centered" }, [
-		el("button", { class: "btn", id: "btn-begin" }, "開始"),
-		el("button", { class: "btn secondary", id: "btn-cancel" }, "中止"),
-	]);
+    const root = el("div", { class: "screen", id: "screen-start" });
+
+    const btnBegin = el("button", { class: "btn", id: "btn-begin" }, "開始");
+    const btnCancel = el("button", { class: "btn secondary", id: "btn-cancel" }, "中止");
+
+    // ★ 下り列車専用「地下起動」ボタン（赤）
+    const btnUnderground = el(
+        "button",
+        {
+            class: "btn warn",
+            id: "btn-underground-start",
+            style: "display:none;",   // 初期は非表示
+        },
+        "地下起動",
+    );
+
+    const center = el("div", { class: "centered" }, [
+        btnBegin,
+        btnCancel,
+        btnUnderground,
+    ]);
 
     // ★ 開始画面にも GPS 状態表示欄を追加
     const gpsNotes = el("div", { class: "notes", id: "gpsStatusStart" }, "");
 
-	root.append(center, gpsNotes);
+    root.append(center, gpsNotes);
 
-    // ★ screen-start 用の GPS ステータス参照
+    // screen-start 用の参照
     root._gpsStatus = gpsNotes;
+    root._btnUnderground = btnUnderground;
 
-	root.onclick = (e) => {
-		if (e.target.id === "btn-begin") {
-			// ダイヤ上の基本停車駅から通過駅リストを構築
-			buildPassStationList();
+    // ★ 設定された方向に応じて「地下起動」ボタンの表示/非表示を切り替えるヘルパー
+    root._updateUndergroundButtonVisibility = () => {
+        const isDown = state.config.direction === "下り";
+        if (root._btnUnderground) {
+            root._btnUnderground.style.display = isDown ? "inline-block" : "none";
+        }
+    };
 
-			// ★ 案内開始から10秒間は他の案内をミュート
-			state.runtime.muteUntil = Date.now() + 10000;
+    // 初期状態反映
+    root._updateUndergroundButtonVisibility();
 
-			document.getElementById("screen-start").classList.remove("active");
-			document.getElementById("screen-guidance").classList.add("active");
-			startGuidance();
+    root.onclick = (e) => {
+        if (e.target.id === "btn-begin") {
+            // ダイヤ上の基本停車駅から通過駅リストを構築
+            buildPassStationList();
 
+            // ★ 案内開始から10秒間は他の案内をミュート
+            state.runtime.muteUntil = Date.now() + 10000;
 
-		} else if (e.target.id === "btn-cancel") {
-			document.getElementById("screen-start").classList.remove("active");
-			document.getElementById("screen-settings").classList.add("active");
-		}
-	};
-	return root;
+            document.getElementById("screen-start").classList.remove("active");
+            document.getElementById("screen-guidance").classList.add("active");
+            startGuidance();
+
+        } else if (e.target.id === "btn-cancel") {
+            document.getElementById("screen-start").classList.remove("active");
+            document.getElementById("screen-settings").classList.add("active");
+
+        } else if (e.target.id === "btn-underground-start") {
+            // ★ 地下起動ボタン：有楽町線地下モードで案内開始（下り列車想定）
+            buildPassStationList();
+
+            state.runtime.muteUntil = Date.now() + 10000;
+
+            // 地下モード開始（下り用）
+            enterUndergroundMode("downButton");
+
+            document.getElementById("screen-start").classList.remove("active");
+            document.getElementById("screen-guidance").classList.add("active");
+            startGuidance();
+        }
+    };
+
+    return root;
 }
+
 
 function typeClass(t) {
 	if (t === "特急") return "j-tokkyu";
@@ -894,6 +947,7 @@ function screenGuidance() {
                 el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),
                 el("button", { class: "btn secondary", id: "m-reset" }, "地点リセット"),
                 el("button", { class: "btn secondary", id: "m-info" }, "運行情報"),
+                el("button", { class: "btn secondary", id: "m-underground" }, "強制地下"),
                 el("button", { class: "btn secondary", id: "m-close" }, "とじる"),
             ]),
         ]),
@@ -935,26 +989,34 @@ function screenGuidance() {
 		document.getElementById("screen-settings").classList.add("active");
 	};
 
-	modal.querySelector("#m-dest").onclick = () =>
-		openList("行先変更", state.datasets.dests, (v) => {
-			state.config.dest = v;
-		});
-	modal.querySelector("#m-type").onclick = () =>
-		openList("種別変更", state.datasets.types, (v) => {
-			state.config.type = v;
-		});
-	modal.querySelector("#m-stop").onclick = () => openStopList();
-	modal.querySelector("#m-train").onclick = () => openTrainChange();
-	modal.querySelector("#m-volume").onclick = () => openVolumePanel();
+    modal.querySelector("#m-dest").onclick = () =>
+        openList("行先変更", state.datasets.dests, (v) => {
+            state.config.dest = v;
+        });
+    modal.querySelector("#m-type").onclick = () =>
+        openList("種別変更", state.datasets.types, (v) => {
+            state.config.type = v;
+        });
+    modal.querySelector("#m-stop").onclick = () => openStopList();
+    modal.querySelector("#m-train").onclick = () => openTrainChange();
+    modal.querySelector("#m-volume").onclick = () => openVolumePanel();
     modal.querySelector("#m-info").onclick = () => openOperationInfo();
-    // ★ 「地点リセット」：現在位置から改めて「現在駅＋次駅」を判定
+    // ★ 「地点リセット」：現在位置から改めて「現在駅＋次駅」を判定 ＋ 地下モード解除
     modal.querySelector("#m-reset").onclick = () => {
-        startStartupLocationDetection(); // 起動モードに戻す
+        exitUndergroundMode(null);          // 地下モードを強制解除
+        startStartupLocationDetection();    // 起動モードに戻す
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-	// ★ 追加: 「とじる」ボタンのハンドラ
+    // ★ 「強制地下」：現在の方向に応じて地下モード開始
+    modal.querySelector("#m-underground").onclick = () => {
+        enterUndergroundMode("menu");
+        modal.classList.remove("active");
+        panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    };
+
+    // ★ 追加: 「とじる」ボタンのハンドラ
     modal.querySelector("#m-close").onclick = () => {
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
@@ -983,14 +1045,19 @@ function screenGuidance() {
 // ★ GPS ステータス文言を両画面に反映するヘルパー
 function setGpsStatus(text) {
     const g = document.getElementById("screen-guidance");
-    if (g && g._gpsStatus) {
-        g._gpsStatus.textContent = text;
-    }
     const s = document.getElementById("screen-start");
+
+    // 地下モード中は常に「地下モード」と表示
+    const displayText = state.runtime.undergroundMode ? "地下モード" : (text || "");
+
+    if (g && g._gpsStatus) {
+        g._gpsStatus.textContent = displayText;
+    }
     if (s && s._gpsStatus) {
-        s._gpsStatus.textContent = text;
+        s._gpsStatus.textContent = displayText;
     }
 }
+
 
 // 汎用リスト（行先変更・種別変更）
 function openList(title, list, onPick) {
@@ -2026,6 +2093,92 @@ async function fetchAndShowNextDeparture(nextStationName) {
     }
 }
 
+// ==== 地下モード ヘルパー ====
+
+// 地下モード開始（方向に応じて初期処理を分ける）
+function enterUndergroundMode(source) {
+    const rt = state.runtime;
+    rt.undergroundMode = true;
+    rt.undergroundSource = source || null;
+    rt.undergroundLastToStationName = null;
+
+    // 有楽町線として固定
+    rt.routeLine = "yuraku";
+    rt.routeLocked = true;
+
+    // 表示欄は「地下モード」
+    setGpsStatus("地下モード");
+
+    // 方向別の初期発車時刻取得
+    if (state.config.direction === "下り") {
+        // 小竹向原 発時刻
+        fetchAndShowNextDeparture("小竹向原");
+    } else if (state.config.direction === "上り") {
+        // 新桜台 発時刻（通過や情報なしなら何も表示されない）
+        fetchAndShowNextDeparture("新桜台");
+    }
+}
+
+// 地下モード終了（newRouteLine には "main" などを指定）
+function exitUndergroundMode(newRouteLine) {
+    const rt = state.runtime;
+    if (!rt.undergroundMode) return;
+
+    rt.undergroundMode = false;
+    rt.undergroundSource = null;
+    rt.undergroundLastToStationName = null;
+
+    if (newRouteLine) {
+        rt.routeLine = newRouteLine;      // 例: "main"
+        rt.routeLocked = true;
+    } else {
+        // ルート再推定を許可する場合
+        rt.routeLine = null;
+        rt.routeLocked = false;
+    }
+
+    // 表示欄をいったんクリア（次の GPS 更新で上書きされる）
+    setGpsStatus("");
+}
+
+// trains?lineId= の toStationName を使った地下モード処理
+function handleUndergroundToStationName(toName) {
+    if (!state.runtime.undergroundMode) return;
+    if (!toName) return;
+
+    const rt = state.runtime;
+    const prev = rt.undergroundLastToStationName;
+    rt.undergroundLastToStationName = toName;
+
+    const dir = state.config.direction;
+
+    // ---- 下り列車の地下モード ----
+    if (dir === "下り") {
+        // toStationName が変化したときだけ、その駅の発車時刻を再取得
+        if (toName !== prev) {
+            // 情報が null の場合（toName なし）はここに来ないので、前の表示を維持
+            fetchAndShowNextDeparture(toName);
+        }
+
+        // toStationName が「練馬」になったら自動的に地上へ復帰 → 池袋線本線
+        if (toName === "練馬") {
+            exitUndergroundMode("main");
+        }
+        return;
+    }
+
+    // ---- 上り列車の地下モード ----
+    if (dir === "上り") {
+        // 小竹向原 到着が見えたら、もう一度「搭載かばん、確認」
+        if (toName === "小竹向原" && toName !== prev) {
+            speakOnce("ug_arr_kaban", "搭載かばん、確認");
+        }
+        return;
+    }
+}
+
+
+
 // ==== 発着番線取得 ====
 // platform.json: dayType ("平日" / "土休日") → 駅名 → 番線番号 → [列車番号...]
 function getPlatformForStation(stationName) {
@@ -2371,9 +2524,16 @@ function startGuidance() {
     }
 
     // ★ ルート情報・フラグを初期化
+    rt.started = true;
     rt.routeLocked = false;
     rt.routeLine = null;
-    rt.started = true;
+
+    // 地下モード中は有楽町線として固定
+    if (rt.undergroundMode) {
+        rt.routeLocked = true;
+        rt.routeLine = "yuraku";
+        setGpsStatus("地下モード");
+    }
 
     // ★ 途中駅列情変更フラグ初期化
     rt.midChangePending        = !!(state.config.endChange && state.config.second.trainNo && state.config.second.changeStation);
@@ -2395,9 +2555,9 @@ function startGuidance() {
     rt.lastDepartPrevDist = null;
     rt.lastStopDistance = null;
 
-	// ★ 追加停車駅：スタート時は 1本目を有効に
-	rt.nonPassengerExtraStops = new Set(rt.nonPassengerExtraStops || []);
-	// （2本目用の nonPassengerExtraStopsSecond は midChange で適用）    
+    // ★ 追加停車駅：スタート時は 1本目を有効に
+    rt.nonPassengerExtraStops = new Set(rt.nonPassengerExtraStops || []);
+    // （2本目用の nonPassengerExtraStopsSecond は midChange で適用）    
 
     // ★ 起動モード開始（現在地から「現在駅＋次駅」を判定する）
     startStartupLocationDetection();
@@ -2405,7 +2565,7 @@ function startGuidance() {
     // ★ UI の残りもリセット（遅延表示・次発時刻・音声表示・GPS表示）
     if (g) {
         if (g._speechText) g._speechText.textContent = "";
-        if (g._gpsStatus) g._gpsStatus.textContent = "";
+        if (g._gpsStatus) g._gpsStatus.textContent = rt.undergroundMode ? "地下モード" : "";
         if (g._delayInfo) {
             g._delayInfo.textContent = "";
             g._delayInfo.style.visibility = "hidden";
@@ -2431,6 +2591,7 @@ function startGuidance() {
     // ★ 遅延情報の定期取得を開始
     startDelayWatch();
 }
+
 
 function stopGuidance() {
     // ★ 案内終了：状態リセット＆画面消灯許可
@@ -2519,6 +2680,7 @@ async function fetchAndUpdateDelay() {
     const lineIds = getCurrentLineIdsForDelay();
     let foundDelay = null;
     let anyResponse = false;
+    let currentToStationName = null;   // ★ 追加：地下モード用
 
     for (const lineId of lineIds) {
         try {
@@ -2539,6 +2701,19 @@ async function fetchAndUpdateDelay() {
                 if (!Number.isNaN(d)) {
                     foundDelay = d;
                 }
+
+                // ★ toStationName を拾う（キー揺れ対策）
+                const toName =
+                    tr.toStationName ||
+                    tr["toStationName"] ||
+                    tr.toStation ||
+                    tr["行先駅名"] ||
+                    null;
+
+                if (toName) {
+                    currentToStationName = String(toName).trim();
+                }
+
                 break;
             }
         } catch (e) {
@@ -2570,7 +2745,13 @@ async function fetchAndUpdateDelay() {
             delayEl.style.visibility = "hidden";
         }
     }
+
+    // ★ 地下モード時：toStationName を使って現在位置相当を処理
+    if (state.runtime.undergroundMode && currentToStationName) {
+        handleUndergroundToStationName(currentToStationName);
+    }
 }
+
 
 // ★ 次駅発車時刻表示を消す
 function clearNextDepartureDisplay() {
@@ -2771,11 +2952,23 @@ function onPos(pos) {
     // ★ 最寄り駅判定（ルートロック付き）
     const ns = nearestStation(latitude, longitude);
 
+    // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
+    if (
+        state.runtime.undergroundMode &&
+        state.config.direction === "下り" &&
+        ns &&
+        ns.name === "練馬" &&
+        ns.distance <= 200
+    ) {
+        exitUndergroundMode("main");
+    }
+
     // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行
     handleStartupPosition(ns);
 
     // ★ 駅案内ロジック
     maybeSpeak(ns);
+
 
     // ★ 車両アイコン
     let show = true;
@@ -3048,6 +3241,7 @@ function otherSpeaks(ns) {
     const timeOK = after1555 || before0100;
 
     // ★ 有楽町線乗り入れ時（練馬 → 小竹向原行き）搭載かばん確認
+
     if (
         state.config.direction === "上り" &&
         state.config.dest === "小竹向原" &&
@@ -3058,14 +3252,19 @@ function otherSpeaks(ns) {
                 ? state.runtime.prevStationDistance
                 : null;
 
-        // ★ 150m 以下 → 150m 以上 に出た瞬間で発話（変更）
         const crossedOut =
             prevDist != null &&
             prevDist <= 150 &&
-            ns.distance > 150;
+            ns.distance > 150;   // ★ 150m 以下 → 150m 超え
 
         if (crossedOut) {
+            // 練馬発車時の「搭載かばん、確認」
             speakOnce("rule-nerima", "搭載かばん、確認");
+
+            // ★ 同時に上り有楽町線用の地下モードを開始
+            if (!state.runtime.undergroundMode) {
+                enterUndergroundMode("autoUp");
+            }
         }
     }
 
@@ -3183,10 +3382,17 @@ function screenExtraStops() {
     			state.runtime.nonPassengerExtraStops || []
     		);
     
-    		// GPS開始 → 開始画面へ
-    		startGpsWatch();
-    		root.classList.remove("active");
-    		document.getElementById("screen-start").classList.add("active");
+             // GPS開始 → 開始画面へ
+            startGpsWatch();
+            root.classList.remove("active");
+            const startRoot = document.getElementById("screen-start");
+            if (startRoot) {
+                startRoot.classList.add("active");
+                if (startRoot._updateUndergroundButtonVisibility) {
+                    startRoot._updateUndergroundButtonVisibility();
+                }
+            }
+
     	}
     });
 
