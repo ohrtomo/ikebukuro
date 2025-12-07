@@ -897,7 +897,6 @@ function band1RenderCars(elm, show, cars) {
 
 function screenGuidance() {
     const root = el("div", { class: "screen guidance", id: "screen-guidance" });
-
     const band1 = el("div", { class: "band band1" });
     const band2 = el("div", { class: "band band2" }, [
         // ★ GPS 状態表示用
@@ -913,28 +912,29 @@ function screenGuidance() {
         el("div", { class: "cell", id: "cellDest" }, "----"),
     ]);
 
-    // ★ 5段目：メニュー・音声停止・「遅延」・「次駅発車時刻」
+    // ★ 5段目：メニュー・音声停止・時計・遅延だけ
     const band5 = el("div", { class: "band band5" }, [
         el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
 
-        // 音声停止ボタン（トグルでミュート）
+        // ★ 音声停止ボタン（トグルでミュート）
         el(
             "button",
             { class: "btn secondary", id: "btnVoiceMute" },
             "音声停止"
         ),
 
-        // ここに「遅延」を表示（旧 clock 部分）
-        el("div", { class: "clock", id: "delayInfo" }, ""),
-
-        // ここに「次駅発車時刻」を表示（旧 遅延表示位置）
-        el("div", { class: "clock", id: "nextDepart" }, ""),
+        el("div", { class: "clock", id: "clock" }, "00:00:00"),
+        el("div", { class: "clock", id: "delayInfo" }, ""),   // 遅延表示
     ]);
 
-    // ★ 6段目は廃止（縦長対策） → band1〜band5 のみを使用
-    root.append(band1, band2, band3, band4, band5);
+    // ★ 6段目：次駅発車時刻専用
+    const band6 = el("div", { class: "band band6" }, [
+        el("div", { id: "nextDepart" }, ""),   // ★ 次駅発車時刻
+    ]);
+    
+    root.append(band1, band2, band3, band4, band5, band6);
 
-    // Menu modal（従来どおり）
+    // Menu modal（ここは今まで通り）
     const modal = el("div", { class: "modal", id: "menuModal" }, [
         el("div", { class: "panel" }, [
             el("h3", {}, "メニュー"),
@@ -947,6 +947,7 @@ function screenGuidance() {
                 el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),
                 el("button", { class: "btn secondary", id: "m-reset" }, "地点リセット"),
                 el("button", { class: "btn secondary", id: "m-info" }, "運行情報"),
+                el("button", { class: "btn secondary", id: "m-underground" }, "強制地下"),
                 el("button", { class: "btn secondary", id: "m-close" }, "とじる"),
             ]),
         ]),
@@ -956,36 +957,37 @@ function screenGuidance() {
     const panel = modal.querySelector(".panel");
 
     // ★ 各要素への参照
-    root._band1       = band1;
-    root._gpsStatus   = band2.querySelector("#gpsStatus");
-    root._speechText  = band2.querySelector("#speechText");
-    root._badgeType   = band3.querySelector("#badgeType");
-    root._cellNo      = band4.querySelector("#cellNo");
-    root._cellDest    = band4.querySelector("#cellDest");
-    root._delayInfo   = band5.querySelector("#delayInfo");   // 遅延表示
-    root._nextDepart  = band5.querySelector("#nextDepart");  // 次駅発車時刻表示
+    root._band1      = band1;
+    root._gpsStatus  = band2.querySelector("#gpsStatus");
+    root._speechText = band2.querySelector("#speechText");
+    root._badgeType  = band3.querySelector("#badgeType");
+    root._cellNo     = band4.querySelector("#cellNo");
+    root._cellDest   = band4.querySelector("#cellDest");
+    root._clock      = band5.querySelector("#clock");
+    root._delayInfo  = band5.querySelector("#delayInfo");
+    root._nextDepart = band6.querySelector("#nextDepart");  // ★ 6段目を参照
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-    // メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
-    band5.querySelector("#btnMenu").onclick = () => {
-        modal.classList.add("active");
-        panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
-    };
+	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
+	band5.querySelector("#btnMenu").onclick = () => {
+		modal.classList.add("active");
+		panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+	};
 
-    // 背景クリックでモーダル閉じる＋サブ画面消去
-    modal.onclick = (e) => {
-        if (e.target.id === "menuModal") {
-            modal.classList.remove("active");
-            panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
-        }
-    };
+	// 背景クリックでモーダル閉じる＋サブ画面消去
+	modal.onclick = (e) => {
+		if (e.target.id === "menuModal") {
+			modal.classList.remove("active");
+			panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+		}
+	};
 
-    modal.querySelector("#m-end").onclick = () => {
-        modal.classList.remove("active");
-        stopGuidance();
-        document.getElementById("screen-guidance").classList.remove("active");
-        document.getElementById("screen-settings").classList.add("active");
-    };
+	modal.querySelector("#m-end").onclick = () => {
+		modal.classList.remove("active");
+		stopGuidance();
+		document.getElementById("screen-guidance").classList.remove("active");
+		document.getElementById("screen-settings").classList.add("active");
+	};
 
     modal.querySelector("#m-dest").onclick = () =>
         openList("行先変更", state.datasets.dests, (v) => {
@@ -999,10 +1001,17 @@ function screenGuidance() {
     modal.querySelector("#m-train").onclick = () => openTrainChange();
     modal.querySelector("#m-volume").onclick = () => openVolumePanel();
     modal.querySelector("#m-info").onclick = () => openOperationInfo();
-
-    // ★ 「地点リセット」：現在位置から改めて「現在駅＋次駅」を判定
+    // ★ 「地点リセット」：現在位置から改めて「現在駅＋次駅」を判定 ＋ 地下モード解除
     modal.querySelector("#m-reset").onclick = () => {
-        startStartupLocationDetection(); // 起動モードに戻す
+        exitUndergroundMode(null);          // 地下モードを強制解除
+        startStartupLocationDetection();    // 起動モードに戻す
+        modal.classList.remove("active");
+        panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    };
+
+    // ★ 「強制地下」：現在の方向に応じて地下モード開始
+    modal.querySelector("#m-underground").onclick = () => {
+        enterUndergroundMode("menu");
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
@@ -1029,9 +1038,9 @@ function screenGuidance() {
         };
     }
 
-    return root;
-}
 
+	return root;
+}
 
 // ★ GPS ステータス文言を両画面に反映するヘルパー
 function setGpsStatus(text) {
@@ -2442,6 +2451,7 @@ document.addEventListener("visibilitychange", () => {
 	}
 });
 
+let clockTimer = null;
 let delayTimer = null;   // ★ 遅延更新用
 // ★ watchPosition 用
 let gpsWatchId = null;
@@ -2568,6 +2578,13 @@ function startGuidance() {
 
     renderGuidance();
 
+    // 時計表示
+    clockTimer = setInterval(() => {
+        const d = new Date();
+        document.getElementById("screen-guidance")._clock.textContent =
+            `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+    }, 200);
+
     // ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
     startGpsWatch();
 
@@ -2582,6 +2599,10 @@ function stopGuidance() {
     state.runtime.voiceMuted = false;   // ★ 追加
     releaseWakeLock();
 
+	if (clockTimer) {
+		clearInterval(clockTimer);
+		clockTimer = null;
+	}
     // ★ GPSも停止
     stopGpsWatch();
 	
