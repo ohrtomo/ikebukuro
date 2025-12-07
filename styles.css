@@ -23,7 +23,8 @@ input[type="text"], select, input[type="number"] {
 
 /* Guidance layout: 6 bands (2:2:2:1:1:1 に拡張) */
 .guidance {
-  grid-template-rows: 3fr 3fr 2fr 1fr 1fr 1fr; /* ★ 5→6行に */
+  /* 旧: grid-template-rows: 3fr 3fr 2fr 1fr 1fr 1fr; */
+  grid-template-rows: 3fr 3fr 2fr 1fr 1fr;  /* 時計削除＋5段構成に戻す */
   height: 100vh;
   width: 100%;
   overflow: hidden;
@@ -89,10 +90,28 @@ input[type="text"], select, input[type="number"] {
 
 /* Band4 列番/行先 */
 .band4 { background: #000; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.band4 .cell { background: #000; color: #fff; display: flex; align-items: center; justify-content: center; font-size: clamp(20px, 5.5vw, 36px); font-weight: 800; border: 2px solid #333; padding: 6px; }
+.band4 .cell {
+  background: #000;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 旧: font-size: clamp(20px, 5.5vw, 36px); */
+  font-size: clamp(18px, 4.5vw, 30px);  /* 少しだけ小さく */
+  font-weight: 800;
+  border: 2px solid #333;
+  padding: 6px;
+}
 
 /* Band5 時計とメニュー */
-.band5 { background: #000; display: grid; grid-template-columns: 1fr 5fr; align-items: stretch; }
+.band5 {
+  background: #000;
+  display: grid;
+  /* 旧: grid-template-columns: 1fr 5fr; */
+  grid-template-columns: 1fr 2fr 3fr 4fr; /* メニュー / 音声停止 / 遅延 / 発車時刻 */
+  align-items: stretch;
+}
+
 .menu-btn { display:flex; align-items:center; justify-content:center; font-weight:900; border-right: 2px solid #333; }
 .clock { display:flex; align-items:center; justify-content:center; font-size: clamp(18px, 5vw, 32px); font-weight:800; }
 
