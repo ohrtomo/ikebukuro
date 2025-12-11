@@ -272,3 +272,12 @@ input[type="text"], select, input[type="number"] {
 .btn.secondary.muted:hover {
     background-color: #a33;
 }
+
+/* ===== 縦書き種別バッジを最優先で大きくする（上書き用） ===== */
+.type-vertical .badge {
+  font-size: clamp(80px, 12vw, 200px);
+  font-weight: 900;
+  padding: 24px 10px;
+  border-width: 6px;
+  border-radius: 16px;
+}
