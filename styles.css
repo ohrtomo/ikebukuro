@@ -194,7 +194,7 @@ input[type="text"], select, input[type="number"] {
   text-orientation: mixed;
 
   /* 文字サイズをかなり大きく（約3倍クラス） */
-  font-size: clamp(42px, 12vw, 100px);
+  font-size: clamp(42px, 12vw, 200px);
   font-weight: 900;
 
   /* 余白と枠も太めに */
@@ -296,4 +296,49 @@ input[type="text"], select, input[type="number"] {
 .btn.muted:hover,
 .btn.secondary.muted:hover {
   background-color: #a33;
+}
+
+/* =========================
+   Menu modal（メニューウィンドウ）
+========================= */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: none;                   /* ★ 初期状態では非表示 */
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 1000;                   /* 念のため前面に */
+}
+
+.modal.active {
+  display: flex;                   /* ★ JSで .active を付けたときだけ表示 */
+}
+
+.panel {
+  background: #1a1a1a;
+  color: #fff;
+  border-radius: 16px;
+  width: min(720px, 96vw);
+  max-height: 84vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid #333;
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+}
+
+.sep {
+  border: none;
+  border-top: 1px solid #333;
+  margin: 16px 0;
+}
+
+.small {
+  font-size: 12px;
+  color: #aaa;
 }
