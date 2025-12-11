@@ -194,7 +194,7 @@ input[type="text"], select, input[type="number"] {
   text-orientation: mixed;
 
   /* 文字サイズをかなり大きく（約3倍クラス） */
-  font-size: clamp(80px, 12vw, 200px);
+  font-size: clamp(42px, 12vw, 100px);
   font-weight: 900;
 
   /* 余白と枠も太めに */
