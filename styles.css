@@ -51,6 +51,76 @@ input[type="text"], select, input[type="number"] {
   margin-bottom: 16px;
 }
 
+/* --- Band1 (両数 + 種別縦書き) --- */
+.band1 {
+  display: flex;
+  align-items: stretch;   /* 高さいっぱいまで伸ばす */
+  justify-content: stretch;
+  padding: 4px 6px;       /* 余白を少しだけにする */
+}
+
+/* 左 2/3：両数アイコンエリア */
+.band1-left {
+  flex: 2;                /* 左2：右1 の比率 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 右 1/3：種別エリア（縦書き） */
+.band1-right {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ひし形はそのまま使う場合用（不要なら削除可） */
+.diamond {
+  width:  min(27vw, 150px);
+  height: min(27vw, 150px);
+  transform: rotate(45deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 16px solid transparent;
+  margin-bottom: 16px;
+}
+
+.diamond span {
+  font-size: clamp(28px, 10vw, 70px);
+  transform: rotate(-45deg);
+  font-weight: bold;
+}
+
+/* 両数アイコン画像を縦方向中央に置くラッパー */
+.cars-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+/* 種別バッジを縦書きにする */
+.badge-vertical {
+  writing-mode: vertical-rl;          /* 縦書き */
+  text-orientation: mixed;
+  padding: 8px 4px;                   /* 横幅が狭いので左右の余白を小さく */
+  font-size: clamp(14px, 4.5vw, 26px);
+  border-radius: 10px;
+  border-width: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 画像アイコンは band1-left 内で最大限表示 */
+.carIcon {
+  width: 80%;
+  max-width: 200px;
+  object-fit: contain;
+}
+
 .diamond span {
   /* ★ フォントサイズを 2倍相当へ */
   font-size: clamp(28px, 10vw, 70px);

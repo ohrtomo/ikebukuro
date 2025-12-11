@@ -878,14 +878,19 @@ function typeClass(t) {
 }
 
 function band1RenderCars(elm, show, cars) {
-    // ★ 中身を消さないようにする（innerHTML = "" をやめる）
+    // ★ band1 内の「両数エリア」コンテナを取得
+    let container = elm.querySelector(".band1-left .cars-wrapper");
+    if (!container) {
+        // 念のためフォールバック（古い構造の場合など）
+        container = elm;
+    }
 
     // 1. 既存の img.carIcon を探す。なければ新しく作る
-    let img = elm.querySelector(".carIcon");
+    let img = container.querySelector(".carIcon");
     if (!img) {
         img = document.createElement("img");
         img.className = "carIcon";
-        elm.appendChild(img);
+        container.appendChild(img);
     }
 
     // 2. 両数に対応するアイコンファイルを取得
@@ -901,22 +906,37 @@ function band1RenderCars(elm, show, cars) {
     // 3. 画像の visibility だけ切り替える
     img.style.visibility = show ? "visible" : "hidden";
 
-    // （お好みで）バンド自体は常に表示
+    // （バンド自体は常に表示）
     elm.style.visibility = "visible";
 }
 
+
 function screenGuidance() {
     const root = el("div", { class: "screen guidance", id: "screen-guidance" });
-    const band1 = el("div", { class: "band band1" });
+
+    // --- Band1: 左=両数 / 右=種別（縦書き） ---
+    const band1 = el("div", { class: "band band1" }, [
+        el("div", { class: "band1-left" }, [
+            el("div", { class: "cars-wrapper" })   // 中身は band1RenderCars で差し込む
+        ]),
+        el("div", { class: "band1-right" }, [
+            // 種別バッジをここに縦書きで表示
+            el("div", { class: "badge badge-vertical", id: "badgeType" }, "")
+        ]),
+    ]);
+
     const band2 = el("div", { class: "band band2" }, [
         // ★ GPS 状態表示用
         el("div", { class: "notes", id: "gpsStatus" }, ""),
         // ★ 音声案内テキスト表示用
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
+
+    // band3 は将来拡張用に空の帯として残しておく
     const band3 = el("div", { class: "band band3" }, [
-        el("div", { class: "badge", id: "badgeType" }, ""),
+        // ここは現在は何も表示しない（必要なら後で使う想定）
     ]);
+
     const band4 = el("div", { class: "band band4" }, [
         el("div", { class: "cell", id: "cellNo" }, "----"),
         el("div", { class: "cell", id: "cellDest" }, "----"),
@@ -941,7 +961,7 @@ function screenGuidance() {
     const band6 = el("div", { class: "band band6" }, [
         el("div", { id: "nextDepart" }, ""),   // ★ 次駅発車時刻
     ]);
-    
+
     root.append(band1, band2, band3, band4, band5, band6);
 
     // Menu modal（ここは今まで通り）
@@ -966,38 +986,38 @@ function screenGuidance() {
 
     const panel = modal.querySelector(".panel");
 
-    // ★ 各要素への参照
+    // ★ 各要素への参照を設定
     root._band1      = band1;
     root._gpsStatus  = band2.querySelector("#gpsStatus");
     root._speechText = band2.querySelector("#speechText");
-    root._badgeType  = band3.querySelector("#badgeType");
+    root._badgeType  = band1.querySelector("#badgeType");   // ← band1 の縦書きバッジ
     root._cellNo     = band4.querySelector("#cellNo");
     root._cellDest   = band4.querySelector("#cellDest");
     root._clock      = band5.querySelector("#clock");
     root._delayInfo  = band5.querySelector("#delayInfo");
-    root._nextDepart = band6.querySelector("#nextDepart");  // ★ 6段目を参照
+    root._nextDepart = band6.querySelector("#nextDepart");
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-	// メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
-	band5.querySelector("#btnMenu").onclick = () => {
-		modal.classList.add("active");
-		panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
-	};
+    // メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
+    band5.querySelector("#btnMenu").onclick = () => {
+        modal.classList.add("active");
+        panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    };
 
-	// 背景クリックでモーダル閉じる＋サブ画面消去
-	modal.onclick = (e) => {
-		if (e.target.id === "menuModal") {
-			modal.classList.remove("active");
-			panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
-		}
-	};
+    // 背景クリックでモーダル閉じる＋サブ画面消去
+    modal.onclick = (e) => {
+        if (e.target.id === "menuModal") {
+            modal.classList.remove("active");
+            panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+        }
+    };
 
-	modal.querySelector("#m-end").onclick = () => {
-		modal.classList.remove("active");
-		stopGuidance();
-		document.getElementById("screen-guidance").classList.remove("active");
-		document.getElementById("screen-settings").classList.add("active");
-	};
+    modal.querySelector("#m-end").onclick = () => {
+        modal.classList.remove("active");
+        stopGuidance();
+        document.getElementById("screen-guidance").classList.remove("active");
+        document.getElementById("screen-settings").classList.add("active");
+    };
 
     modal.querySelector("#m-dest").onclick = () =>
         openList("行先変更", state.datasets.dests, (v) => {
@@ -1048,8 +1068,7 @@ function screenGuidance() {
         };
     }
 
-
-	return root;
+    return root;
 }
 
 // ★ GPS ステータス文言を両画面に反映するヘルパー
