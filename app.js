@@ -461,12 +461,20 @@ function screenSettings() {
     (function autoSelectDayType() {
         const today = new Date();
         const wd = today.getDay(); // 0:日曜, 1:月曜, ... 6:土曜
+        const m  = today.getMonth() + 1; // 1〜12
+        const d  = today.getDate();
 
-        // 祝日 or 土日 → 「土休日」
+        // 祝日 or 土日
         const isHol = isJapaneseHoliday(today);
         const isWeekend = (wd === 0 || wd === 6);
 
-        const autoDayType = (isHol || isWeekend) ? "土休日" : "平日";
+        // ★ 年末年始の特例：12/30〜1/2 は「土休日」扱い
+        const isYearEndNewYear =
+            (m === 12 && d >= 30) ||   // 12/30, 12/31
+            (m === 1  && d <= 2);     // 1/1, 1/2
+
+        const autoDayType =
+            (isHol || isWeekend || isYearEndNewYear) ? "土休日" : "平日";
 
         // 設定にも反映
         state.config.dayType = autoDayType;
@@ -2802,33 +2810,50 @@ function initStartupAtStation(stationName) {
     const nextName = findNextStopStationName(stationName);
     rt.lastStopStation = nextName || null;
 
-    // 次駅の発車時刻は、実際に「次は○○」を喋るタイミングで取得するので、
-    // ここでは表示だけ消しておく
+    // 次駅表示をいったんクリア
     clearNextDepartureDisplay();
+
+    // ★ 判定に成功したら、次停車駅の発車時刻を取得して表示
+    if (nextName) {
+        fetchAndShowNextDeparture(nextName);
+    }
 }
+
 
 // ★ 「駅間を走行中」にスタートしたときの初期化
 function initStartupBetween(ns) {
     const rt = state.runtime;
 
-    // 「最後に見た駅」として最近傍駅を入れておくが、
-    // lastStopStation はあえて null のままにして、
-    // 次の駅での到着処理から通常ロジックに乗せる
+    // 「最後に見た駅」として最近傍駅を入れておく
     rt.prevStationName = ns.name;
     rt.prevStationDistance = ns.distance;
 
-    rt.lastStopStation = null;
-    rt.lastDepartStation = null;
-    rt.lastDepartPrevDist = null;
-    rt.lastStopDistance = null;
+    // 直前に通過した駅も「最近傍駅」とみなしておく
+    rt.lastDepartStation = ns.name;
+    rt.lastDepartPrevDist = ns.distance;
+    rt.lastStopDistance = null;   // 駅での停止距離は不明なので null
 
+    // ★ 最寄り駅＋方向・行先・ルート情報から、
+    //    「これから停車する次の駅」を無理やり推定する
+    const nextName = findNextStopStationName(ns.name);
+    rt.lastStopStation = nextName || null;
+
+    // 次駅表示はいったんクリア
     clearNextDepartureDisplay();
+
+    // ★ 判定に成功したら、その駅の発車時刻を取得して表示
+    if (nextName) {
+        fetchAndShowNextDeparture(nextName);
+    }
 }
 
 // ★ 起動モード中の「現在駅＋次駅」判定ロジック
 function handleStartupPosition(ns) {
     const rt = state.runtime;
     if (!rt.startupMode || !ns) return;
+
+    // ★ 起動判定中もルートロックを更新しておく
+    updateRouteLock(ns);
 
     const speed = rt.speedKmh || 0;
 
@@ -3106,20 +3131,55 @@ function maybeSpeak(ns) {
 
     // ===== (A) 前駅発車後の「次は○○」案内 =====
     // 190m 以下の位置から 190m 超に抜けた瞬間のみ発報
+    // ★ lastStopStation が未決定でもトリガーするように変更
     const left190 =
-        state.runtime.lastStopStation &&
         !isFirstMeasurement &&
         prevSameDist != null &&
         prevSameDist <= 190 &&
         ns.distance > 190;
 
     if (left190) {
-        const nextName = state.runtime.lastStopStation;
+        let nextName = state.runtime.lastStopStation;
+
+        // ★ 200m 以内で次停車駅が決まっていなかった場合、
+        //    190m を離れるタイミングで再度判定する
+        if (!nextName) {
+            nextName = findNextStopStationName(ns.name);
+            state.runtime.lastStopStation = nextName || null;
+        }
 
         // 次駅発車時刻はいったん消す（後で再取得）
         clearNextDepartureDisplay();
 
         if (nextName) {
+            // ★ ここで「途中駅で列情変更」の対象かどうかを判定
+            const cfg2 = state.config.second || {};
+            const isMidChangeTarget =
+                state.config.endChange &&
+                state.runtime.midChangePending &&
+                cfg2.changeStation &&
+                nextName === cfg2.changeStation;
+
+            // ★ 対象なら、ここで列車情報を変更（論理的にはこの先は後の列車）
+            if (isMidChangeTarget) {
+                state.config.trainNo = cfg2.trainNo || state.config.trainNo;
+                state.config.type    = cfg2.type   || state.config.type;
+                state.config.dest    = cfg2.dest   || state.config.dest;
+                state.config.cars    = cfg2.cars   || state.config.cars;
+
+                // ★ 変更後列車用の追加停車駅セットを有効化
+                state.runtime.nonPassengerExtraStops = new Set(
+                    state.runtime.nonPassengerExtraStopsSecond || []
+                );
+
+                // 停車パターンを変更後種別で再構築
+                buildPassStationList();
+
+                state.runtime.midChangePending = false;
+                state.runtime.midChangeApplied = true;
+            }
+
+            // ★ ここから先の判定は、すでに変更後種別で行われる
             const baseNextStop = baseIsStop(nextName);
             const isNextStop   = !state.runtime.passStations.has(nextName);
 
@@ -3142,10 +3202,23 @@ function maybeSpeak(ns) {
                     text += "、着発線変更";
                 }
 
-                // ★ ここでは純粋に「次は〜」の案内だけを行う
+                // ★ まず「次は〜」を案内（190m地点）
                 speakOnce("leave190_" + nextName, text);
 
-                // ★ 次駅発車時刻は「現在の列車番号」で取得
+                // ★ 途中駅列情変更の対象であれば、続けて「列情変更」「方向幕確認」
+                const cfg2b = state.config.second || {};
+                const isMidChangeTargetNow =
+                    state.config.endChange &&
+                    cfg2b.changeStation &&
+                    nextName === cfg2b.changeStation &&
+                    state.runtime.midChangeApplied;
+
+                if (isMidChangeTargetNow) {
+                    speakOnce("midchange_change", "列情変更");
+                    speakOnce("midchange_maku", "方向幕確認");
+                }
+
+                // ★ 判定に成功したので、この駅の発車時刻を取得して表示
                 fetchAndShowNextDeparture(nextName);
 
             } else if (isExtraPassNext) {
@@ -3160,7 +3233,6 @@ function maybeSpeak(ns) {
         state.runtime.lastDepartStation = null;
         state.runtime.lastDepartPrevDist = null;
     }
-
 
     // ===== (B) 手前 400m の「まもなく○○」案内 =====
     // 400m より外側 → 400m 以内に入った瞬間
@@ -3227,31 +3299,14 @@ function maybeSpeak(ns) {
             speakOnce("door200_" + key, "ドア扱い注意");
         }
 
-        // ★ 次に停車する駅を必ずセット（この後の「次は〜」案内用）
-        const nextName = findNextStopStationName(ns.name);
-        state.runtime.lastStopStation = nextName || null;
-
-        // ★ 途中駅列情変更の対象かどうかを判定し、
-        //    「どの駅の190m通過で切り替えるか」を決めておく
-        const cfg2 = state.config.second || {};
-        if (
-            state.config.endChange &&
-            state.runtime.midChangePending &&
-            cfg2.changeStation &&
-            nextName &&
-            nextName === cfg2.changeStation
-        ) {
-            // ns.name = 「いま停車する駅」＝変更前の停車駅
-            state.runtime.midChangeTriggerStation = computeMidChangeTriggerStation(
-                ns.name,
-                nextName,
-                state.config.direction,
-            );
-        } else {
-            state.runtime.midChangeTriggerStation = null;
+        // ★ 次駅情報は必ずセット（この後の「次は〜」案内用）
+        if (!state.runtime.lastStopStation) {
+            const nextName = findNextStopStationName(ns.name);
+            state.runtime.lastStopStation = nextName || null;
         }
 
         // ★ ここから追加：途中駅列情変更の「変更駅」に到着したタイミング
+        const cfg2 = state.config.second || {};
         const isChangeStation =
             state.runtime.midChangeApplied &&
             !state.runtime.midChangeArrivalHandled &&
@@ -3286,7 +3341,6 @@ function maybeSpeak(ns) {
         }
     }
 
-
     // ===== 通過列車の案内 =====
     // （客扱い列車・回送・試運転・臨時すべて共通）
     if (!isStop && ns.distance <= 200 && d <= 45) {
@@ -3298,33 +3352,11 @@ function maybeSpeak(ns) {
         speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
     }
 
-    // ===== 途中駅列情変更：トリガー駅の190m通過を監視 =====
-    if (
-        state.config.endChange &&
-        state.runtime.midChangePending &&
-        state.runtime.midChangeTriggerStation &&
-        ns.name === state.runtime.midChangeTriggerStation
-    ) {
-        const prevDistForTrigger =
-            state.runtime.prevStationName === ns.name
-                ? state.runtime.prevStationDistance
-                : null;
-
-        const crossed190Trigger =
-            prevDistForTrigger != null &&
-            prevDistForTrigger <= 190 &&
-            ns.distance > 190;
-
-        if (crossed190Trigger) {
-            // ★ ここで初めて「後半列車」に切り替える
-            applyMidTrainChange();
-        }
-    }
-
     // ★ 次回比較用距離を保存
     state.runtime.prevStationName = ns.name;
     state.runtime.prevStationDistance = ns.distance;
 }
+
 
 
 function otherSpeaks(ns) {
