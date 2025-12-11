@@ -1,16 +1,25 @@
-/* Reset */
-* { box-sizing: border-box; margin: 0; padding: 0; }
+/* =========================
+   Reset
+========================= */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 html, body {
   height: 100%;
   background: #111;
   color: #fff;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto,
-               "Noto Sans JP", "Hiragino Kaku Gothic ProN",
-               "Yu Gothic", sans-serif;
+    "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
 }
-button, input, select { font: inherit; }
+button, input, select {
+  font: inherit;
+}
 
-/* Common */
+/* =========================
+   Common
+========================= */
 .container { padding: 12px; }
 .row { margin-bottom: 12px; }
 label { display: block; margin-bottom: 6px; color: #ddd; }
@@ -44,14 +53,34 @@ input[type="text"], select, input[type="number"] {
 .screen { display: none; }
 .screen.active { display: block; }
 
-/* Guidance layout */
+.active-selected {
+  background: #2c7be5 !important;
+  color: #fff !important;
+}
+
+.endchange-row {
+  margin-top: 32px;
+}
+
+/* =========================
+   Guidance layout
+   band1: 両数＋種別縦書き
+   band2: お知らせ
+   band4: 列番・行先
+   band5: 時計＋メニュー
+   band6: 次駅発車時刻
+========================= */
+.screen.guidance.active {
+  display: grid;
+}
+
 .guidance {
-  /* band1, band2, band4, band5, band6 の 5 段構成 */
-  grid-template-rows: 2.2fr 1.6fr 1.4fr 1fr 1fr;
+  grid-template-rows: 2.2fr 1.6fr 1.4fr 1fr 1fr; /* 5 段 */
   height: 100vh;
   width: 100%;
   overflow: hidden;
 }
+
 .band {
   display: flex;
   align-items: center;
@@ -59,40 +88,44 @@ input[type="text"], select, input[type="number"] {
   padding: 8px;
 }
 
-/* 案内画面が active のときだけ grid にする */
-.screen.guidance.active {
-  display: grid;
-}
-
-/* --- Band1（両数＋種別縦書き）--- */
+/* =========================
+   Band1（両数＋種別縦書き）
+========================= */
 .band1 {
   display: flex;
+  flex-direction: row;   /* 必ず左右並び */
   align-items: stretch;
   justify-content: stretch;
-  padding: 4px 6px; /* 余白少なめ */
+  padding: 4px 6px;
 }
 
-/* 左 2/3：両数アイコンエリア */
-.band1-left,
+/* 左 2/3：両数アイコン */
+.band1-left {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  order: 1;             /* 両数を左側に固定 */
+}
+
+/* 右 1/3：種別縦書き */
+.band1-right {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  order: 2;             /* 種別を右側に固定 */
+}
+
+/* 両数表示エリアの中央寄せ用 */
 .cars-wrapper {
-  flex: 2; /* 左2：右1 の比率 */
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
 }
 
-/* 右 1/3：種別エリア（縦書き） */
-.band1-right,
-.type-vertical {
-  flex: 1; /* 右側 1/3 */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-}
-
-/* ひし形アイコン自体 */
+/* ひし形アイコン本体 */
 .diamond {
   width:  min(27vw, 150px);
   height: min(27vw, 150px);
@@ -109,21 +142,77 @@ input[type="text"], select, input[type="number"] {
   font-weight: bold;
 }
 
-/* 両数アイコン画像（画像で表示する場合） */
-.carIcon {
-  width: 80%;
-  max-width: 200px;
-  object-fit: contain;
-}
-
-/* 両数色分け */
+/* ひし形配色（両数） */
 .d10 { background: #ff7f00; color: #000; }
 .d8  { background: #ffd000; border-color: #000; color: #000; background-clip: padding-box; }
 .d6  { background: #ff8c3a; border-color: #000; color: #000; }
 .d4  { background: #0057b8; border-color: #fff; color: #fff; }
 .d7  { background: #c1121f; color: #fff; }
 
-/* Band2 */
+/* ひし形アイコン画像を使う場合 */
+.carIcon {
+  width: 80%;
+  max-width: 200px;
+  object-fit: contain;
+}
+
+/* =========================
+   種別バッジ（共通：横書きベース）
+========================= */
+.badge {
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: clamp(14px, 5vw, 32px);
+  font-weight: 800;
+  border-width: 3px;
+  border-style: solid;
+}
+
+/* 種別配色 */
+.j-tokkyu           { background: #d90429; color: #fff; }
+.j-storea,
+.j-storb_down,
+.j-storb_up         { background: #fff; color: #000; border-color: #9acd32; }
+.j-kaisokukyuko,
+.j-chikakaiku       { background: #800080; color: #fff; }
+.j-kyuko            { background: #ff7f00; color: #fff; }
+.j-tsukin_kyuko     { background: #ffae00; color: #000; }
+.j-kaisoku          { background: #87ceeb; color: #000; }
+.j-junkyu           { background: #1f7a1f; color: #fff; }
+.j-tsukin_junkyu    { background: #0057b8; color: #fff; }
+.j-kukan_junkyu     { background: #9acd32; color: #000; }
+.j-kakutei          { background: #808080; color: #fff; }
+.j-kaiso,
+.j-rinji-a          { background: #fff; color: #d90429; border-color: #d90429; }
+
+/* =========================
+   縦書き種別バッジ（上書き）
+   class="badge badge-vertical j-xxx"
+========================= */
+.badge-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+
+  /* 文字サイズをかなり大きく（約3倍クラス） */
+  font-size: clamp(80px, 12vw, 200px);
+  font-weight: 900;
+
+  /* 余白と枠も太めに */
+  padding: 24px 10px;
+  border-radius: 16px;
+  border-width: 6px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* =========================
+   Band2（お知らせ）
+========================= */
 .band2 {
   background: #111;
   color: #fff;
@@ -134,78 +223,29 @@ input[type="text"], select, input[type="number"] {
   line-height: 1.2;
 }
 
-/* ===== 種別バッジ（共通のベース） ===== */
-.badge {
-  padding: 6px 12px;
-  border-radius: 10px;
-  font-size: clamp(14px, 5vw, 32px);
-  font-weight: 800;
-  border-width: 3px;
-}
-
-/* 種別配色 */
-.j-tokkyu { background: #d90429; color: #fff; }
-.j-storea, .j-storb_down, .j-storb_up {
-  background: #fff;
-  color: #000;
-  border-color: #9acd32;
-}
-.j-kaisokukyuko, .j-chikakaiku { background: #800080; color: #fff; }
-.j-kyuko { background: #ff7f00; color: #fff; }
-.j-tsukin_kyuko { background: #ffae00; color: #000; }
-.j-kaisoku { background: #87ceeb; color: #000; }
-.j-junkyu { background: #1f7a1f; color: #fff; }
-.j-tsukin_junkyu { background: #0057b8; color: #fff; }
-.j-kukan_junkyu { background: #9acd32; color: #000; }
-.j-kakutei { background: #808080; color: #fff; }
-.j-kaiso, .j-rinji-a {
-  background: #fff;
-  color: #d90429;
-  border-color: #d90429;
-}
-
-/* ===== Band1 右側：縦書き種別を「3倍クラス」に拡大 ===== */
-/* ※ .badge よりも後ろに書いて、確実に上書きさせる */
-.type-vertical .badge {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-
-  /* だいたい元の 3 倍クラスのサイズ感 */
-  font-size: clamp(500px, 12vw, 1000px);
-  font-weight: 900;
-
-  /* 枠の厚み・余白も大きめに */
-  padding: 24px 10px;
-  border-radius: 16px;
-  border-width: 6px;
-
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-
-  /* 縦に長くなりすぎたときのはみ出し防止 */
-  max-height: 100%;
-  overflow: hidden;
-}
-
-/* ===== Band4（列番・行先） ===== */
+/* =========================
+   Band4（列番・行先）
+========================= */
 .band4 {
   gap: 4px;
 }
 .band4 .cell {
   padding: 4px;
-  font-size: clamp(14px, 4.3vw, 26px); /* 小さめに調整済み */
+  font-size: clamp(14px, 4.3vw, 26px);
   font-weight: 700;
   border: 1px solid #333;
 }
 
-/* Band5 時計とメニュー */
+/* =========================
+   Band5（時計とメニュー）
+========================= */
 .band5 {
   background: #000;
   display: grid;
   grid-template-columns: 1fr 5fr;
   align-items: stretch;
 }
+
 .clock {
   font-size: clamp(14px, 4.2vw, 24px);
   font-weight: 700;
@@ -214,32 +254,9 @@ input[type="text"], select, input[type="number"] {
   font-size: clamp(12px, 3.8vw, 22px);
 }
 
-/* Menu modal */
-.modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.6);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-}
-.modal.active { display: flex; }
-.panel {
-  background: #1a1a1a;
-  color: #fff;
-  border-radius: 16px;
-  width: min(720px, 96vw);
-  max-height: 84vh;
-  overflow: auto;
-  padding: 16px;
-  border: 1px solid #333;
-}
-.list { display: grid; gap: 8px; }
-.sep { border: none; border-top: 1px solid #333; margin: 16px 0; }
-.small { font-size: 12px; color: #aaa; }
-
-/* --- Band6：次駅発車時刻 --- */
+/* =========================
+   Band6（次駅発車時刻）
+========================= */
 .band6 {
   background: #000;
   border-top: 1px solid #333;
@@ -248,12 +265,15 @@ input[type="text"], select, input[type="number"] {
   justify-content: center;
   padding: 4px 8px;
 }
+
 .band6 #nextDepart {
   font-size: clamp(12px, 3.9vw, 24px);
   font-weight: 700;
 }
 
-/* Start screen */
+/* =========================
+   Start screen
+========================= */
 .centered {
   height: 100vh;
   display: flex;
@@ -263,46 +283,17 @@ input[type="text"], select, input[type="number"] {
   gap: 14px;
 }
 
-.active-selected {
-  background: #2c7be5 !important;
-  color: #fff !important;
-}
-
-.endchange-row {
-  margin-top: 32px;
-}
-
-/* 音声停止ボタンがオンのときの見た目 */
+/* =========================
+   音声停止ボタン
+========================= */
 .btn.muted,
 .btn.secondary.muted {
-  background-color: #b44;  /* くすんだ赤系 */
+  background-color: #b44;
   color: #fff;
   border-color: #922;
 }
+
 .btn.muted:hover,
 .btn.secondary.muted:hover {
   background-color: #a33;
-}
-
-/* ==== 縦書き種別バッジ：最終上書き ==== */
-.badge-vertical {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-
-  /* 文字サイズを元の約3倍クラスに */
-  font-size: clamp(80px, 12vw, 200px);
-  font-weight: 900;
-
-  /* 余白と枠も太め */
-  padding: 24px 10px;
-  border-radius: 16px;
-  border-width: 6px;
-
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-
-  /* はみ出し対策 */
-  max-height: 100%;
-  overflow: hidden;
 }
