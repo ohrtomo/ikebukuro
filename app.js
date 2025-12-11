@@ -932,10 +932,6 @@ function screenGuidance() {
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
 
-    // band3 は将来拡張用に空の帯として残しておく
-    const band3 = el("div", { class: "band band3" }, [
-        // ここは現在は何も表示しない（必要なら後で使う想定）
-    ]);
 
     const band4 = el("div", { class: "band band4" }, [
         el("div", { class: "cell", id: "cellNo" }, "----"),
