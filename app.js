@@ -62,28 +62,30 @@ const state = {
         muteUntil: 0,
         lastDepartStation: null,
         lastDepartPrevDist: null,
-		manualPlatforms: {},
+        manualPlatforms: {},
         startupMode: false,         // 起動モード中かどうか
         startupFixed: false,        // 起動モードで一度「現在駅」を確定したか
         startupCandidate: null,     // 起動判定中の候補駅名
         startupCount: 0,            // 同じ駅を何回連続で見たか  
-        voiceMuted: false,      // 一時ミュートフラグ
-        nonPassengerExtraStops: new Set(), // ★追加：回送・試運転・臨時の「追加停車駅」
-        // ★ 追加：途中駅列情変更用フラグ
+        voiceMuted: false,          // 一時ミュートフラグ
+
+        nonPassengerExtraStops: new Set(),        // 現在有効なセット（1本目 or 2本目）
+        nonPassengerExtraStopsSecond: new Set(),  // 変更後列車用
+
+        // 追加停車駅設定用キュー
+        extraStopsQueue: [],
+        extraStopsMode: null,   // "first" or "second"
+
+        // ★ 途中駅列情変更用フラグ
         midChangePending: false,          // まだこれから途中駅で列情変更を行う
         midChangeApplied: false,          // 途中駅列情変更を論理的に適用済み（以降は後の列車）
         midChangeArrivalHandled: false,   // 変更駅到着時のUI更新を済ませたか
         midChangeConfirmTimer: null,      // 15秒後の「列情確認」タイマー
-        nonPassengerExtraStops: new Set(),        // 現在有効なセット（1本目 or 2本目）
-	    nonPassengerExtraStopsSecond: new Set(),  // 変更後列車用
+        midChangeTriggerStation: null,    // ★ どの駅の190m通過で列情を切り替えるか
 
-    	// 追加停車駅設定用キュー
-    	extraStopsQueue: [],
-    	extraStopsMode: null,   // "first" or "second"
         undergroundMode: false,               // 地下モード中かどうか
         undergroundLastToStationName: null,   // trains API の最新 toStationName
         undergroundSource: null,              // "downButton" / "autoUp" / "menu" など任意
-
     },
 };
 
@@ -2984,8 +2986,91 @@ function onPos(pos) {
 }
 
 function isNonPassenger(t) {
-	return /(回送|試運転|臨時)/.test(t);
+    return /(回送|試運転|臨時)/.test(t);
 }
+
+// ★ 途中駅列情変更：どの駅の「190m通過」で切り替えるかを決める
+function computeMidChangeTriggerStation(fromName, targetName, direction) {
+    const lineId = getLineForStation(fromName);
+    let line = null;
+
+    if (lineId === "main")      line = MAIN_LINE_ORDER;
+    else if (lineId === "yuraku")  line = YURAKU_LINE_ORDER;
+    else if (lineId === "toshima") line = TOSHIMA_LINE_ORDER;
+    else if (lineId === "sayama")  line = SAYAMA_LINE_ORDER;
+    else return fromName; // 不明な場合は従来どおり「出発駅で切り替え」
+
+    const idxFrom   = line.indexOf(fromName);
+    const idxTarget = line.indexOf(targetName);
+    if (idxFrom === -1 || idxTarget === -1) {
+        return fromName;
+    }
+
+    // 進行方向と配列の並びが矛盾していたら諦めて出発駅扱い
+    if (direction === "下り" && idxFrom >= idxTarget) {
+        return fromName;
+    }
+    if (direction === "上り" && idxFrom <= idxTarget) {
+        return fromName;
+    }
+
+    // 「変更駅の一つ手前」側から探す：変更駅に一番近い通過駅を優先
+    // （= 一番最後に通る通過駅）
+    if (direction === "下り") {
+        // from → ... → target（インデックス増加方向）
+        for (let i = idxTarget - 1; i > idxFrom; i--) {
+            const name = line[i];
+            const isStop = !state.runtime.passStations.has(name);
+            if (!isStop) {
+                return name;    // 変更駅の一つ手前の「通過駅」
+            }
+        }
+    } else {
+        // 上り：from → ... → target（インデックス減少方向）
+        for (let i = idxTarget + 1; i < idxFrom; i++) {
+            const name = line[i];
+            const isStop = !state.runtime.passStations.has(name);
+            if (!isStop) {
+                return name;
+            }
+        }
+    }
+
+    // 間に通過駅が無かった場合 → 従来通り「出発駅」で切り替え
+    return fromName;
+}
+
+// ★ 実際に「後半列車」の情報へ切り替える処理
+function applyMidTrainChange() {
+    const cfg2 = state.config.second || {};
+    if (!state.config.endChange || !cfg2.trainNo) return;
+
+    // 列車情報を後半列車に上書き
+    state.config.trainNo = cfg2.trainNo || state.config.trainNo;
+    state.config.type    = cfg2.type    || state.config.type;
+    state.config.dest    = cfg2.dest    || state.config.dest;
+    state.config.cars    = cfg2.cars    || state.config.cars;
+
+    // 追加停車駅セットも後半列車用に切替
+    state.runtime.nonPassengerExtraStops = new Set(
+        state.runtime.nonPassengerExtraStopsSecond || []
+    );
+
+    // 種別が変わるので停車パターンを再構築
+    buildPassStationList();
+
+    state.runtime.midChangePending        = false;
+    state.runtime.midChangeApplied        = true;
+    state.runtime.midChangeTriggerStation = null;
+
+    // 画面の表示（種別バッジ・列番・行先）も更新しておく
+    renderGuidance();
+
+    // 「列情変更」「方向幕確認」の案内をここで実施
+    speakOnce("midchange_change", "列情変更");
+    speakOnce("midchange_maku", "方向幕確認");
+}
+
 
 function maybeSpeak(ns) {
     if (!ns) return;
@@ -3020,101 +3105,70 @@ function maybeSpeak(ns) {
     const isExtraPass = baseStop && !isStop; // 本来停車→いま通過
 
     // ===== (A) 前駅発車後の「次は○○」案内 =====
-    // 200m 以下の位置から 200m 超に抜けた瞬間のみ発報
-    const left200 =
+    // 190m 以下の位置から 190m 超に抜けた瞬間のみ発報
+    const left190 =
         state.runtime.lastStopStation &&
         !isFirstMeasurement &&
         prevSameDist != null &&
-        prevSameDist <= 200 &&
-        ns.distance > 200;
+        prevSameDist <= 190 &&
+        ns.distance > 190;
 
-    if (left200) {
+    if (left190) {
         const nextName = state.runtime.lastStopStation;
-    
+
+        // 次駅発車時刻はいったん消す（後で再取得）
         clearNextDepartureDisplay();
 
         if (nextName) {
-            // ★ ここで「途中駅で列情変更」の対象かどうかを判定
-            const cfg2 = state.config.second || {};
-            const isMidChangeTarget =
-               state.config.endChange &&
-                state.runtime.midChangePending &&
-                cfg2.changeStation &&
-                nextName === cfg2.changeStation;
-    
-            // ★ 対象なら、ここで列車情報を変更（論理的にはこの先は後の列車）
-            if (isMidChangeTarget) {
-                state.config.trainNo = cfg2.trainNo || state.config.trainNo;
-                state.config.type    = cfg2.type   || state.config.type;
-                state.config.dest    = cfg2.dest   || state.config.dest;
-                state.config.cars    = cfg2.cars   || state.config.cars;
-
-                // ★ 変更後列車用の追加停車駅セットを有効化
-	            state.runtime.nonPassengerExtraStops = new Set(
-	            	state.runtime.nonPassengerExtraStopsSecond || []
-                );
-    
-                // 停車パターンを変更後種別で再構築
-                buildPassStationList();
-    
-                state.runtime.midChangePending = false;
-                state.runtime.midChangeApplied = true;
-            }
-    
-            // ★ ここから先の判定は、すでに変更後種別で行われる
             const baseNextStop = baseIsStop(nextName);
             const isNextStop   = !state.runtime.passStations.has(nextName);
-    
+
             const isExtraStopNext = !baseNextStop && isNextStop;
             const isExtraPassNext = baseNextStop && !isNextStop;
-    
+
             if (isNextStop) {
                 const word = isExtraStopNext ? "臨時停車" : "停車";
-    
+
                 const plat = getEffectivePlatformForStation(nextName);
-    
+
                 let text;
                 if (plat) {
                     text = `次は${nextName}、${plat}番、${word}`;
                 } else {
                     text = `次は${nextName}、${word}`;
                 }
-    
+
                 if (isPlatformChanged(nextName)) {
                     text += "、着発線変更";
                 }
-    
-                // ★ まず「次は〜」を案内
-                speakOnce("leave200_" + nextName, text);
-    
-                // ★ 途中駅列情変更の対象であれば、続けて「列情変更」「方向幕確認」
-                if (isMidChangeTarget) {
-                    speakOnce("midchange_change", "列情変更");
-                    speakOnce("midchange_maku", "方向幕確認");
-                }
-    
-                // ★ 次駅発車時刻は「変更後の列車番号」で取得
+
+                // ★ ここでは純粋に「次は〜」の案内だけを行う
+                speakOnce("leave190_" + nextName, text);
+
+                // ★ 次駅発車時刻は「現在の列車番号」で取得
                 fetchAndShowNextDeparture(nextName);
-    
+
             } else if (isExtraPassNext) {
                 speakOnce(
-                    "leave200_" + nextName,
+                    "leave190_" + nextName,
                     `次は${nextName}、臨時通過`,
                 );
             }
         }
-    
+
         state.runtime.lastStopStation = null;
         state.runtime.lastDepartStation = null;
         state.runtime.lastDepartPrevDist = null;
     }
 
-    // ===== (B) 手前 450m の「まもなく○○」案内 =====
+
+    // ===== (B) 手前 400m の「まもなく○○」案内 =====
+    // 400m より外側 → 400m 以内に入った瞬間
     const crossed400 =
         !isFirstMeasurement &&
         isStop &&
-        ns.distance <= 450 &&
-        (prevSameDist == null || prevSameDist > 450);
+        ns.distance <= 400 &&
+        (prevSameDist == null || prevSameDist > 400);
 
     if (crossed400) {
         const stopWord = isExtraStop ? "臨時停車" : "停車";
@@ -3128,59 +3182,76 @@ function maybeSpeak(ns) {
 
         speakOnce("arr400_" + key, text);
 
-        // ★ 回送・試運転・臨時は 450m 案内の直後に「ドア扱い注意」
+        // ★ 回送・試運転・臨時は 400m 案内の直後に「ドア扱い注意」
         if (isNonP) {
             speakOnce("door400_" + key, "ドア扱い注意");
         }
     }
 
-	// ===== (C) 停止直前の案内：200m クロス時 =====
-	// 200m より外側 → 200m 以内に入った瞬間
-	const crossed200Stop =
-		!isFirstMeasurement &&
-		isStop &&
-		ns.distance <= 200 &&
-		(prevSameDist == null || prevSameDist > 200);
+    // ===== (C) 停止直前の案内：200m クロス時 =====
+    // 200m より外側 → 200m 以内に入った瞬間
+    const crossed200Stop =
+        !isFirstMeasurement &&
+        isStop &&
+        ns.distance <= 200 &&
+        (prevSameDist == null || prevSameDist > 200);
 
-	// ★ 速度条件 d > 5 は撤廃して、距離条件だけで判定
-	if (crossed200Stop) {
-		const stopWord = isExtraStop ? "臨時停車" : "停車";
+    // ★ 速度条件は撤廃済み：距離条件だけで判定
+    if (crossed200Stop) {
+        const stopWord = isExtraStop ? "臨時停車" : "停車";
 
-		// 到着案内（速度に関係なく一度だけ出す）
-		if (
-			state.config.cars === 8 &&
-			(state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
-		) {
-			speakOnce(
-				"arr200_" + key,
-				`${stopWord}、8両、${
-					state.config.direction === "上り"
-						? ns.up8pos
-						: ns.down8pos
-				}あわせ`,
-			);
-		} else if (state.config.cars === 10) {
-			speakOnce("arr200_" + key, `${stopWord}、10両`);
-		} else {
-			speakOnce(
-				"arr200_" + key,
-				`${stopWord}、${state.config.cars}両、停止位置注意`,
-			);
-		}
+        // 到着案内（速度に関係なく一度だけ出す）
+        if (
+            state.config.cars === 8 &&
+            (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
+        ) {
+            speakOnce(
+                "arr200_" + key,
+                `${stopWord}、8両、${
+                    state.config.direction === "上り"
+                        ? ns.up8pos
+                        : ns.down8pos
+                }あわせ`,
+            );
+        } else if (state.config.cars === 10) {
+            speakOnce("arr200_" + key, `${stopWord}、10両`);
+        } else {
+            speakOnce(
+                "arr200_" + key,
+                `${stopWord}、${state.config.cars}両、停止位置注意`,
+            );
+        }
 
-		// ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
-		if (isNonP) {
-			speakOnce("door200_" + key, "ドア扱い注意");
-		}
+        // ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
+        if (isNonP) {
+            speakOnce("door200_" + key, "ドア扱い注意");
+        }
 
-		// ★ 次駅情報は必ずセット（この後の「次は〜」案内用）
-		if (!state.runtime.lastStopStation) {
-			const nextName = findNextStopStationName(ns.name);
-			state.runtime.lastStopStation = nextName || null;
-		}
+        // ★ 次に停車する駅を必ずセット（この後の「次は〜」案内用）
+        const nextName = findNextStopStationName(ns.name);
+        state.runtime.lastStopStation = nextName || null;
+
+        // ★ 途中駅列情変更の対象かどうかを判定し、
+        //    「どの駅の190m通過で切り替えるか」を決めておく
+        const cfg2 = state.config.second || {};
+        if (
+            state.config.endChange &&
+            state.runtime.midChangePending &&
+            cfg2.changeStation &&
+            nextName &&
+            nextName === cfg2.changeStation
+        ) {
+            // ns.name = 「いま停車する駅」＝変更前の停車駅
+            state.runtime.midChangeTriggerStation = computeMidChangeTriggerStation(
+                ns.name,
+                nextName,
+                state.config.direction,
+            );
+        } else {
+            state.runtime.midChangeTriggerStation = null;
+        }
 
         // ★ ここから追加：途中駅列情変更の「変更駅」に到着したタイミング
-        const cfg2 = state.config.second || {};
         const isChangeStation =
             state.runtime.midChangeApplied &&
             !state.runtime.midChangeArrivalHandled &&
@@ -3202,7 +3273,7 @@ function maybeSpeak(ns) {
                     root._cellDest.textContent = state.config.dest;
                 }
             }
-    
+
             // 15秒後に「列情確認」
             if (state.runtime.midChangeConfirmTimer) {
                 clearTimeout(state.runtime.midChangeConfirmTimer);
@@ -3210,11 +3281,11 @@ function maybeSpeak(ns) {
             state.runtime.midChangeConfirmTimer = setTimeout(() => {
                 speakOnce("midchange_confirm", "列情確認");
             }, 15000);
-    
+
             state.runtime.midChangeArrivalHandled = true;
         }
-    
-	}
+    }
+
 
     // ===== 通過列車の案内 =====
     // （客扱い列車・回送・試運転・臨時すべて共通）
@@ -3225,6 +3296,29 @@ function maybeSpeak(ns) {
     if (!isStop && ns.distance <= 120 && d <= 30) {
         const passWord = isExtraPass ? "臨時通過" : "通過";
         speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
+    }
+
+    // ===== 途中駅列情変更：トリガー駅の190m通過を監視 =====
+    if (
+        state.config.endChange &&
+        state.runtime.midChangePending &&
+        state.runtime.midChangeTriggerStation &&
+        ns.name === state.runtime.midChangeTriggerStation
+    ) {
+        const prevDistForTrigger =
+            state.runtime.prevStationName === ns.name
+                ? state.runtime.prevStationDistance
+                : null;
+
+        const crossed190Trigger =
+            prevDistForTrigger != null &&
+            prevDistForTrigger <= 190 &&
+            ns.distance > 190;
+
+        if (crossed190Trigger) {
+            // ★ ここで初めて「後半列車」に切り替える
+            applyMidTrainChange();
+        }
     }
 
     // ★ 次回比較用距離を保存
@@ -3240,8 +3334,7 @@ function otherSpeaks(ns) {
     const before0100 = hh < 1;
     const timeOK = after1555 || before0100;
 
-    // ★ 有楽町線乗り入れ時（練馬 → 小竹向原行き）搭載かばん確認
-
+    // 練馬：100m 内 → 外 に出た瞬間
     if (
         state.config.direction === "上り" &&
         state.config.dest === "小竹向原" &&
@@ -3254,17 +3347,11 @@ function otherSpeaks(ns) {
 
         const crossedOut =
             prevDist != null &&
-            prevDist <= 150 &&
-            ns.distance > 150;   // ★ 150m 以下 → 150m 超え
+            prevDist <= 100 &&
+            ns.distance > 100;
 
         if (crossedOut) {
-            // 練馬発車時の「搭載かばん、確認」
             speakOnce("rule-nerima", "搭載かばん、確認");
-
-            // ★ 同時に上り有楽町線用の地下モードを開始
-            if (!state.runtime.undergroundMode) {
-                enterUndergroundMode("autoUp");
-            }
         }
     }
 
@@ -3278,7 +3365,8 @@ function otherSpeaks(ns) {
         speakOnce("rule-tokorozawa", "列車無線チャンネル切り替え");
     }
 
-    // ★ 椎名町（池袋行・上り）150m確認
+    // ★ 椎名町（池袋行・上り）
+    //    220m 以下 → 220m 以上 に抜けた瞬間で発話
     if (
         state.config.direction === "上り" &&
         state.config.dest === "池袋" &&
@@ -3289,22 +3377,22 @@ function otherSpeaks(ns) {
                 ? state.runtime.prevStationDistance
                 : null;
 
-        const crossed150Out =
+        const crossed220Out =
             prevDist != null &&
-            prevDist <= 150 &&
-            ns.distance >= 150;
+            prevDist <= 220 &&
+            ns.distance >= 220;   // ★ 「220m以下」→「220m以上」に出た瞬間
 
-        if (crossed150Out) {
-            // ★ 時間帯に関係なく「方向幕確認」
-            speakOnce("rule-shiinamachi-maku", "方向幕確認");
-
-            // ★ 従来通り、夕方〜深夜のみ「ドアかいひかた、確認」
+        if (crossed220Out) {
+            // ドア扱い確認：夕方〜深夜のみ（従来どおり時間帯指定）
             if (timeOK) {
                 speakOnce("rule-shiinamachi", "ドアかいひかた、確認");
             }
+            // 方向幕確認：時間帯に関係なく必ず実施
+            speakOnce("rule-shiinamachi_maku", "方向幕確認");
         }
     }
 }
+
 
 
 // ★ 回送・試運転・臨時用 追加停車駅設定画面
