@@ -283,3 +283,26 @@ input[type="text"], select, input[type="number"] {
 .btn.secondary.muted:hover {
   background-color: #a33;
 }
+
+/* ==== 縦書き種別バッジ：最終上書き ==== */
+.badge-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+
+  /* 文字サイズを元の約3倍クラスに */
+  font-size: clamp(80px, 12vw, 200px);
+  font-weight: 900;
+
+  /* 余白と枠も太め */
+  padding: 24px 10px;
+  border-radius: 16px;
+  border-width: 6px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  /* はみ出し対策 */
+  max-height: 100%;
+  overflow: hidden;
+}

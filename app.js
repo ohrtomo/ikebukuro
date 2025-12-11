@@ -916,14 +916,17 @@ function screenGuidance() {
 
     // --- Band1: 左=両数 / 右=種別（縦書き） ---
     const band1 = el("div", { class: "band band1" }, [
-        el("div", { class: "band1-left" }, [
-            el("div", { class: "cars-wrapper" })   // 中身は band1RenderCars で差し込む
+         el("div", { class: "band1-left cars-wrapper" }, [
+            // ひし形アイコンなど
         ]),
         el("div", { class: "band1-right" }, [
-            // 種別バッジをここに縦書きで表示
-            el("div", { class: "badge badge-vertical", id: "badgeType" }, "")
-        ]),
+            el("div", {
+                id: "badgeType",
+                class: "badge badge-vertical " + typeClass(state.config.type)
+            }, state.config.type)
+        ])
     ]);
+
 
     const band2 = el("div", { class: "band band2" }, [
         // ★ GPS 状態表示用
@@ -2644,20 +2647,14 @@ function stopGuidance() {
 
 function renderGuidance() {
     const root = document.getElementById("screen-guidance");
-    if (!root) return;
 
-    // ★ 縦書き用のクラスを必ず残す
-    if (root._badgeType) {
-        root._badgeType.className = "badge badge-vertical " + typeClass(state.config.type);
-        root._badgeType.textContent = state.config.type;
-    }
+    // ★ 種別バッジ（縦書き用クラスを必ず付ける）
+    root._badgeType.className =
+        "badge badge-vertical " + typeClass(state.config.type);
 
-    if (root._cellNo) {
-        root._cellNo.textContent = state.config.trainNo;
-    }
-    if (root._cellDest) {
-        root._cellDest.textContent = state.config.dest;
-    }
+    // 列番・行先など
+    root._cellNo.textContent = state.config.trainNo;
+    root._cellDest.textContent = state.config.dest;
 }
 
 function setGpsStatus(status) {
