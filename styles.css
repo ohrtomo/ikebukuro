@@ -35,28 +35,24 @@ input[type="text"], select, input[type="number"] {
   display: grid;
 }
 
-/* --- Band1 (両数) --- */
+/* ひし形アイコン自体 */
 .diamond {
-  /* ★ ひし形の大きさ：全体を約 3/4 に縮小 */
   width:  min(27vw, 150px);
   height: min(27vw, 150px);
-
   transform: rotate(45deg);
   display: flex;
   align-items: center;
   justify-content: center;
   border: 16px solid transparent;
-
-  /* ★ 下のお知らせ欄との間に少し余白を入れる */
-  margin-bottom: 16px;
+  margin-bottom: 0;              /* 下の余白は不要になったので 0 に */
 }
 
-/* --- Band1 (両数 + 種別縦書き) --- */
+/* --- Band1（両数＋種別縦書き）--- */
 .band1 {
   display: flex;
-  align-items: stretch;   /* 高さいっぱいまで伸ばす */
+  align-items: stretch;
   justify-content: stretch;
-  padding: 4px 6px;       /* 余白を少しだけにする */
+  padding: 4px 6px; /* 余白少なめ */
 }
 
 /* 左 2/3：両数アイコンエリア */
@@ -73,6 +69,34 @@ input[type="text"], select, input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* ★ 縦書き種別バッジ：サイズ3倍相当に拡大 ★ */
+.type-vertical .badge {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+
+  /* もともとの約3倍になるようかなり大きめに */
+  font-size: clamp(42px, 12vw, 90px);
+  font-weight: 900;
+
+  /* 枠の厚みと余白も3倍くらいに */
+  padding: 24px 10px;             /* 上下に大きく・左右は少しだけ */
+  border-radius: 16px;
+  border-width: 6px;
+
+  /* 縦に長くなりすぎたときの保険 */
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* 種別縦書きエリア（右側 1/3） */
+.type-vertical {
+  flex: 1;                        /* 右側 1/3 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
 }
 
 /* ひし形はそのまま使う場合用（不要なら削除可） */
@@ -93,8 +117,9 @@ input[type="text"], select, input[type="number"] {
   font-weight: bold;
 }
 
-/* 両数アイコン画像を縦方向中央に置くラッパー */
+/* 両数（ひし形）側 */
 .cars-wrapper {
+  flex: 2;                       /* 左側 2/3 */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,7 +139,7 @@ input[type="text"], select, input[type="number"] {
   justify-content: center;
 }
 
-/* 画像アイコンは band1-left 内で最大限表示 */
+/* 両数アイコン画像（ひし形を使わない場合用） */
 .carIcon {
   width: 80%;
   max-width: 200px;
