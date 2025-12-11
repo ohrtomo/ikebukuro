@@ -2647,11 +2647,21 @@ function stopGuidance() {
 }
 
 function renderGuidance() {
-	const root = document.getElementById("screen-guidance");
-	root._badgeType.className = "badge " + typeClass(state.config.type);
-	root._badgeType.textContent = state.config.type;
-	root._cellNo.textContent = state.config.trainNo;
-	root._cellDest.textContent = state.config.dest;
+    const root = document.getElementById("screen-guidance");
+    if (!root) return;
+
+    // ★ 縦書き用のクラスを必ず残す
+    if (root._badgeType) {
+        root._badgeType.className = "badge badge-vertical " + typeClass(state.config.type);
+        root._badgeType.textContent = state.config.type;
+    }
+
+    if (root._cellNo) {
+        root._cellNo.textContent = state.config.trainNo;
+    }
+    if (root._cellDest) {
+        root._cellDest.textContent = state.config.dest;
+    }
 }
 
 function setGpsStatus(status) {
@@ -3362,7 +3372,8 @@ function maybeSpeak(ns) {
             if (root) {
                 // 案内画面の種別・列番・行先を変更後のものに更新
                 if (root._badgeType) {
-                    root._badgeType.className = "badge " + typeClass(state.config.type);
+                    // ★ 縦書きクラスを維持する
+                    root._badgeType.className = "badge badge-vertical " + typeClass(state.config.type);
                     root._badgeType.textContent = state.config.type;
                 }
                 if (root._cellNo) {
