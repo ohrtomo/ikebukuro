@@ -1,6 +1,13 @@
 /* Reset */
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; background: #111; color: #fff; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; }
+html, body {
+  height: 100%;
+  background: #111;
+  color: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto,
+               "Noto Sans JP", "Hiragino Kaku Gothic ProN",
+               "Yu Gothic", sans-serif;
+}
 button, input, select { font: inherit; }
 
 /* Common */
@@ -8,43 +15,53 @@ button, input, select { font: inherit; }
 .row { margin-bottom: 12px; }
 label { display: block; margin-bottom: 6px; color: #ddd; }
 input[type="text"], select, input[type="number"] {
-  width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff;
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #1a1a1a;
+  color: #fff;
 }
 
-.btn { padding: 12px 16px; border-radius: 10px; border: none; background: #2c7be5; color: white; font-weight: 700; }
+.btn {
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: none;
+  background: #2c7be5;
+  color: white;
+  font-weight: 700;
+}
 .btn.secondary { background: #444; }
 .btn.warn { background: #c92a2a; }
 .btn:active { opacity: .85; }
 
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
 
 .screen { display: none; }
 .screen.active { display: block; }
 
-/* Guidance layout: 6 bands (2:2:2:1:1:1 に拡張) */
+/* Guidance layout */
 .guidance {
+  /* band1, band2, band4, band5, band6 の 5 段構成 */
   grid-template-rows: 2.2fr 1.6fr 1.4fr 1fr 1fr;
   height: 100vh;
   width: 100%;
   overflow: hidden;
 }
-.band { display: flex; align-items: center; justify-content: center; padding: 8px; }
-
-/* 追加：案内画面が active のときだけ grid にする */
-.screen.guidance.active {
-  display: grid;
-}
-
-/* ひし形アイコン自体 */
-.diamond {
-  width:  min(27vw, 150px);
-  height: min(27vw, 150px);
-  transform: rotate(45deg);
+.band {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 16px solid transparent;
-  margin-bottom: 0;              /* 下の余白は不要になったので 0 に */
+  padding: 8px;
+}
+
+/* 案内画面が active のときだけ grid にする */
+.screen.guidance.active {
+  display: grid;
 }
 
 /* --- Band1（両数＋種別縦書き）--- */
@@ -56,50 +73,26 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* 左 2/3：両数アイコンエリア */
-.band1-left {
-  flex: 2;                /* 左2：右1 の比率 */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* 右 1/3：種別エリア（縦書き） */
-.band1-right {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* ★ 縦書き種別バッジ：サイズ3倍相当に拡大 ★ */
-.type-vertical .badge {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-
-  /* もともとの約3倍になるようかなり大きめに */
-  font-size: clamp(80px, 12vw, 200px);
-  font-weight: 900;
-
-  /* 枠の厚みと余白も3倍くらいに */
-  padding: 24px 10px;             /* 上下に大きく・左右は少しだけ */
-  border-radius: 16px;
-  border-width: 6px;
-
-  /* 縦に長くなりすぎたときの保険 */
-  max-height: 100%;
-  overflow: hidden;
-}
-
-/* 種別縦書きエリア（右側 1/3） */
-.type-vertical {
-  flex: 1;                        /* 右側 1/3 */
+.band1-left,
+.cars-wrapper {
+  flex: 2; /* 左2：右1 の比率 */
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
 }
 
-/* ひし形はそのまま使う場合用（不要なら削除可） */
+/* 右 1/3：種別エリア（縦書き） */
+.band1-right,
+.type-vertical {
+  flex: 1; /* 右側 1/3 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+/* ひし形アイコン自体 */
 .diamond {
   width:  min(27vw, 150px);
   height: min(27vw, 150px);
@@ -108,7 +101,6 @@ input[type="text"], select, input[type="number"] {
   align-items: center;
   justify-content: center;
   border: 16px solid transparent;
-  margin-bottom: 16px;
 }
 
 .diamond span {
@@ -117,52 +109,14 @@ input[type="text"], select, input[type="number"] {
   font-weight: bold;
 }
 
-/* 両数（ひし形）側 */
-.cars-wrapper {
-  flex: 2;                       /* 左側 2/3 */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-}
-
-/* 種別バッジを縦書き＋3倍サイズに */
-.badge-vertical {
-  writing-mode: vertical-rl;          /* 縦書き */
-  text-orientation: mixed;
-
-  /* ★ 文字サイズ：だいたい3倍クラスに大きく */
-  font-size: clamp(80px, 12vw, 200px);
-  font-weight: 900;
-
-  /* ★ 枠と余白も大きめにする */
-  padding: 24px 10px;                 /* 上下ガッツリ・左右少し */
-  border-radius: 16px;
-  border-width: 6px;
-
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-
-  /* はみ出し防止（縦に長くなりすぎたとき用） */
-  max-height: 100%;
-  overflow: hidden;
-}
-
-/* 両数アイコン画像（ひし形を使わない場合用） */
+/* 両数アイコン画像（画像で表示する場合） */
 .carIcon {
   width: 80%;
   max-width: 200px;
   object-fit: contain;
 }
 
-.diamond span {
-  /* ★ フォントサイズを 2倍相当へ */
-  font-size: clamp(28px, 10vw, 70px);
-  transform: rotate(-45deg);
-  font-weight: bold;
-}
-
+/* 両数色分け */
 .d10 { background: #ff7f00; color: #000; }
 .d8  { background: #ffd000; border-color: #000; color: #000; background-clip: padding-box; }
 .d6  { background: #ff8c3a; border-color: #000; color: #000; }
@@ -170,10 +124,17 @@ input[type="text"], select, input[type="number"] {
 .d7  { background: #c1121f; color: #fff; }
 
 /* Band2 */
-.band2 { background: #111; color: #fff; padding: 8px; }
-.notes {  font-size: clamp(12px, 3.8vw, 18px); line-height: 1.2;}
+.band2 {
+  background: #111;
+  color: #fff;
+  padding: 8px;
+}
+.notes {
+  font-size: clamp(12px, 3.8vw, 18px);
+  line-height: 1.2;
+}
 
-/* Band3 種別 */
+/* ===== 種別バッジ（共通のベース） ===== */
 .badge {
   padding: 6px 12px;
   border-radius: 10px;
@@ -184,7 +145,11 @@ input[type="text"], select, input[type="number"] {
 
 /* 種別配色 */
 .j-tokkyu { background: #d90429; color: #fff; }
-.j-storea, .j-storb_down, .j-storb_up { background: #fff; color: #000; border-color: #9acd32; }
+.j-storea, .j-storb_down, .j-storb_up {
+  background: #fff;
+  color: #000;
+  border-color: #9acd32;
+}
 .j-kaisokukyuko, .j-chikakaiku { background: #800080; color: #fff; }
 .j-kyuko { background: #ff7f00; color: #fff; }
 .j-tsukin_kyuko { background: #ffae00; color: #000; }
@@ -193,22 +158,54 @@ input[type="text"], select, input[type="number"] {
 .j-tsukin_junkyu { background: #0057b8; color: #fff; }
 .j-kukan_junkyu { background: #9acd32; color: #000; }
 .j-kakutei { background: #808080; color: #fff; }
-.j-kaiso, .j-rinji-a { background: #fff; color: #d90429; border-color: #d90429; }
+.j-kaiso, .j-rinji-a {
+  background: #fff;
+  color: #d90429;
+  border-color: #d90429;
+}
 
-/* ===== Band4（列番・行先）縮小 ===== */
+/* ===== Band1 右側：縦書き種別を「3倍クラス」に拡大 ===== */
+/* ※ .badge よりも後ろに書いて、確実に上書きさせる */
+.type-vertical .badge {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+
+  /* だいたい元の 3 倍クラスのサイズ感 */
+  font-size: clamp(80px, 12vw, 200px);
+  font-weight: 900;
+
+  /* 枠の厚み・余白も大きめに */
+  padding: 24px 10px;
+  border-radius: 16px;
+  border-width: 6px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  /* 縦に長くなりすぎたときのはみ出し防止 */
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* ===== Band4（列番・行先） ===== */
 .band4 {
   gap: 4px;
 }
 .band4 .cell {
   padding: 4px;
-  font-size: clamp(14px, 4.3vw, 26px); /* ★大幅縮小 */
+  font-size: clamp(14px, 4.3vw, 26px); /* 小さめに調整済み */
   font-weight: 700;
   border: 1px solid #333;
 }
 
 /* Band5 時計とメニュー */
-.band5 { background: #000; display: grid; grid-template-columns: 1fr 5fr; align-items: stretch; }
-/* Band5 時計/メニュー — 余白削減 */
+.band5 {
+  background: #000;
+  display: grid;
+  grid-template-columns: 1fr 5fr;
+  align-items: stretch;
+}
 .clock {
   font-size: clamp(14px, 4.2vw, 24px);
   font-weight: 700;
@@ -218,14 +215,31 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* Menu modal */
-.modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; padding: 18px; }
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
 .modal.active { display: flex; }
-.panel { background: #1a1a1a; color: #fff; border-radius: 16px; width: min(720px, 96vw); max-height: 84vh; overflow: auto; padding: 16px; border: 1px solid #333; }
+.panel {
+  background: #1a1a1a;
+  color: #fff;
+  border-radius: 16px;
+  width: min(720px, 96vw);
+  max-height: 84vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid #333;
+}
 .list { display: grid; gap: 8px; }
 .sep { border: none; border-top: 1px solid #333; margin: 16px 0; }
 .small { font-size: 12px; color: #aaa; }
 
-/* --- 6段目：次駅発車時刻 --- */
+/* --- Band6：次駅発車時刻 --- */
 .band6 {
   background: #000;
   border-top: 1px solid #333;
@@ -234,15 +248,20 @@ input[type="text"], select, input[type="number"] {
   justify-content: center;
   padding: 4px 8px;
 }
-
-/* Band6 発車時刻 — やや縮小 */
 .band6 #nextDepart {
   font-size: clamp(12px, 3.9vw, 24px);
   font-weight: 700;
 }
 
 /* Start screen */
-.centered { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.centered {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
 
 .active-selected {
   background: #2c7be5 !important;
@@ -250,44 +269,17 @@ input[type="text"], select, input[type="number"] {
 }
 
 .endchange-row {
-  margin-top: 32px;  /* 好きな値に調整してOK */
-}
-
-/* 両数表示エリアの中央寄せ用 */
-.cars-wrapper {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* 高さを固定したいなら band1 と揃えてもよい */
-  height: 100%;
-}
-
-/* アイコンそのもののサイズ */
-.carIcon {
-    width: 80%;
-    max-width: 200px;
-    object-fit: contain;
+  margin-top: 32px;
 }
 
 /* 音声停止ボタンがオンのときの見た目 */
 .btn.muted,
 .btn.secondary.muted {
-    background-color: #b44;  /* くすんだ赤系 */
-    color: #fff;
-    border-color: #922;
+  background-color: #b44;  /* くすんだ赤系 */
+  color: #fff;
+  border-color: #922;
 }
-
-/* ホバー時に少し濃く */
 .btn.muted:hover,
 .btn.secondary.muted:hover {
-    background-color: #a33;
-}
-
-/* ===== 縦書き種別バッジを最優先で大きくする（上書き用） ===== */
-.type-vertical .badge {
-  font-size: clamp(80px, 12vw, 200px);
-  font-weight: 900;
-  padding: 24px 10px;
-  border-width: 6px;
-  border-radius: 16px;
+  background-color: #a33;
 }
