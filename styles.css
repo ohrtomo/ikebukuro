@@ -171,7 +171,7 @@ input[type="text"], select, input[type="number"] {
   text-orientation: mixed;
 
   /* だいたい元の 3 倍クラスのサイズ感 */
-  font-size: clamp(80px, 12vw, 200px);
+  font-size: clamp(500px, 12vw, 1000px);
   font-weight: 900;
 
   /* 枠の厚み・余白も大きめに */
