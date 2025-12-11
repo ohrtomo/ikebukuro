@@ -2127,6 +2127,7 @@ function enterUndergroundMode(source) {
         // 新桜台 発時刻（通過や情報なしなら何も表示されない）
         fetchAndShowNextDeparture("新桜台");
     }
+    setGpsStatus("GPS");
 }
 
 // 地下モード終了（newRouteLine には "main" などを指定）
@@ -2634,16 +2635,40 @@ function renderGuidance() {
 	root._cellDest.textContent = state.config.dest;
 }
 
-function updateNotes(lat, lng, timeMs) {
-    const d = new Date(timeMs);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    const ss = String(d.getSeconds()).padStart(2, "0");
+function setGpsStatus(status) {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._gpsStatus) return;
+    
+    const el = root._gpsStatus;
 
-    // ★ 両方の画面に同じステータスを表示
-    setGpsStatus(
-        `現在位置: ${lat.toFixed(5)}, ${lng.toFixed(5)} /  ${hh}:${mm}:${ss}`
-    );
+    // 表示テキストは常に「GPS」
+    el.textContent = "GPS";
+
+    // 地下モードは常に黄色
+    if (state.runtime.undergroundMode) {
+        el.style.color = "yellow";
+        return;
+    }
+
+    // 地上：GPS 更新時刻をもとに色を判定
+    const rt = state.runtime;
+    const now = Date.now();
+    const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
+
+    if (ageSec <= 3) {
+        el.style.color = "lime"; // 緑
+    } else {
+        el.style.color = "red";  // 赤
+    }
+}
+
+function updateNotes(lat, lng, timeMs) {
+    // 座標表示は廃止し、GPS 更新時刻の記録と状態更新のみ行う
+    const rt = state.runtime;
+    rt.lastGpsUpdate = Date.now();
+
+    // 色判定を含む GPS 表示更新
+    setGpsStatus("GPS");
 }
 
 function nearestStation(lat, lng) {
