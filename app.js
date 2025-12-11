@@ -958,7 +958,7 @@ function screenGuidance() {
         el("div", { id: "nextDepart" }, ""),   // ★ 次駅発車時刻
     ]);
 
-    root.append(band1, band2, band3, band4, band5, band6);
+    root.append(band1, band2, band4, band5, band6);
 
     // Menu modal（ここは今まで通り）
     const modal = el("div", { class: "modal", id: "menuModal" }, [
