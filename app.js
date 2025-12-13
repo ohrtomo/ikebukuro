@@ -2862,17 +2862,17 @@ function initStartupAtStation(stationName) {
     rt.lastDepartPrevDist = 0;
     rt.lastStopDistance = 0;
 
-    // 次に停車する駅を決定して保存
+    // 次に停車する駅を決定して保存（※「発車後190m」で次駅案内＆次駅発車時刻へ切替するため）
     const nextName = findNextStopStationName(stationName);
     rt.lastStopStation = nextName || null;
 
-    // 次駅表示をいったんクリア
+    // 発車時刻表示をいったんクリア
     clearNextDepartureDisplay();
 
-    // ★ 判定に成功したら、次停車駅の発車時刻を取得して表示
-    if (nextName) {
-        fetchAndShowNextDeparture(nextName);
-    }
+    // ★ ここが変更点：
+    //   駅の200m圏内で開始/地点リセットした場合は
+    //   「次駅」ではなく「現在駅」の発車時刻を表示する
+    fetchAndShowNextDeparture(stationName);
 }
 
 
