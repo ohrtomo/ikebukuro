@@ -2222,6 +2222,14 @@ function handleUndergroundToStationName(toName) {
         // 小竹向原 到着が見えたら、もう一度「搭載かばん、確認」
         if (toName === "小竹向原" && toName !== prev) {
             speakOnce("ug_arr_kaban", "搭載かばん、確認");
+
+            // ★ 追加：上り SトレA / 上り SトレB は続けて「運転停車、ドア扱い注意」
+            if (
+                (state.config.type === "SトレA" || /^SトレB/.test(String(state.config.type || ""))) &&
+                state.config.direction === "上り"
+            ) {
+                speakOnce("ug_strain_opstop", "運転停車、ドア扱い注意");
+            }
         }
         return;
     }
@@ -3070,6 +3078,33 @@ function isNonPassenger(t) {
     return /(回送|試運転|臨時)/.test(t);
 }
 
+// ==== Sトレイン特例判定 ====
+
+// 「SトレA」「SトレB上」「SトレB下」（将来 "SトレB" 表記でも拾えるように）
+function isSTrain(t) {
+    const s = String(t || "").trim();
+    return s === "SトレA" || /^SトレB/.test(s);
+}
+
+// 「運転停車、ドア扱い注意」を練馬到着時に出す対象
+// ・SトレA（方向問わず）
+// ・上りのSトレB（= B上想定。安全側で direction==="上り" の B 系を拾う）
+function needsSTrainOpStopAtNerima(t, direction) {
+    const s = String(t || "").trim();
+    if (s === "SトレA") return true;
+    if (direction === "上り" && /^SトレB/.test(s)) return true;
+    return false;
+}
+
+// 「ホームドア表示灯『S』確認」を到着後に出す駅
+const STRAIN_HOME_S_STATIONS = new Set([
+    "練馬",
+    "石神井公園",
+    "保谷",
+    "所沢",
+]);
+
+
 // ★ 途中駅列情変更：どの駅の「190m通過」で切り替えるかを決める
 function computeMidChangeTriggerStation(fromName, targetName, direction) {
     const lineId = getLineForStation(fromName);
@@ -3386,6 +3421,19 @@ function maybeSpeak(ns) {
             speakOnce("door200_" + key, "ドア扱い注意");
         }
 
+        // ★ Sトレイン特例（到着時）
+        if (isSTrain(t)) {
+            // 1) 練馬：SトレA と 上りSトレB → 「運転停車、ドア扱い注意」
+            if (ns.name === "練馬" && needsSTrainOpStopAtNerima(t, state.config.direction)) {
+                speakOnce("strain_opstop_" + key, "運転停車、ドア扱い注意");
+            }
+
+            // 2) 練馬/石神井公園/保谷/所沢：ホームドア表示灯「S」確認
+            if (STRAIN_HOME_S_STATIONS.has(ns.name)) {
+                speakOnce("strain_homeS_" + key, "ホームドア表示灯「S」確認");
+            }
+        }
+
         // ★ 次駅情報は必ずセット（この後の「次は〜」案内用）
         //    地点リセット／地下復帰直後は lastStopStation に「これから停車する駅」が
         //    すでに入っていることがある（= 今到着した駅名と同一になる）ため、
@@ -3423,13 +3471,13 @@ function maybeSpeak(ns) {
                 }
             }
 
-            // 15秒後に「列情確認」
+            // 20秒後に「列情確認」
             if (state.runtime.midChangeConfirmTimer) {
                 clearTimeout(state.runtime.midChangeConfirmTimer);
             }
             state.runtime.midChangeConfirmTimer = setTimeout(() => {
                 speakOnce("midchange_confirm", "列情確認");
-            }, 15000);
+            }, 20000);
 
             state.runtime.midChangeArrivalHandled = true;
         }

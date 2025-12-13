@@ -237,7 +237,7 @@
     "up8pos": "ナカ",
     "stopPatterns": {
       "特急": false,
-      "SトレA": false,
+      "SトレA": true,
       "SトレB": true,
       "快速急行": false,
       "地下快急": true,
