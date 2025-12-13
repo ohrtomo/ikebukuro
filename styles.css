@@ -75,7 +75,7 @@ input[type="text"], select, input[type="number"] {
 }
 
 .guidance {
-  grid-template-rows: 2.2fr 1.6fr 1fr 1fr 1.6fr; /* 5 段 */
+  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1fr 0.9fr; /* 6 段 */
   height: 100vh;
   width: 100%;
   overflow: hidden;
@@ -231,6 +231,22 @@ input[type="text"], select, input[type="number"] {
 }
 #gpsSpeed {
   font-weight: 700;
+}
+
+/* =========================
+   Band3（現在走行駅間）
+========================= */
+.band3 {
+  background: #111;
+  border-top: 1px solid #222;
+  border-bottom: 1px solid #222;
+  padding: 6px 8px;
+}
+
+.notes.segment {
+  font-size: clamp(14px, 4.2vw, 24px);
+  font-weight: 800;
+  letter-spacing: 0.5px;
 }
 
 /* =========================

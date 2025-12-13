@@ -933,25 +933,28 @@ function screenGuidance() {
 
     // --- Band1: 左=両数 / 右=種別（縦書き） ---
     const band1 = el("div", { class: "band band1" }, [
-      el("div", { class: "band1-left cars-wrapper" }, [
-        // ここにひし形などの両数表示
-      ]),
-      el("div", { class: "band1-right" }, [
-        el("div", { id: "badgeType", class: "badge badge-vertical" }, "")
-      ])
+        el("div", { class: "band1-left cars-wrapper" }, [
+            // ここに両数表示
+        ]),
+        el("div", { class: "band1-right" }, [
+            el("div", { id: "badgeType", class: "badge badge-vertical" }, ""),
+        ]),
     ]);
 
-
     const band2 = el("div", { class: "band band2" }, [
-        // ★ GPS 状態＋速度表示用（横並び）
+        // ★ GPS 状態＋速度表示（横並び）
         el("div", { class: "notes gps-row" }, [
             el("span", { id: "gpsStatus" }, ""),
             el("span", { id: "gpsSpeed" }, ""),
         ]),
-        // ★ 音声案内テキスト表示用
+        // ★ 音声案内テキスト表示
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
 
+    // ★ 新規 Band3: 現在走行駅間表示
+    const band3 = el("div", { class: "band band3" }, [
+        el("div", { class: "notes segment", id: "segmentInfo" }, ""),
+    ]);
 
     const band4 = el("div", { class: "band band4" }, [
         el("div", { class: "cell", id: "cellNo" }, "----"),
@@ -963,24 +966,21 @@ function screenGuidance() {
         el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
 
         // ★ 音声停止ボタン（トグルでミュート）
-        el(
-            "button",
-            { class: "btn secondary", id: "btnVoiceMute" },
-            "音声停止"
-        ),
+        el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
 
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
-        el("div", { class: "clock", id: "delayInfo" }, ""),   // 遅延表示
+        el("div", { class: "clock", id: "delayInfo" }, ""),
     ]);
 
     // ★ 6段目：次駅発車時刻専用
     const band6 = el("div", { class: "band band6" }, [
-        el("div", { id: "nextDepart" }, ""),   // ★ 次駅発車時刻
+        el("div", { id: "nextDepart" }, ""),
     ]);
 
-    root.append(band1, band2, band4, band5, band6);
+    // ★ band3 を band2 の下に挿入
+    root.append(band1, band2, band3, band4, band5, band6);
 
-    // Menu modal（ここは今まで通り）
+    // Menu modal（今まで通り）
     const modal = el("div", { class: "modal", id: "menuModal" }, [
         el("div", { class: "panel" }, [
             el("h3", {}, "メニュー"),
@@ -1002,26 +1002,27 @@ function screenGuidance() {
 
     const panel = modal.querySelector(".panel");
 
-    // ★ 各要素への参照を設定
-    root._band1      = band1;
+    // ★ 各要素への参照
+    root._band1 = band1;
     root._gpsStatus = band2.querySelector("#gpsStatus");
     root._gpsSpeed = band2.querySelector("#gpsSpeed");
     root._speechText = band2.querySelector("#speechText");
-    root._badgeType  = band1.querySelector("#badgeType");   // ← band1 の縦書きバッジ
-    root._cellNo     = band4.querySelector("#cellNo");
-    root._cellDest   = band4.querySelector("#cellDest");
-    root._clock      = band5.querySelector("#clock");
-    root._delayInfo  = band5.querySelector("#delayInfo");
+    root._segmentInfo = band3.querySelector("#segmentInfo"); // ★ 追加
+    root._badgeType = band1.querySelector("#badgeType");
+    root._cellNo = band4.querySelector("#cellNo");
+    root._cellDest = band4.querySelector("#cellDest");
+    root._clock = band5.querySelector("#clock");
+    root._delayInfo = band5.querySelector("#delayInfo");
     root._nextDepart = band6.querySelector("#nextDepart");
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-    // メニューボタン：開くたびにサブ画面（menu-subpanel）をリセット
+    // メニューボタン：開くたびにサブ画面リセット
     band5.querySelector("#btnMenu").onclick = () => {
         modal.classList.add("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-    // 背景クリックでモーダル閉じる＋サブ画面消去
+    // 背景クリックで閉じる
     modal.onclick = (e) => {
         if (e.target.id === "menuModal") {
             modal.classList.remove("active");
@@ -1040,46 +1041,43 @@ function screenGuidance() {
         openList("行先変更", state.datasets.dests, (v) => {
             state.config.dest = v;
         });
+
     modal.querySelector("#m-type").onclick = () =>
         openList("種別変更", state.datasets.types, (v) => {
             state.config.type = normalizeTypeName(v);
         });
+
     modal.querySelector("#m-stop").onclick = () => openStopList();
     modal.querySelector("#m-train").onclick = () => openTrainChange();
     modal.querySelector("#m-volume").onclick = () => openVolumePanel();
     modal.querySelector("#m-info").onclick = () => openOperationInfo();
-    // ★ 「地点リセット」：現在位置から改めて「現在駅＋次駅」を判定 ＋ 地下モード解除
+
     modal.querySelector("#m-reset").onclick = () => {
-        exitUndergroundMode(null);          // 地下モードを強制解除
-        startStartupLocationDetection();    // 起動モードに戻す
+        exitUndergroundMode(null);
+        startStartupLocationDetection();
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-    // ★ 「強制地下」：現在の方向に応じて地下モード開始
     modal.querySelector("#m-underground").onclick = () => {
         enterUndergroundMode("menu");
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-    // ★ 追加: 「とじる」ボタンのハンドラ
     modal.querySelector("#m-close").onclick = () => {
         modal.classList.remove("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-    // ★ 音声停止ボタンの動作
+    // ★ 音声停止ボタン
     if (root._btnVoiceMute) {
         root._btnVoiceMute.onclick = () => {
-            // フラグをトグル
             state.runtime.voiceMuted = !state.runtime.voiceMuted;
 
             if (state.runtime.voiceMuted) {
-                // ミュート中: ボタンをくすんだ赤に
                 root._btnVoiceMute.classList.add("muted");
             } else {
-                // ミュート解除
                 root._btnVoiceMute.classList.remove("muted");
             }
         };
@@ -1087,6 +1085,7 @@ function screenGuidance() {
 
     return root;
 }
+
 
 function setGpsStatus(text) {
     const g = document.getElementById("screen-guidance");
@@ -2196,6 +2195,9 @@ function enterUndergroundMode(source) {
         // 新桜台 発時刻（通過や情報なしなら何も表示されない）
         fetchAndShowNextDeparture("新桜台");
     }
+
+    // ★ 地下モード中は駅間表示しない
+    clearSegmentDisplay();
 }
 
 // 地下モード終了（newRouteLine には "main" などを指定）
@@ -2218,6 +2220,9 @@ function exitUndergroundMode(newRouteLine) {
 
     // 表示欄をいったんクリア（次の GPS 更新で上書きされる）
     setGpsStatus("");
+
+    // ★ 次のGPS更新で再描画されるが、一旦クリアしておく
+    clearSegmentDisplay();
 }
 
 // trains?lineId= の toStationName を使った地下モード処理
@@ -2663,6 +2668,7 @@ function startGuidance() {
             g._delayInfo.style.visibility = "hidden";
         }
         clearNextDepartureDisplay();
+        clearSegmentDisplay(); 
     }
 
     // ★ 案内画面中は画面消灯を防止
@@ -2756,6 +2762,151 @@ function nearestStation(lat, lng) {
 	}
 	return best;
 }
+
+function clearSegmentDisplay() {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._segmentInfo) return;
+    root._segmentInfo.textContent = "";
+    root._segmentInfo.style.visibility = "hidden";
+}
+
+function getLineOrderById(lineId) {
+    if (lineId === "main") return MAIN_LINE_ORDER;
+    if (lineId === "yuraku") return YURAKU_LINE_ORDER;
+    if (lineId === "toshima") return TOSHIMA_LINE_ORDER;
+    if (lineId === "sayama") return SAYAMA_LINE_ORDER;
+    return null;
+}
+
+// 1つの路線配列上で「現在位置が属しそうな隣接駅ペア」を推定
+function computeBestAdjacentPairOnLine(lat, lng, order) {
+    const stations = state.datasets.stations;
+    if (!stations || !order || order.length < 2) return null;
+
+    let best = null;
+
+    for (let i = 0; i < order.length - 1; i++) {
+        const aName = order[i];
+        const bName = order[i + 1];
+
+        const aInfo = stations[aName];
+        const bInfo = stations[bName];
+        if (!aInfo || !bInfo) continue;
+        if (aInfo.lat == null || aInfo.lng == null) continue;
+        if (bInfo.lat == null || bInfo.lng == null) continue;
+
+        const dA = haversine(lat, lng, aInfo.lat, aInfo.lng);
+        const dB = haversine(lat, lng, bInfo.lat, bInfo.lng);
+        const dAB = haversine(aInfo.lat, aInfo.lng, bInfo.lat, bInfo.lng);
+
+        // 「線分に近い」ほど (dA + dB - dAB) が小さい
+        const diff = (dA + dB - dAB);
+
+        // ただし遠すぎるペアを選ばないよう、近さも軽く加点
+        const score = diff + 0.05 * Math.min(dA, dB);
+
+        if (!best || score < best.score) {
+            best = {
+                a: aName,
+                b: bName,
+                score,
+                minDist: Math.min(dA, dB),
+            };
+        }
+    }
+
+    return best;
+}
+
+// 現在の「前駅⇒次駅」を決定（停車/通過は不問）
+function computeCurrentSegmentPair(lat, lng) {
+    const rt = state.runtime;
+
+    // 1) ルートが確定しているなら、まずそれを優先
+    if (rt.routeLine) {
+        const lockedOrder = getLineOrderById(rt.routeLine);
+        const lockedPair = lockedOrder
+            ? computeBestAdjacentPairOnLine(lat, lng, lockedOrder)
+            : null;
+
+        // 近傍（だいたい 1.5km 以内）なら確定扱い
+        if (lockedPair && lockedPair.minDist <= 1500) {
+            const down = state.config.direction === "下り";
+            return down
+                ? { prev: lockedPair.a, next: lockedPair.b }
+                : { prev: lockedPair.b, next: lockedPair.a };
+        }
+        // 近くないなら、全路線候補から拾い直す（誤ロック対策）
+    }
+
+    // 2) 全候補路線から「最も筋が良い隣接ペア」を選ぶ
+    const candidates = [
+        { id: "main", order: MAIN_LINE_ORDER },
+        { id: "yuraku", order: YURAKU_LINE_ORDER },
+        { id: "toshima", order: TOSHIMA_LINE_ORDER },
+        { id: "sayama", order: SAYAMA_LINE_ORDER },
+    ];
+
+    let best = null;
+
+    for (const c of candidates) {
+        const p = computeBestAdjacentPairOnLine(lat, lng, c.order);
+        if (!p) continue;
+
+        if (!best || p.score < best.score) {
+            best = { ...p, lineId: c.id };
+        }
+    }
+
+    if (!best) return null;
+
+    // 3) あまりに遠い場合は表示しない（GPSが飛んだ等）
+    if (best.minDist > 5000) return null;
+
+    const down = state.config.direction === "下り";
+    return down
+        ? { prev: best.a, next: best.b }
+        : { prev: best.b, next: best.a };
+}
+
+function updateSegmentDisplay(ns, lat, lng) {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._segmentInfo) return;
+
+    // 地下モード中は表示しない
+    if (state.runtime.undergroundMode) {
+        clearSegmentDisplay();
+        return;
+    }
+
+    // routeLine を更新してから推定精度を上げる（分岐付近）
+    if (ns) {
+        updateRouteLock(ns);
+    }
+
+    // 駅 200m 圏内は「ただいま駅」
+    if (ns && ns.name && typeof ns.distance === "number" && ns.distance <= 200) {
+        root._segmentInfo.textContent = `ただいま${ns.name}`;
+        root._segmentInfo.style.visibility = "visible";
+        return;
+    }
+
+    // 駅間表示（前駅⇒次駅）
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        clearSegmentDisplay();
+        return;
+    }
+
+    const seg = computeCurrentSegmentPair(lat, lng);
+    if (!seg) {
+        clearSegmentDisplay();
+        return;
+    }
+
+    root._segmentInfo.textContent = `${seg.prev}⇒${seg.next}`;
+    root._segmentInfo.style.visibility = "visible";
+}
+
 
 // ★ 遅延情報の取得＆画面反映
 async function fetchAndUpdateDelay() {
@@ -3072,6 +3223,9 @@ function onPos(pos) {
 
     // ★ 最寄り駅判定（ルートロック付き）
     const ns = nearestStation(latitude, longitude);
+
+    // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
+    updateSegmentDisplay(ns, latitude, longitude);
 
     // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
     if (
