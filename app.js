@@ -3387,7 +3387,13 @@ function maybeSpeak(ns) {
         }
 
         // ★ 次駅情報は必ずセット（この後の「次は〜」案内用）
-        if (!state.runtime.lastStopStation) {
+        //    地点リセット／地下復帰直後は lastStopStation に「これから停車する駅」が
+        //    すでに入っていることがある（= 今到着した駅名と同一になる）ため、
+        //    到着駅から見た「次の停車駅」に更新しておく。
+        if (
+            !state.runtime.lastStopStation ||
+            state.runtime.lastStopStation === ns.name
+        ) {
             const nextName = findNextStopStationName(ns.name);
             state.runtime.lastStopStation = nextName || null;
         }
