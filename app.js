@@ -86,6 +86,8 @@ const state = {
         undergroundMode: false,               // 地下モード中かどうか
         undergroundLastToStationName: null,   // trains API の最新 toStationName
         undergroundSource: null,              // "downButton" / "autoUp" / "menu" など任意
+        autoUndergroundReady: false,   // ★ 上り(練馬→有楽町線) 自動地下切替待機
+        lastGpsUpdate: 0,              // ★ GPS更新時刻（色判定用）
     },
 };
 
@@ -1067,20 +1069,43 @@ function screenGuidance() {
     return root;
 }
 
-// ★ GPS ステータス文言を両画面に反映するヘルパー
+// ★ GPS ステータス文言を両画面に反映する（地下モード含む）
 function setGpsStatus(text) {
     const g = document.getElementById("screen-guidance");
     const s = document.getElementById("screen-start");
 
-    // 地下モード中は常に「地下モード」と表示
-    const displayText = state.runtime.undergroundMode ? "地下モード" : (text || "");
+    const rt = state.runtime;
+    const now = Date.now();
+    const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
 
-    if (g && g._gpsStatus) {
-        g._gpsStatus.textContent = displayText;
+    const isUnderground = !!rt.undergroundMode;
+
+    // 表示文字：地下なら固定で「地下モード」
+    // 地上は通常「GPS」、エラー等の文言が来たらそれを表示
+    const displayText = isUnderground
+        ? "地下モード"
+        : (text && text !== "GPS" ? text : "GPS");
+
+    // 色：地下=黄、地上=更新が新しければ緑/古ければ赤、エラー文言は赤
+    let color = "red";
+    if (isUnderground) {
+        color = "yellow";
+    } else if (displayText !== "GPS") {
+        color = "red";
+    } else {
+        color = ageSec <= 3 ? "lime" : "red";
     }
-    if (s && s._gpsStatus) {
-        s._gpsStatus.textContent = displayText;
-    }
+
+    const targets = [
+        g && g._gpsStatus ? g._gpsStatus : null,
+        s && s._gpsStatus ? s._gpsStatus : null,
+    ];
+
+    targets.forEach((el) => {
+        if (!el) return;
+        el.textContent = displayText;
+        el.style.color = color;
+    });
 }
 
 
@@ -2142,7 +2167,6 @@ function enterUndergroundMode(source) {
         // 新桜台 発時刻（通過や情報なしなら何も表示されない）
         fetchAndShowNextDeparture("新桜台");
     }
-    setGpsStatus("GPS");
 }
 
 // 地下モード終了（newRouteLine には "main" などを指定）
@@ -2549,6 +2573,9 @@ function startGuidance() {
         g._btnVoiceMute.classList.remove("muted");
     }
 
+    // ★ 自動地下切替フラグ初期化
+    rt.autoUndergroundReady = false;    
+
     // ★ ルート情報・フラグを初期化
     rt.started = true;
     rt.routeLocked = false;
@@ -2568,6 +2595,7 @@ function startGuidance() {
     if (rt.midChangeConfirmTimer) {
         clearTimeout(rt.midChangeConfirmTimer);
         rt.midChangeConfirmTimer = null;
+        rt.midChangeTriggerStation = null;
     }
 
     // ★ 前回案内の残りをリセット
@@ -2640,6 +2668,8 @@ function stopGuidance() {
         clearTimeout(state.runtime.midChangeConfirmTimer);
         state.runtime.midChangeConfirmTimer = null;
     }
+
+    state.runtime.midChangeTriggerStation = null;
 }
 
 function renderGuidance() {
@@ -2654,32 +2684,6 @@ function renderGuidance() {
   root._cellDest.textContent = state.config.dest;
 }
 
-function setGpsStatus(status) {
-    const root = document.getElementById("screen-guidance");
-    if (!root || !root._gpsStatus) return;
-    
-    const el = root._gpsStatus;
-
-    // 表示テキストは常に「GPS」
-    el.textContent = "GPS";
-
-    // 地下モードは常に黄色
-    if (state.runtime.undergroundMode) {
-        el.style.color = "yellow";
-        return;
-    }
-
-    // 地上：GPS 更新時刻をもとに色を判定
-    const rt = state.runtime;
-    const now = Date.now();
-    const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
-
-    if (ageSec <= 3) {
-        el.style.color = "lime"; // 緑
-    } else {
-        el.style.color = "red";  // 赤
-    }
-}
 
 function updateNotes(lat, lng, timeMs) {
     // 座標表示は廃止し、GPS 更新時刻の記録と状態更新のみ行う
@@ -2725,7 +2729,6 @@ async function fetchAndUpdateDelay() {
 
     const trainNo = getCurrentTrainNoForDelay();
     if (!trainNo) {
-        // 列車番号が未設定なら何も表示しない
         delayEl.textContent = "";
         delayEl.style.visibility = "hidden";
         return;
@@ -2734,7 +2737,7 @@ async function fetchAndUpdateDelay() {
     const lineIds = getCurrentLineIdsForDelay();
     let foundDelay = null;
     let anyResponse = false;
-    let currentToStationName = null;   // ★ 追加：地下モード用
+    let currentToStationName = null;
 
     for (const lineId of lineIds) {
         try {
@@ -2756,7 +2759,6 @@ async function fetchAndUpdateDelay() {
                     foundDelay = d;
                 }
 
-                // ★ toStationName を拾う（キー揺れ対策）
                 const toName =
                     tr.toStationName ||
                     tr["toStationName"] ||
@@ -2777,27 +2779,36 @@ async function fetchAndUpdateDelay() {
 
     if (foundDelay != null) {
         if (foundDelay > 0) {
-            // 遅延あり：例「遅延 05 分」
             const m = String(foundDelay).padStart(2, "0");
             delayEl.textContent = `遅延 ${m} 分`;
             delayEl.style.visibility = "visible";
             delayEl.style.opacity = "1";
         } else {
-            // 遅れ 0 分 → 表示しない
             delayEl.textContent = "";
             delayEl.style.visibility = "hidden";
         }
     } else {
-        // 自列車の情報がどの路線にも見つからなかった
         if (anyResponse) {
             delayEl.textContent = "遅延不明";
             delayEl.style.visibility = "visible";
-            delayEl.style.opacity = "0.4"; // うすい字
+            delayEl.style.opacity = "0.4";
         } else {
-            // そもそも取得できなかった場合は黙って消しておく
             delayEl.textContent = "";
             delayEl.style.visibility = "hidden";
         }
+    }
+
+    // ★ 上り・小竹向原行き：練馬停車後、trains API の toStationName が新桜台になったら地下モードへ
+    if (
+        !state.runtime.undergroundMode &&
+        state.runtime.autoUndergroundReady &&
+        state.config.direction === "上り" &&
+        state.config.dest === "小竹向原" &&
+        currentToStationName &&
+        (currentToStationName === "新桜台" || currentToStationName === "小竹向原")
+    ) {
+        enterUndergroundMode("autoUp");
+        state.runtime.autoUndergroundReady = false;
     }
 
     // ★ 地下モード時：toStationName を使って現在位置相当を処理
@@ -2805,6 +2816,7 @@ async function fetchAndUpdateDelay() {
         handleUndergroundToStationName(currentToStationName);
     }
 }
+
 
 
 // ★ 次駅発車時刻表示を消す
@@ -3162,6 +3174,24 @@ function maybeSpeak(ns) {
         state.runtime.prevStationName === null &&
         state.runtime.prevStationDistance === null;
 
+    // ★ 通過駅トリガーでの途中駅列情変更
+    //   （通過駅を 190m 離れたタイミングで“論理的に”後半列車へ切替）
+    const left190Any =
+        !isFirstMeasurement &&
+        prevSameDist != null &&
+        prevSameDist <= 190 &&
+        ns.distance > 190;
+
+    if (
+        left190Any &&
+        state.config.endChange &&
+        state.runtime.midChangePending &&
+        state.runtime.midChangeTriggerStation &&
+        ns.name === state.runtime.midChangeTriggerStation
+    ) {
+        applyMidTrainChange();
+    }
+
     // 特記事項
     otherSpeaks(ns);
 
@@ -3178,6 +3208,7 @@ function maybeSpeak(ns) {
     // ★ lastStopStation が未決定でもトリガーするように変更
     const left190 =
         !isFirstMeasurement &&
+        isStop &&  
         prevSameDist != null &&
         prevSameDist <= 190 &&
         ns.distance > 190;
@@ -3204,23 +3235,26 @@ function maybeSpeak(ns) {
                 cfg2.changeStation &&
                 nextName === cfg2.changeStation;
 
-            // ★ 対象なら、ここで列車情報を変更（論理的にはこの先は後の列車）
+            // ★ 対象なら「切替トリガー駅（通過駅）」を決めて予約する
             if (isMidChangeTarget) {
-                state.config.trainNo = cfg2.trainNo || state.config.trainNo;
-                state.config.type    = cfg2.type   || state.config.type;
-                state.config.dest    = cfg2.dest   || state.config.dest;
-                state.config.cars    = cfg2.cars   || state.config.cars;
+                const rt = state.runtime;
 
-                // ★ 変更後列車用の追加停車駅セットを有効化
-                state.runtime.nonPassengerExtraStops = new Set(
-                    state.runtime.nonPassengerExtraStopsSecond || []
-                );
+                // まだトリガー駅が未設定なら決める（毎回上書きしない）
+                if (!rt.midChangeTriggerStation) {
+                    const trigger = computeMidChangeTriggerStation(
+                        ns.name,                // いま発車した駅（停車駅）
+                        cfg2.changeStation,     // 変更駅
+                        state.config.direction
+                    );
 
-                // 停車パターンを変更後種別で再構築
-                buildPassStationList();
+                    rt.midChangeTriggerStation = trigger;
 
-                state.runtime.midChangePending = false;
-                state.runtime.midChangeApplied = true;
+                    // ★ 変更駅までに通過駅が無い（trigger が発車駅そのもの）なら
+                    //   従来どおり、ここで即切替してOK
+                    if (trigger === ns.name) {
+                        applyMidTrainChange();
+                    }
+                }
             }
 
             // ★ ここから先の判定は、すでに変更後種別で行われる
@@ -3336,6 +3370,15 @@ function maybeSpeak(ns) {
                 "arr200_" + key,
                 `${stopWord}、${state.config.cars}両、停止位置注意`,
             );
+        }
+        
+        // ★ 上り・小竹向原行き：練馬に停車したら「発車後に自動地下切替」待機を立てる
+        if (
+            state.config.direction === "上り" &&
+            state.config.dest === "小竹向原" &&
+            ns.name === "練馬"
+        ) {
+            state.runtime.autoUndergroundReady = true;
         }
 
         // ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
