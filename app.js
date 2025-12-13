@@ -239,6 +239,9 @@ function parseTrainNo(trainNo) {
                 }
             }
 
+            // ★ 最終的に表示・判定に使う種別名を正規化
+            type = normalizeTypeName(type);
+
             found = { type, dest, direction };
         }
     }
@@ -685,6 +688,7 @@ function screenSettings() {
         state.config.dest      = destSel.value;
         state.config.cars      = selectedCars;
         state.config.dayType   = dayTypeSel.value || "平日";
+        state.config.type      = normalizeTypeName(typeSel.value);        
 
         // 途中駅で列情変更
         state.config.endChange = endChange.checked;
@@ -862,21 +866,32 @@ function screenStart() {
     return root;
 }
 
+function normalizeTypeName(t) {
+    if (!t) return t;
+    const s = String(t).trim();
+
+    // ★ SトレBの旧表記を統一
+    if (s === "SトレB上" || s === "SトレB下") return "SトレB";
+
+    return s;
+}
 
 function typeClass(t) {
-	if (t === "特急") return "j-tokkyu";
-	if (t === "SトレA" || t === "SトレB下" || t === "SトレB上") return "j-storea";
-	if (t === "快速急行" || t === "地下快急") return "j-kaisokukyuko";
-	if (t === "急行") return "j-kyuko";
-	if (t === "通勤急行") return "j-tsukin_kyuko";
-	if (t === "快速") return "j-kaisoku";
-	if (t === "準急") return "j-junkyu";
-	if (t === "通勤準急") return "j-tsukin_junkyu";
-	if (t === "区間準急") return "j-kukan_junkyu";
-	if (t === "各停") return "j-kakutei";
-	if (/回送|試運転/.test(t)) return "j-kaiso";
-	if (/臨時/.test(t)) return "j-rinji-a";
-	return "j-kakutei";
+    const tt = normalizeTypeName(t);
+
+    if (tt === "特急") return "j-tokkyu";
+    if (tt === "SトレA" || tt === "SトレB") return "j-storea";
+    if (tt === "快速急行" || tt === "地下快急") return "j-kaisokukyuko";
+    if (tt === "急行") return "j-kyuko";
+    if (tt === "通勤急行") return "j-tsukin_kyuko";
+    if (tt === "快速") return "j-kaisoku";
+    if (tt === "準急") return "j-junkyu";
+    if (tt === "通勤準急") return "j-tsukin_junkyu";
+    if (tt === "区間準急") return "j-kukan_junkyu";
+    if (tt === "各停") return "j-kakutei";
+    if (/回送|試運転/.test(tt)) return "j-kaiso";
+    if (/臨時/.test(tt)) return "j-rinji-a";
+    return "j-kakutei";
 }
 
 function band1RenderCars(elm, show, cars) {
@@ -1023,7 +1038,7 @@ function screenGuidance() {
         });
     modal.querySelector("#m-type").onclick = () =>
         openList("種別変更", state.datasets.types, (v) => {
-            state.config.type = v;
+            state.config.type = normalizeTypeName(v);
         });
     modal.querySelector("#m-stop").onclick = () => openStopList();
     modal.querySelector("#m-train").onclick = () => openTrainChange();
@@ -1703,15 +1718,16 @@ function baseIsStop(stationName) {
 
 // ==== 停車パターン（ダイヤ上の基本停車駅） ====
 
-// 種別を指定して「ダイヤ上の停車駅かどうか」を判定するヘルパー
 function baseIsStopRawForType(stationName, type) {
     const info = state.datasets.stations[stationName];
     if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
 
     const sp = info.stopPatterns;
-    if (!type) return true;        // 種別が未指定なら安全側で停車扱い
 
-    return !!sp[type];             // 例: "快速急行" など
+    const tt = normalizeTypeName(type);
+    if (!tt) return true; // 種別が未指定なら安全側で停車扱い
+
+    return !!sp[tt];
 }
 
 // 既存の baseIsStopRaw は、現在の state.config.type を使う薄いラッパーに変更
@@ -3423,14 +3439,14 @@ function maybeSpeak(ns) {
 
         // ★ Sトレイン特例（到着時）
         if (isSTrain(t)) {
-            // 1) 練馬：SトレA と 上りSトレB → 「運転停車、ドア扱い注意」
-            if (ns.name === "練馬" && needsSTrainOpStopAtNerima(t, state.config.direction)) {
-                speakOnce("strain_opstop_" + key, "運転停車、ドア扱い注意");
-            }
-
-            // 2) 練馬/石神井公園/保谷/所沢：ホームドア表示灯「S」確認
+            // 1) 練馬/石神井公園/保谷/所沢：ホームドア表示灯「S」確認（先に）
             if (STRAIN_HOME_S_STATIONS.has(ns.name)) {
                 speakOnce("strain_homeS_" + key, "ホームドア表示灯「S」確認");
+            }
+
+            // 2) 練馬：SトレA と 上りSトレB → 「運転停車、ドア扱い注意」（後に）
+            if (ns.name === "練馬" && needsSTrainOpStopAtNerima(t, state.config.direction)) {
+                speakOnce("strain_opstop_" + key, "運転停車、ドア扱い注意");
             }
         }
 
