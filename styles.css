@@ -223,6 +223,16 @@ input[type="text"], select, input[type="number"] {
   line-height: 1.2;
 }
 
+/* GPS表示（GPS + 速度）を横並び */
+.gps-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#gpsSpeed {
+  font-weight: 700;
+}
+
 /* =========================
    Band4（列番・行先）
 ========================= */

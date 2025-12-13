@@ -943,8 +943,11 @@ function screenGuidance() {
 
 
     const band2 = el("div", { class: "band band2" }, [
-        // ★ GPS 状態表示用
-        el("div", { class: "notes", id: "gpsStatus" }, ""),
+        // ★ GPS 状態＋速度表示用（横並び）
+        el("div", { class: "notes gps-row" }, [
+            el("span", { id: "gpsStatus" }, ""),
+            el("span", { id: "gpsSpeed" }, ""),
+        ]),
         // ★ 音声案内テキスト表示用
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
@@ -1001,7 +1004,8 @@ function screenGuidance() {
 
     // ★ 各要素への参照を設定
     root._band1      = band1;
-    root._gpsStatus  = band2.querySelector("#gpsStatus");
+    root._gpsStatus = band2.querySelector("#gpsStatus");
+    root._gpsSpeed = band2.querySelector("#gpsSpeed");
     root._speechText = band2.querySelector("#speechText");
     root._badgeType  = band1.querySelector("#badgeType");   // ← band1 の縦書きバッジ
     root._cellNo     = band4.querySelector("#cellNo");
@@ -1084,44 +1088,53 @@ function screenGuidance() {
     return root;
 }
 
-// ★ GPS ステータス文言を両画面に反映する（地下モード含む）
 function setGpsStatus(text) {
     const g = document.getElementById("screen-guidance");
     const s = document.getElementById("screen-start");
-
     const rt = state.runtime;
-    const now = Date.now();
-    const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
 
-    const isUnderground = !!rt.undergroundMode;
+    // 表示文言：地下モード中は常に「地下モード」
+    const displayText = rt.undergroundMode ? "地下モード" : (text || "");
 
-    // 表示文字：地下なら固定で「地下モード」
-    // 地上は通常「GPS」、エラー等の文言が来たらそれを表示
-    const displayText = isUnderground
-        ? "地下モード"
-        : (text && text !== "GPS" ? text : "GPS");
+    // 速度表示（案内処理で使っている speedKmh を表示）
+    const speedText =
+        rt.lastPosition &&
+        typeof rt.speedKmh === "number" &&
+        Number.isFinite(rt.speedKmh)
+            ? `${Math.round(rt.speedKmh)} km/h`
+            : "— km/h";
 
-    // 色：地下=黄、地上=更新が新しければ緑/古ければ赤、エラー文言は赤
-    let color = "red";
-    if (isUnderground) {
+    // 色判定（地下=黄 / 地上=GPS更新3秒以内は緑、それ以外赤）
+    let color = "lime";
+    if (rt.undergroundMode) {
         color = "yellow";
-    } else if (displayText !== "GPS") {
-        color = "red";
     } else {
+        const now = Date.now();
+        const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
         color = ageSec <= 3 ? "lime" : "red";
     }
 
-    const targets = [
-        g && g._gpsStatus ? g._gpsStatus : null,
-        s && s._gpsStatus ? s._gpsStatus : null,
-    ];
+    // guidance 画面へ反映
+    if (g && g._gpsStatus) {
+        g._gpsStatus.textContent = displayText;
+        g._gpsStatus.style.color = color;
+    }
+    if (g && g._gpsSpeed) {
+        g._gpsSpeed.textContent = speedText;
+        g._gpsSpeed.style.color = color;
+    }
 
-    targets.forEach((el) => {
-        if (!el) return;
-        el.textContent = displayText;
-        el.style.color = color;
-    });
+    // start 画面へ反映（start側には速度欄が無いなら _gpsSpeed は存在しないのでOK）
+    if (s && s._gpsStatus) {
+        s._gpsStatus.textContent = displayText;
+        s._gpsStatus.style.color = color;
+    }
+    if (s && s._gpsSpeed) {
+        s._gpsSpeed.textContent = speedText;
+        s._gpsSpeed.style.color = color;
+    }
 }
+
 
 
 // 汎用リスト（行先変更・種別変更）
@@ -2643,7 +2656,8 @@ function startGuidance() {
     // ★ UI の残りもリセット（遅延表示・次発時刻・音声表示・GPS表示）
     if (g) {
         if (g._speechText) g._speechText.textContent = "";
-        if (g._gpsStatus) g._gpsStatus.textContent = rt.undergroundMode ? "地下モード" : "";
+        if (g._gpsStatus)  g._gpsStatus.textContent  = "GPS";
+        if (g._gpsSpeed)   g._gpsSpeed.textContent   = "— km/h";
         if (g._delayInfo) {
             g._delayInfo.textContent = "";
             g._delayInfo.style.visibility = "hidden";
