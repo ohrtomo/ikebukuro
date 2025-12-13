@@ -934,53 +934,54 @@ function screenGuidance() {
     // --- Band1: 左=両数 / 右=種別（縦書き） ---
     const band1 = el("div", { class: "band band1" }, [
         el("div", { class: "band1-left cars-wrapper" }, [
-            // ここに両数表示
+            // 両数アイコン（band1RenderCars が img.carIcon を差し込む）
         ]),
         el("div", { class: "band1-right" }, [
             el("div", { id: "badgeType", class: "badge badge-vertical" }, ""),
         ]),
     ]);
 
+    // --- Band2: GPS/速度 + 音声表示 ---
     const band2 = el("div", { class: "band band2" }, [
-        // ★ GPS 状態＋速度表示（横並び）
         el("div", { class: "notes gps-row" }, [
             el("span", { id: "gpsStatus" }, ""),
             el("span", { id: "gpsSpeed" }, ""),
         ]),
-        // ★ 音声案内テキスト表示
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
 
-    // ★ 新規 Band3: 現在走行駅間表示
+    // --- Band3: 左=列番+行先 / 右=駅間表示 ---
+    // 駅間表示の id は、あなたが前回追加した表示ロジックに合わせてください。
+    // （ここでは "betweenStations" に統一しています）
     const band3 = el("div", { class: "band band3" }, [
-        el("div", { class: "notes segment", id: "segmentInfo" }, ""),
+        el("div", { class: "band3-left" }, [
+            el("div", { class: "traininfo" }, [
+                el("div", { class: "cell", id: "cellNo" }, "----"),
+                el("div", { class: "cell", id: "cellDest" }, "----"),
+            ]),
+        ]),
+        el("div", { class: "band3-right" }, [
+            el("div", { class: "notes segment", id: "segmentInfo" }, ""),
+        ]),
     ]);
 
+    // --- Band4: 発車時刻（旧 band6） ---
     const band4 = el("div", { class: "band band4" }, [
-        el("div", { class: "cell", id: "cellNo" }, "----"),
-        el("div", { class: "cell", id: "cellDest" }, "----"),
+        el("div", { id: "nextDepart" }, ""),
     ]);
 
-    // ★ 5段目：メニュー・音声停止・時計・遅延だけ
+    // --- Band5: メニュー・音声停止・時計・遅延 ---
     const band5 = el("div", { class: "band band5" }, [
         el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
-
-        // ★ 音声停止ボタン（トグルでミュート）
         el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
-
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
         el("div", { class: "clock", id: "delayInfo" }, ""),
     ]);
 
-    // ★ 6段目：次駅発車時刻専用
-    const band6 = el("div", { class: "band band6" }, [
-        el("div", { id: "nextDepart" }, ""),
-    ]);
+    // ★ 6段目（band6）は廃止：append しない
+    root.append(band1, band2, band3, band4, band5);
 
-    // ★ band3 を band2 の下に挿入
-    root.append(band1, band2, band3, band4, band5, band6);
-
-    // Menu modal（今まで通り）
+    // Menu modal（従来通り）
     const modal = el("div", { class: "modal", id: "menuModal" }, [
         el("div", { class: "panel" }, [
             el("h3", {}, "メニュー"),
@@ -1003,26 +1004,33 @@ function screenGuidance() {
     const panel = modal.querySelector(".panel");
 
     // ★ 各要素への参照
-    root._band1 = band1;
-    root._gpsStatus = band2.querySelector("#gpsStatus");
-    root._gpsSpeed = band2.querySelector("#gpsSpeed");
-    root._speechText = band2.querySelector("#speechText");
-    root._segmentInfo = band3.querySelector("#segmentInfo"); // ★ 追加
-    root._badgeType = band1.querySelector("#badgeType");
-    root._cellNo = band4.querySelector("#cellNo");
-    root._cellDest = band4.querySelector("#cellDest");
-    root._clock = band5.querySelector("#clock");
-    root._delayInfo = band5.querySelector("#delayInfo");
-    root._nextDepart = band6.querySelector("#nextDepart");
+    root._band1       = band1;
+    root._gpsStatus   = band2.querySelector("#gpsStatus");
+    root._gpsSpeed    = band2.querySelector("#gpsSpeed");
+    root._speechText  = band2.querySelector("#speechText");
+    root._badgeType   = band1.querySelector("#badgeType");
+
+    // ★ 3段目へ移動
+    root._cellNo      = band3.querySelector("#cellNo");
+    root._cellDest    = band3.querySelector("#cellDest");
+
+
+    // ★ 駅間表示（地下中は非表示運用）
+    root._segmentInfo = band3.querySelector("#segmentInfo"); // ★追加
+
+    // ★ 発車時刻は 4段目へ
+    root._nextDepart  = band4.querySelector("#nextDepart");
+
+    root._clock       = band5.querySelector("#clock");
+    root._delayInfo   = band5.querySelector("#delayInfo");
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-    // メニューボタン：開くたびにサブ画面リセット
+    // --- メニュー開閉 ---
     band5.querySelector("#btnMenu").onclick = () => {
         modal.classList.add("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-    // 背景クリックで閉じる
     modal.onclick = (e) => {
         if (e.target.id === "menuModal") {
             modal.classList.remove("active");
@@ -1070,11 +1078,10 @@ function screenGuidance() {
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-    // ★ 音声停止ボタン
+    // --- 音声停止トグル ---
     if (root._btnVoiceMute) {
         root._btnVoiceMute.onclick = () => {
             state.runtime.voiceMuted = !state.runtime.voiceMuted;
-
             if (state.runtime.voiceMuted) {
                 root._btnVoiceMute.classList.add("muted");
             } else {
@@ -1085,6 +1092,7 @@ function screenGuidance() {
 
     return root;
 }
+
 
 
 function setGpsStatus(text) {

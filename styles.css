@@ -234,32 +234,59 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* =========================
-   Band3（現在走行駅間）
+   Band3（列番・行先 + 駅間表示）
 ========================= */
 .band3 {
   background: #111;
-  border-top: 1px solid #222;
-  border-bottom: 1px solid #222;
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* 中央で半分 */
+  gap: 8px;
   padding: 6px 8px;
+  align-items: center;
 }
 
-.notes.segment {
-  font-size: clamp(14px, 4.2vw, 24px);
-  font-weight: 800;
-  letter-spacing: 0.5px;
+.band3-left,
+.band3-right {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-/* =========================
-   Band4（列番・行先）
-========================= */
-.band4 {
-  gap: 4px;
+.band3-left .traininfo {
+  display: flex;   /* 横並び */
+  gap: 6px;
 }
-.band4 .cell {
-  padding: 4px;
+
+/* cell（列番・行先） */
+.band3 .cell {
+  padding: 4px 6px;
   font-size: clamp(14px, 4.3vw, 26px);
   font-weight: 700;
   border: 1px solid #333;
+}
+
+/* 駅間表示 */
+#segmentInfo {
+  font-size: clamp(12px, 4.1vw, 24px);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* =========================
+   Band4（発車時刻）
+========================= */
+.band4 {
+  background: #000;
+  border-top: 1px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+}
+
+.band4 #nextDepart {
+  font-size: clamp(12px, 3.9vw, 24px);
+  font-weight: 700;
 }
 
 /* =========================
@@ -280,22 +307,6 @@ input[type="text"], select, input[type="number"] {
   font-size: clamp(12px, 3.8vw, 22px);
 }
 
-/* =========================
-   Band6（次駅発車時刻）
-========================= */
-.band6 {
-  background: #000;
-  border-top: 1px solid #333;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-}
-
-.band6 #nextDepart {
-  font-size: clamp(12px, 3.9vw, 24px);
-  font-weight: 700;
-}
 
 /* =========================
    Start screen
