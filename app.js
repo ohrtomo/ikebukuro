@@ -88,6 +88,7 @@ const state = {
         undergroundSource: null,              // "downButton" / "autoUp" / "menu" など任意
         autoUndergroundReady: false,   // ★ 上り(練馬→有楽町線) 自動地下切替待機
         lastGpsUpdate: 0,              // ★ GPS更新時刻（色判定用）
+        speedOutlierStreak: 0,   // ★ 追加：外れ値が連続した回数
     },
 };
 
@@ -1093,6 +1094,47 @@ function screenGuidance() {
     return root;
 }
 
+// ★ 自動地下待機中の GPS 点滅（黄/灰）
+let gpsBlinkTimer = null;
+let gpsBlinkOn = false;
+
+function applyGpsBlinkColor() {
+    const color = gpsBlinkOn ? "yellow" : "gray";
+
+    const g = document.getElementById("screen-guidance");
+    const s = document.getElementById("screen-start");
+
+    if (g && g._gpsStatus) {
+        g._gpsStatus.textContent = "GPS";
+        g._gpsStatus.style.color = color;
+    }
+    if (s && s._gpsStatus) {
+        s._gpsStatus.textContent = "GPS";
+        s._gpsStatus.style.color = color;
+    }
+
+    // 速度欄は「待機中は表示したまま」で、色だけ合わせる（見た目統一）
+    if (g && g._gpsSpeed) g._gpsSpeed.style.color = color;
+    if (s && s._gpsSpeed) s._gpsSpeed.style.color = color;
+}
+
+function startGpsBlink() {
+    if (gpsBlinkTimer) return;
+    gpsBlinkOn = false;
+    applyGpsBlinkColor();
+    gpsBlinkTimer = setInterval(() => {
+        gpsBlinkOn = !gpsBlinkOn;
+        applyGpsBlinkColor();
+    }, 500);
+}
+
+function stopGpsBlink() {
+    if (gpsBlinkTimer) {
+        clearInterval(gpsBlinkTimer);
+        gpsBlinkTimer = null;
+    }
+    gpsBlinkOn = false;
+}
 
 
 function setGpsStatus(text) {
@@ -1100,10 +1142,23 @@ function setGpsStatus(text) {
     const s = document.getElementById("screen-start");
     const rt = state.runtime;
 
-    // 表示文言：地下モード中は常に「地下モード」
-    const displayText = rt.undergroundMode ? "地下モード" : (text || "");
+    // ★ 地下待機（上り・小竹向原行き・練馬到着後に立つ autoUndergroundReady）だけ点滅
+    const isUndergroundWaiting =
+        !rt.undergroundMode &&
+        rt.autoUndergroundReady &&
+        state.config.direction === "上り" &&
+        state.config.dest === "小竹向原";
 
-    // 速度表示（案内処理で使っている speedKmh を表示）
+    // 点滅タイマー制御
+    if (rt.undergroundMode) {
+        stopGpsBlink();
+    } else if (isUndergroundWaiting) {
+        startGpsBlink();
+    } else {
+        stopGpsBlink();
+    }
+
+    // 速度表示テキスト（地下モード中は表示しない）
     const speedText =
         rt.lastPosition &&
         typeof rt.speedKmh === "number" &&
@@ -1111,36 +1166,71 @@ function setGpsStatus(text) {
             ? `${Math.round(rt.speedKmh)} km/h`
             : "— km/h";
 
-    // 色判定（地下=黄 / 地上=GPS更新3秒以内は緑、それ以外赤）
-    let color = "lime";
+    // ===== 地下モード中 =====
     if (rt.undergroundMode) {
-        color = "yellow";
-    } else {
-        const now = Date.now();
-        const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
-        color = ageSec <= 3 ? "lime" : "red";
+        // 表示文言は「GPS」、色は黄色固定
+        if (g && g._gpsStatus) {
+            g._gpsStatus.textContent = "GPS";
+            g._gpsStatus.style.color = "yellow";
+        }
+        if (s && s._gpsStatus) {
+            s._gpsStatus.textContent = "GPS";
+            s._gpsStatus.style.color = "yellow";
+        }
+
+        // ★ 速度表示は完全に消す
+        if (g && g._gpsSpeed) {
+            g._gpsSpeed.textContent = "";
+            g._gpsSpeed.style.display = "none";
+        }
+        if (s && s._gpsSpeed) {
+            s._gpsSpeed.textContent = "";
+            s._gpsSpeed.style.display = "none";
+        }
+        return;
     }
 
-    // guidance 画面へ反映
+    // ===== 地下モードではない =====
+    // 速度欄は表示する（念のため display を戻す）
+    if (g && g._gpsSpeed) {
+        g._gpsSpeed.style.display = "";
+        g._gpsSpeed.textContent = speedText;
+    }
+    if (s && s._gpsSpeed) {
+        s._gpsSpeed.style.display = "";
+        s._gpsSpeed.textContent = speedText;
+    }
+
+    // 地下待機中：文言/色は点滅側が管理（ここでは上書きしない）
+    if (isUndergroundWaiting) {
+        applyGpsBlinkColor(); // 初回反映の保険
+        return;
+    }
+
+    // 通常表示（従来通り：text と GPS更新3秒で色分け）
+    const displayText = text || "";
+
+    const now = Date.now();
+    const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
+    const color = ageSec <= 3 ? "lime" : "red";
+
     if (g && g._gpsStatus) {
         g._gpsStatus.textContent = displayText;
         g._gpsStatus.style.color = color;
     }
     if (g && g._gpsSpeed) {
-        g._gpsSpeed.textContent = speedText;
         g._gpsSpeed.style.color = color;
     }
 
-    // start 画面へ反映（start側には速度欄が無いなら _gpsSpeed は存在しないのでOK）
     if (s && s._gpsStatus) {
         s._gpsStatus.textContent = displayText;
         s._gpsStatus.style.color = color;
     }
     if (s && s._gpsSpeed) {
-        s._gpsSpeed.textContent = speedText;
         s._gpsSpeed.style.color = color;
     }
 }
+
 
 
 
@@ -2209,9 +2299,12 @@ function enterUndergroundMode(source) {
 }
 
 // 地下モード終了（newRouteLine には "main" などを指定）
-function exitUndergroundMode(newRouteLine) {
+// ★ opts.forceStationName が指定されたら「その駅にいるものとして」地点リセット相当を確定実行する
+function exitUndergroundMode(newRouteLine, opts) {
     const rt = state.runtime;
     if (!rt.undergroundMode) return;
+
+    opts = opts || {};
 
     rt.undergroundMode = false;
     rt.undergroundSource = null;
@@ -2231,7 +2324,23 @@ function exitUndergroundMode(newRouteLine) {
 
     // ★ 次のGPS更新で再描画されるが、一旦クリアしておく
     clearSegmentDisplay();
+
+    // ★ ここから追加：地下解除時は「地点リセット」と同様の処理を行う
+    //   案内中のみ実施（started=false のときは触らない）
+    if (rt.started) {
+        startStartupLocationDetection();
+
+        // ★ 練馬接近など「特定駅にいるものとして」確定させたい場合
+        if (opts.forceStationName) {
+            initStartupAtStation(opts.forceStationName);
+
+            // 起動判定を確定終了させる（次の onPos で再判定されないように）
+            rt.startupMode = false;
+            rt.startupFixed = true;
+        }
+    }
 }
+
 
 // trains?lineId= の toStationName を使った地下モード処理
 function handleUndergroundToStationName(toName) {
@@ -2252,10 +2361,11 @@ function handleUndergroundToStationName(toName) {
             fetchAndShowNextDeparture(toName);
         }
 
-        // toStationName が「練馬」になったら自動的に地上へ復帰 → 池袋線本線
-        if (toName === "練馬") {
-            exitUndergroundMode("main");
-        }
+        // ★ 変更点：API(toStationName) による自動解除は削除
+        // if (toName === "練馬") {
+        //     exitUndergroundMode("main");
+        // }
+
         return;
     }
 
@@ -2276,6 +2386,7 @@ function handleUndergroundToStationName(toName) {
         return;
     }
 }
+
 
 
 
@@ -2438,88 +2549,82 @@ function updateRouteLock(ns) {
 
     // これまでの判定結果
     let newRoute = state.runtime.routeLine || null;
-    // routeLine の値はこれまで通り:
-    //   "main"   = 池袋線
-    //   "sayama" = 狭山線
-    //   "yuraku" = 有楽町線
-    //   "toshima"= 豊島線
 
     // --- ① 狭山線（西武球場前 / 西所沢 周辺） --------------------------
 
-    // 最寄り駅が西武球場前 → 狭山線（とくに上りは確実に狭山線）
     if (ns.name === "西武球場前") {
         newRoute = "sayama";
     }
 
-    // 西所沢 200m 以内
     if (ns.name === "西所沢" && ns.distance <= 200) {
         if (dir === "下り") {
-            // 下りで西所沢→(下山口 / 西武球場前) 行き = 狭山線
             if (dest === "下山口" || dest === "西武球場前") {
                 newRoute = "sayama";
             } else {
-                newRoute = "main"; // 池袋線
+                newRoute = "main";
             }
         } else if (dir === "上り") {
-            // 上りで西所沢 200m 以内
-            // 行先が「西所沢」→ 狭山線（西所沢行き折返し想定）
             if (dest === "西所沢") {
                 newRoute = "sayama";
             } else {
-                newRoute = "main"; // 池袋線
+                newRoute = "main";
             }
         }
     }
 
     // --- ② 有楽町線・豊島線・池袋線（練馬・小竹向原・豊島園 周辺） ----
 
-    // 最寄り駅が小竹向原 → 有楽町線（特に下り有楽町線列車）
     if (ns.name === "小竹向原") {
         if (dir === "下り") {
             newRoute = "yuraku";
         }
-        // 上り方向については、練馬側の判定に任せる（池袋線系からの乗り入れ）
     }
 
-    // ★ 豊島園：練馬とは無関係に、最寄り駅が豊島園かつ上り → 豊島線
-    //   （上り豊島園＝練馬方面に向かう列車）
-    if (ns.name === "豊島園" && dir === "上り") {
+    // ★ 修正：豊島園での判定は「200m圏内」のときだけ行う
+    // （上り豊島園＝練馬方面に向かう列車）
+    if (ns.name === "豊島園" && dir === "上り" && ns.distance <= 200) {
         newRoute = "toshima";
     }
 
-    // 練馬 200m 以内にいる場合は、その都度判定
     if (ns.name === "練馬" && ns.distance <= 200) {
         if (dir === "上り") {
-            // 上り：小竹向原行きなら有楽町線、それ以外は池袋線
             if (dest === "小竹向原") {
                 newRoute = "yuraku";
             } else {
-                newRoute = "main"; // 池袋線
+                newRoute = "main";
             }
         } else if (dir === "下り") {
-            // 下り：豊島園行きなら豊島線、それ以外は池袋線
             if (dest === "豊島園") {
                 newRoute = "toshima";
             } else {
-                newRoute = "main"; // 池袋線
+                newRoute = "main";
             }
         }
     }
 
-    // 東長崎 300m 以内 & 下り → 池袋線 確定（有楽町線分岐より先）
-    if (ns.name === "東長崎" && dir === "下り" && ns.distance <= 300) {
-        newRoute = "main"; // 池袋線
+    // 東長崎 200m 以内 & 下り → 池袋線 確定（有楽町線分岐より先）
+    if (ns.name === "東長崎" && dir === "下り" && ns.distance <= 200) {
+        newRoute = "main";
+    }
+
+    // ★ 追加：上り列車が富士見台 200m 圏内に進入したら池袋線に確定
+    if (ns.name === "富士見台" && dir === "上り" && ns.distance <= 200) {
+        newRoute = "main";
+    }
+
+    // ★ 追加：小手指 200m 圏内に進入したら池袋線に確定（方向問わず main でOK）
+    if (ns.name === "小手指" && ns.distance <= 200) {
+        newRoute = "main";
     }
 
     // --- ③ 判定結果の反映 ---------------------------------------------
 
-    // newRoute が決まっていれば反映（上書き可）
     if (newRoute && newRoute !== state.runtime.routeLine) {
         state.runtime.routeLine  = newRoute;
-        state.runtime.routeLocked = true;  // 「決まっている」フラグとしてだけ使用
-        // console.log("routeLine updated:", newRoute); // デバッグ用（必要なら）
+        state.runtime.routeLocked = true;
     }
 }
+
 
 
 // ★ 画面消灯防止用 Wake Lock
@@ -2658,6 +2763,9 @@ function startGuidance() {
     rt.lastDepartStation = null;
     rt.lastDepartPrevDist = null;
     rt.lastStopDistance = null;
+    // ★ 追加：速度算出の履歴・外れ値連続カウンタもリセット
+    gpsSpeedHistory.length = 0;
+    rt.speedOutlierStreak = 0;
 
     // ★ 追加停車駅：スタート時は 1本目を有効に
     rt.nonPassengerExtraStops = new Set(rt.nonPassengerExtraStops || []);
@@ -2722,6 +2830,8 @@ function stopGuidance() {
     }
 
     state.runtime.midChangeTriggerStation = null;
+    // ★ 追加：GPS点滅停止
+    stopGpsBlink();
 }
 
 function renderGuidance() {
@@ -3032,6 +3142,8 @@ function startStartupLocationDetection() {
     rt.startupFixed = false;
     rt.startupCandidate = null;
     rt.startupCount = 0;
+    // ★ 追加：起動判定開始時刻（速度に頼らず「いつまでも確定しない」を避けたい場合に使える）
+    rt.startupSince = Date.now();
 
     // 位置に依存する情報をリセット
     rt.prevStationName = null;
@@ -3100,7 +3212,7 @@ function initStartupBetween(ns) {
     }
 }
 
-// ★ 起動モード中の「現在駅＋次駅」判定ロジック
+// ★ 起動モード中の「現在駅＋次駅」判定ロジック（速度は使わない）
 function handleStartupPosition(ns) {
     const rt = state.runtime;
     if (!rt.startupMode || !ns) return;
@@ -3108,42 +3220,54 @@ function handleStartupPosition(ns) {
     // ★ 起動判定中もルートロックを更新しておく
     updateRouteLock(ns);
 
-    const speed = rt.speedKmh || 0;
-
     // すでに確定済みなら何もしない
     if (rt.startupFixed) {
         rt.startupMode = false;
         return;
     }
 
-    // 1) 「走行中にスタートした」とみなす条件
-    //    ・速度が十分速い（>=10km/h）
-    //    ・または 駅から 200m より外側
-    if (speed >= 10 || ns.distance > 200) {
+    // ★ 判定基準：駅200m圏内かどうかだけで「駅 / 駅間」を分ける
+    const inStationArea =
+        typeof ns.distance === "number" &&
+        Number.isFinite(ns.distance) &&
+        ns.distance <= 200;
+
+    // 1) 駅と駅の間（= 200m圏外） → 即「駅間起動」で確定
+    if (!inStationArea) {
         initStartupBetween(ns);
         rt.startupMode = false;
         rt.startupFixed = true;
         return;
     }
 
-    // 2) 「駅に停車中」とみなす条件
-    //    ・駅から 200m 以内
-    //    ・同じ駅を 3回連続で検出
-    if (ns.distance <= 200) {
-        if (rt.startupCandidate === ns.name) {
-            rt.startupCount = (rt.startupCount || 0) + 1;
-        } else {
-            rt.startupCandidate = ns.name;
-            rt.startupCount = 1;
-        }
+    // 2) 駅にいる（= 200m圏内）
+    //    同じ駅を連続で拾えたら「駅停車中」として確定（速度は見ない）
+    if (rt.startupCandidate === ns.name) {
+        rt.startupCount = (rt.startupCount || 0) + 1;
+    } else {
+        rt.startupCandidate = ns.name;
+        rt.startupCount = 1;
+    }
 
-        if (rt.startupCount >= 3) {
-            initStartupAtStation(ns.name);
-            rt.startupMode = false;
-            rt.startupFixed = true;
-        }
+    // ★ 3回連続で同一駅なら確定（従来の安定化だけ残す）
+    if (rt.startupCount >= 3) {
+        initStartupAtStation(ns.name);
+        rt.startupMode = false;
+        rt.startupFixed = true;
+        return;
+    }
+
+    // （任意）万一いつまでも確定しないと困るなら、タイムアウトで駅確定
+    // 速度は使わず、時間だけでフォールバックする
+    const since = rt.startupSince || Date.now();
+    if (Date.now() - since > 8000) { // 8秒は好みで調整OK
+        initStartupAtStation(ns.name);
+        rt.startupMode = false;
+        rt.startupFixed = true;
+        return;
     }
 }
+
 
 
 // ★ 遅延更新タイマー開始（1分おき）
@@ -3175,52 +3299,143 @@ function onPos(pos) {
         return;
     }
 
-    // ★ 速度計算（瞬間値 → 外れ値除去 → 中央値で滑らかに）
-    let newSpeedKmh = state.runtime.speedKmh || 0;
+    // =========================================================
+    // ★ 速度計算（外れ値連続→リセット ＋ GPS速度も参考）
+    // =========================================================
+    const rt = state.runtime;
 
-    if (state.runtime.lastPosition) {
-        const dt = (gpsTime - state.runtime.lastPosition.time) / 1000; // 秒
+    // GPSが提供する速度（m/s）→ km/h（無いことも多い）
+    const gpsSpeedMps = pos.coords.speed;
+    const gpsSpeedKmh =
+        typeof gpsSpeedMps === "number" &&
+        Number.isFinite(gpsSpeedMps) &&
+        gpsSpeedMps >= 0
+            ? Math.min(gpsSpeedMps * 3.6, 200) // 上限は安全側で丸め
+            : null;
+
+    // outlier カウンタが無い場合の保険
+    if (typeof rt.speedOutlierStreak !== "number") {
+        rt.speedOutlierStreak = 0;
+    }
+
+    // 現在値（前回値）
+    const prevSpeed =
+        typeof rt.speedKmh === "number" && Number.isFinite(rt.speedKmh)
+            ? rt.speedKmh
+            : 0;
+
+    let newSpeedKmh = prevSpeed;
+
+    // 履歴に入れて中央値を返す
+    function pushAndMedian(v) {
+        // v を安全側に丸め
+        if (!Number.isFinite(v) || v < 0) v = 0;
+        if (v > 200) v = 200;
+
+        gpsSpeedHistory.push(v);
+        if (gpsSpeedHistory.length > GPS_SPEED_HISTORY_SIZE) {
+            gpsSpeedHistory.shift();
+        }
+
+        const sorted = [...gpsSpeedHistory].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 1
+            ? sorted[mid]
+            : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    // 位置差分からの瞬間速度（km/h）
+    let instSpeed = null;
+
+    if (rt.lastPosition) {
+        const dt = (gpsTime - rt.lastPosition.time) / 1000; // 秒
 
         // dt が極端に小さすぎ/大きすぎると速度が壊れるので除外
         if (dt > 0.3 && dt < 30) {
             const dist = haversine(
-                state.runtime.lastPosition.lat,
-                state.runtime.lastPosition.lng,
+                rt.lastPosition.lat,
+                rt.lastPosition.lng,
                 latitude,
                 longitude
             );
-            const instSpeed = (dist / dt) * 3.6; // km/h
-
-            const prev = state.runtime.speedKmh ?? instSpeed;
-
-            // ★ 外れ値チェック：1回の更新で ±60km/h 以上変化したらおかしいとみなして無視
-            if (Math.abs(instSpeed - prev) < 60) {
-                // 履歴に追加
-                gpsSpeedHistory.push(instSpeed);
-                if (gpsSpeedHistory.length > GPS_SPEED_HISTORY_SIZE) {
-                    gpsSpeedHistory.shift();
-                }
-
-                // ★ 中央値（Median）を採用：ジャンプに強い
-                const sorted = [...gpsSpeedHistory].sort((a, b) => a - b);
-                const mid = Math.floor(sorted.length / 2);
-                const median =
-                    sorted.length % 2 === 1
-                        ? sorted[mid]
-                        : (sorted[mid - 1] + sorted[mid]) / 2;
-
-                newSpeedKmh = median;
-            } else {
-                // ★ 外れ値だったので、速度は前回のまま
-                newSpeedKmh = prev;
-            }
+            instSpeed = (dist / dt) * 3.6;
         }
     }
 
-    state.runtime.speedKmh = newSpeedKmh;
+    if (instSpeed != null && Number.isFinite(instSpeed)) {
+        // instSpeed 自体の粗いガード
+        if (instSpeed < 0) instSpeed = 0;
+        if (instSpeed > 250) instSpeed = 250; // 判定用の上限（採用時は 200 に丸める）
+
+        const delta = Math.abs(instSpeed - prevSpeed);
+
+        // 従来：±60km/h 未満なら採用
+        let accept = delta < 60;
+
+        // ★ 追加：GPS速度が取れていて、inst と近ければ採用（固定化救済）
+        if (!accept && gpsSpeedKmh != null) {
+            if (Math.abs(instSpeed - gpsSpeedKmh) <= 25) {
+                accept = true;
+            }
+        }
+
+        if (accept) {
+            rt.speedOutlierStreak = 0;
+
+            // ★ GPS速度がある場合は、近いなら平均、遠いなら「より妥当そうな方」を採用
+            let sample = instSpeed;
+
+            if (gpsSpeedKmh != null) {
+                const diffIG = Math.abs(instSpeed - gpsSpeedKmh);
+
+                if (diffIG <= 30) {
+                    sample = (instSpeed + gpsSpeedKmh) / 2;
+                } else {
+                    // prev に近い方を採用（急ジャンプを抑える）
+                    sample =
+                        Math.abs(gpsSpeedKmh - prevSpeed) < Math.abs(instSpeed - prevSpeed)
+                            ? gpsSpeedKmh
+                            : instSpeed;
+                }
+            }
+
+            newSpeedKmh = pushAndMedian(sample);
+        } else {
+            // 外れ値扱い
+            rt.speedOutlierStreak += 1;
+
+            // ★ 外れ値が 5 回以上連続したら、履歴をリセットして再学習
+            if (rt.speedOutlierStreak >= 5) {
+                gpsSpeedHistory.length = 0;
+                rt.speedOutlierStreak = 0;
+
+                // 初期値は GPS速度が取れればそれ、無ければ instSpeed（ただし上限丸め）
+                const seed =
+                    gpsSpeedKmh != null
+                        ? gpsSpeedKmh
+                        : (instSpeed <= 200 ? instSpeed : 0);
+
+                newSpeedKmh = pushAndMedian(seed);
+            } else {
+                // リセット条件に達するまでは前回値を維持
+                newSpeedKmh = prevSpeed;
+            }
+        }
+    } else {
+        // instSpeed を出せない場合：GPS速度が取れるならそれで更新（緩やかに）
+        if (gpsSpeedKmh != null) {
+            rt.speedOutlierStreak = 0;
+            newSpeedKmh = pushAndMedian(gpsSpeedKmh);
+        } else {
+            // どちらも無いなら維持
+            newSpeedKmh = prevSpeed;
+        }
+    }
+
+    rt.speedKmh = newSpeedKmh;
 
     // ★ 最新位置を保存
-    state.runtime.lastPosition = {
+    rt.lastPosition = {
         lat: latitude,
         lng: longitude,
         time: gpsTime
@@ -3237,13 +3452,13 @@ function onPos(pos) {
 
     // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
     if (
-        state.runtime.undergroundMode &&
+        rt.undergroundMode &&
         state.config.direction === "下り" &&
         ns &&
         ns.name === "練馬" &&
-        ns.distance <= 200
+        ns.distance <= 210
     ) {
-        exitUndergroundMode("main");
+        exitUndergroundMode("main", { forceStationName: "練馬" });
     }
 
     // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行
@@ -3252,10 +3467,9 @@ function onPos(pos) {
     // ★ 駅案内ロジック
     maybeSpeak(ns);
 
-
     // ★ 車両アイコン
     let show = true;
-    if (ns && state.runtime.passStations.has(ns.name) && ns.distance <= 500) {
+    if (ns && rt.passStations.has(ns.name) && ns.distance <= 500) {
         show = false;
     }
 
@@ -3265,6 +3479,7 @@ function onPos(pos) {
         state.config.cars
     );
 }
+
 
 function isNonPassenger(t) {
     return /(回送|試運転|臨時)/.test(t);
