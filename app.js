@@ -126,6 +126,18 @@ async function loadData() {
 
 // ==== Speech ====
 function speakOnce(key, text) {
+    const rt = state.runtime;
+    if (!rt.started) return;
+
+    // ★追加：地下モード中は地下モード専用の音声（ug_）以外を禁止
+    if (rt.undergroundMode) {
+        const k = String(key || "");
+        if (!(k.startsWith("ug_") || k.startsWith("test_volume_"))) return;
+    }
+
+    if (rt.voiceMuted) return;
+    if (rt.muteUntil && Date.now() < rt.muteUntil) return;
+
     const now = Date.now();
 
     // ★ 案内開始前（start画面・設定画面など）では一切しゃべらない
@@ -3049,7 +3061,7 @@ async function fetchAndUpdateDelay() {
     for (const lineId of lineIds) {
         try {
             const res = await fetch(
-                `https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=${lineId}`,
+                `https://train.seibuapp.jp/trainfo-api/ti/v1.0/trains?lineId=${lineId}&detail=0&adminFlg=1`,
             );
             if (!res.ok) continue;
             anyResponse = true;
