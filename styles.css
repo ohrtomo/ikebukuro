@@ -316,7 +316,7 @@ input[type="text"], select, input[type="number"] {
   grid-template-columns: 1fr 1fr 1fr;  /* 時刻 / 遅延 / GPS を3列で横並び */
   align-items: center;
   justify-items: center;
-  padding: 4px 8px;
+  padding: 1px 8px;
 }
 
 
