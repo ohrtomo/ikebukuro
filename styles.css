@@ -66,7 +66,8 @@ input[type="text"], select, input[type="number"] {
    Guidance layout
    band1: 両数＋種別縦書き
    band2: お知らせ
-   band4: 列番・行先
+   band3: 列番・行先
+   band4: 発車時刻
    band5: メニュー
    band6: 時計＋遅延＋GPS
 ========================= */
@@ -75,11 +76,12 @@ input[type="text"], select, input[type="number"] {
 }
 
 .guidance {
-  grid-template-rows: 2.0fr 1.2fr 0.6fr 0.8fr 0.5fr 0.5fr; /* 6 段 */
-  height: 100vh;
+  grid-template-rows: 2.0fr 1.2fr 0.6fr 0.8fr 0.5fr 0.5fr; /* 6 段（比率は今のまま） */
+  height: calc(var(--vh, 1vh) * 100);  /* ← 100vh の代わりに “実際の高さ×100” を使う */
   width: 100%;
   overflow: hidden;
 }
+
 
 .band {
   display: flex;
@@ -431,4 +433,9 @@ body.guidance-lock {
 
 .band3 {
   border-bottom: none;
+}
+
+:root {
+  /* デフォルト値として 1vh を入れておく（あとでJSで上書き） */
+  --vh: 1vh;
 }

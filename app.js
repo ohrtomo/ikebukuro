@@ -2740,6 +2740,9 @@ function stopGpsWatch() {
 
 
 function startGuidance() {
+    // ★ 案内開始時点の高さでもう一度測っておく
+    updateViewportHeight();
+    
     // ★ 案内中はページスクロールを禁止
     document.body.classList.add("guidance-lock");
 
@@ -4192,3 +4195,16 @@ window.addEventListener("load", async () => {
 	await loadData();
 	init();
 });
+
+// 実際の画面の高さから、CSS変数 --vh を更新する
+function updateViewportHeight() {
+    const vh = window.innerHeight * 0.01;  // 1vh相当のピクセル
+    document.documentElement.style.setProperty("--vh", `${vh}px`);
+}
+
+// 起動直後と、向き/サイズが変わったときに再計算
+window.addEventListener("resize", updateViewportHeight);
+window.addEventListener("orientationchange", updateViewportHeight);
+
+// 最初に1回だけ呼んでおく
+updateViewportHeight();
