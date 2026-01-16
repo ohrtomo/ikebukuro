@@ -64,23 +64,47 @@ input[type="text"], select, input[type="number"] {
 
 /* =========================
    Guidance layout
-   band1: 両数＋種別縦書き
-   band2: お知らせ
-   band3: 列番・行先
-   band4: 発車時刻
-   band5: メニュー
-   band6: 時計＋遅延＋GPS
+   左 4/5: バンド1〜6（以前と同じ高さ比）
+   右 1/5: 専用サイドエリア
 ========================= */
-.screen.guidance.active {
-  display: grid;
-}
 
-.guidance {
-  grid-template-rows: 2.0fr 1.2fr 0.6fr 0.8fr 0.5fr 0.5fr; /* 6 段（比率は今のまま） */
-  height: calc(var(--vh, 1vh) * 100);  /* ← 100vh の代わりに “実際の高さ×100” を使う */
+/* 案内画面のルート要素 */
+#screen-guidance {
+  /* vh対策をしていれば var(--vh) を使う。していなくても 1vh にフォールバック */
+  height: calc(var(--vh, 1vh) * 100);
   width: 100%;
   overflow: hidden;
+
+  display: flex;           /* 左右 2 カラムに分ける */
 }
+
+/* 左右をまとめるラッパ（screenGuidance で作った guidance-layout） */
+.guidance-layout {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+}
+
+/* 左側: バンド群（4/5幅）→ ここを以前と同じ 6 段グリッドにする */
+.guidance-main {
+  flex: 4 1 0;
+  display: grid;
+  grid-template-rows: 2.0fr 1.2fr 0.6fr 0.8fr 0.5fr 0.5fr;  /* ★ 以前と同じ比率で 6 段 */
+  height: 100%;
+}
+
+/* 右側: 専用エリア（1/5幅）。余白は作らない */
+.guidance-side {
+  flex: 1 1 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  /* 必要なら背景だけ変える
+  background: #181818;
+  */
+}
+
 
 
 .band {
@@ -470,7 +494,7 @@ body.guidance-lock {
   /* 右エリアと左エリアの間に「余白を作らない」 */
   margin: 0;
   padding: 0;
-  /* 必要なら背景だけ変えておく（任意）
-     background: #181818;
-  */
+  /* 必要なら背景だけ変えておく（任意）*/
+  background: #181818;
+  
 }
