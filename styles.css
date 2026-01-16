@@ -141,6 +141,7 @@ input[type="text"], select, input[type="number"] {
   align-items: center;
   justify-content: center;
   order: 2;             /* 種別を右側に固定 */
+  min-width: 72px;      /* ★ 種別表示のために最低幅を確保 */
 }
 
 /* 両数表示エリアの中央寄せ用 */
