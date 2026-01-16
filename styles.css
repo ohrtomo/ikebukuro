@@ -391,3 +391,35 @@ input[type="text"], select, input[type="number"] {
   font-size: 12px;
   color: #aaa;
 }
+
+/* =========================
+   ガイダンス画面全体の縦方向余白を圧縮
+========================= */
+
+/* 各バンド（band1〜band6）の上下パディングを小さくする */
+#screen-guidance .band {
+  padding-top: 2px;   /* ここを 1px にするとさらに詰まります */
+  padding-bottom: 2px;
+}
+
+/* バンド同士のスキマも少しだけにする */
+#screen-guidance .band + .band {
+  margin-top: 2px;    /* 以前より大きければ 0〜1px にしてもOK */
+}
+
+/* band6 だけ別に指定していた場合はこちらで上書き */
+#screen-guidance .band6 {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+/* バンド内テキストの上下余白も軽く絞る */
+#screen-guidance .clock,
+#screen-guidance #delayInfo,
+#screen-guidance #gpsStatusCompact,
+#screen-guidance .notes,
+#screen-guidance .traininfo .cell {
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1.1;   /* デフォルトより少しだけ詰める */
+}
