@@ -3,7 +3,7 @@ function haversine(lat1, lon1, lat2, lon2) {
 	const R = 6371000;
 	const toRad = (x) => (x * Math.PI) / 180;
 	const dLat = toRad(lat2 - lat1);
-	const dLon = toRad(lat2 - lon1);
+	const dLon = toRad(lon2 - lon1);
 	const a =
 		Math.sin(dLat / 2) ** 2 +
 		Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
@@ -382,22 +382,6 @@ function isJapaneseHoliday(date) {
 }
 
 // ==== Screens ====
-
-// ★ 共通：画面切り替えヘルパー
-//   指定した id の .screen だけを表示し、それ以外は必ず非表示にする
-function showScreen(targetId) {
-    const screens = document.querySelectorAll(".screen");
-    screens.forEach((scr) => {
-        if (scr.id === targetId) {
-            scr.classList.add("active");
-            scr.style.display = "";       // CSS のデフォルト表示に任せる
-        } else {
-            scr.classList.remove("active");
-            scr.style.display = "none";   // 強制的に非表示
-        }
-    });
-}
-
 function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
 	const c = el("div", { class: "container" });
@@ -574,7 +558,7 @@ function screenSettings() {
 	const typeSel2 = el("select");
 	typeSel2.appendChild(el("option", { value: "" }, "")); // ★
 
-	state.datasets.types.forEach((t) => {
+		state.datasets.types.forEach((t) => {
 		typeSel2.appendChild(el("option", { value: t }, t));
 	});
 
@@ -617,7 +601,7 @@ function screenSettings() {
 			el("div", {}, [el("label", {}, "行先(後)"), destSel2]),
 		]),
 
-        // ★ 変更となる駅
+            // ★ 変更となる駅
     	el("div", { class: "row" }, [
     	    el("label", {}, "変更となる駅"),
     	    changeStationSel,
@@ -713,16 +697,17 @@ function screenSettings() {
         // 前半設定
         state.config.trainNo   = trainNo.value.trim();
         state.config.direction = selectedDir;
-        state.config.type      = normalizeTypeName(typeSel.value);
+        state.config.type      = typeSel.value;
         state.config.dest      = destSel.value;
         state.config.cars      = selectedCars;
-        state.config.dayType   = dayTypeSel.value || "平日";            
+        state.config.dayType   = dayTypeSel.value || "平日";
+        state.config.type      = normalizeTypeName(typeSel.value);        
 
         // 途中駅で列情変更
         state.config.endChange = endChange.checked;
         if (endChange.checked) {
             state.config.second.trainNo       = trainNo2.value.trim();
-            state.config.second.type          = normalizeTypeName(typeSel2.value);
+            state.config.second.type          = typeSel2.value;
             state.config.second.dest          = destSel2.value;
             state.config.second.cars          = state.config.cars;
             state.config.second.changeStation = changeStationSel.value;
@@ -755,17 +740,25 @@ function screenSettings() {
         if (nonPassengerFirst)  state.runtime.extraStopsQueue.push("first");
         if (nonPassengerSecond) state.runtime.extraStopsQueue.push("second");
 
-        // 設定画面を閉じる
-        // → 共通ヘルパーで画面切り替え
+        // 設定画面を一旦閉じる
+        document
+            .getElementById("screen-settings")
+            .classList.remove("active");
+
         if (state.runtime.extraStopsQueue.length > 0) {
+            // 追加停車駅設定からスタート
             const mode = state.runtime.extraStopsQueue.shift();
             state.runtime.extraStopsMode = mode;
             renderNonPassengerExtraStopsScreen();
-            showScreen("screen-extra-stops");
+            document
+                .getElementById("screen-extra-stops")
+                .classList.add("active");
         } else {
             // 回送・試運転・臨時が一切ない場合 → そのまま開始画面へ
             startGpsWatch();
-            showScreen("screen-start");
+            document
+                .getElementById("screen-start")
+                .classList.add("active");
 
             // ★ 下り列車なら「地下起動」ボタンを表示
             const startRoot = document.getElementById("screen-start");
@@ -773,7 +766,7 @@ function screenSettings() {
                 startRoot._updateUndergroundButtonVisibility();
             }
         }
-    };
+    }
 
 
     // ---- 画面にパーツを配置 ----
@@ -860,11 +853,13 @@ function screenStart() {
             // ★ 案内開始から10秒間は他の案内をミュート
             state.runtime.muteUntil = Date.now() + 10000;
 
-            showScreen("screen-guidance");
+            document.getElementById("screen-start").classList.remove("active");
+            document.getElementById("screen-guidance").classList.add("active");
             startGuidance();
 
         } else if (e.target.id === "btn-cancel") {
-            showScreen("screen-settings");
+            document.getElementById("screen-start").classList.remove("active");
+            document.getElementById("screen-settings").classList.add("active");
 
         } else if (e.target.id === "btn-underground-start") {
             // ★ 地下起動ボタン：有楽町線地下モードで案内開始（下り列車想定）
@@ -875,7 +870,8 @@ function screenStart() {
             // 地下モード開始（下り用）
             enterUndergroundMode("downButton");
 
-            showScreen("screen-guidance");
+            document.getElementById("screen-start").classList.remove("active");
+            document.getElementById("screen-guidance").classList.add("active");
             startGuidance();
         }
     };
@@ -948,12 +944,6 @@ function band1RenderCars(elm, show, cars) {
 function screenGuidance() {
     const root = el("div", { class: "screen guidance", id: "screen-guidance" });
 
-    // ===== レイアウト全体（左 4/5 = バンド群 / 右 1/5 = 専用エリア） =====
-    const layout = el("div", { class: "guidance-layout" });
-
-    // --- 左側：従来の 6 バンドをまとめたエリア（画面幅の 4/5） ---
-    const main = el("div", { class: "guidance-main" });
-
     // --- Band1: 左=両数 / 右=種別（縦書き） ---
     const band1 = el("div", { class: "band band1" }, [
         el("div", { class: "band1-left cars-wrapper" }, [
@@ -964,10 +954,18 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band2: （現在は未使用の余白バンド） ---
-    const band2 = el("div", { class: "band band2" });
+    // --- Band2: GPS/速度 + 音声表示 ---
+    const band2 = el("div", { class: "band band2" }, [
+        el("div", { class: "notes gps-row" }, [
+            el("span", { id: "gpsStatus" }, ""),
+            el("span", { id: "gpsSpeed" }, ""),
+        ]),
+        el("div", { class: "notes speech", id: "speechText" }, ""),
+    ]);
 
     // --- Band3: 左=列番+行先 / 右=駅間表示 ---
+    // 駅間表示の id は、あなたが前回追加した表示ロジックに合わせてください。
+    // （ここでは "betweenStations" に統一しています）
     const band3 = el("div", { class: "band band3" }, [
         el("div", { class: "band3-left" }, [
             el("div", { class: "traininfo" }, [
@@ -980,48 +978,23 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band4: 発車時刻 ---
+    // --- Band4: 発車時刻（旧 band6） ---
     const band4 = el("div", { class: "band band4" }, [
         el("div", { id: "nextDepart" }, ""),
     ]);
 
-    // --- Band5: メニュー＋音声停止 ---
+    // --- Band5: メニュー・音声停止・時計・遅延 ---
     const band5 = el("div", { class: "band band5" }, [
         el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
         el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
-    ]);
-
-    // --- Band6: 時計＋遅延＋GPS 状態 ---
-    const band6 = el("div", { class: "band band6" }, [
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
         el("div", { class: "clock", id: "delayInfo" }, ""),
-        el("div", { class: "clock", id: "gpsStatus" }, "GPS"),
     ]);
 
-    // 左側 main に 6 バンドを追加
-    main.append(band1, band2, band3, band4, band5, band6);
+    // ★ 6段目（band6）は廃止：append しない
+    root.append(band1, band2, band3, band4, band5);
 
-    // --- 右側：画面幅 1/5 の専用エリア（カーナビ表示） ---
-    const side = el("div", { class: "guidance-side", id: "guidanceSide" }, [
-        // 画面上：次の次の駅ラベル
-        el("div", { class: "side-label side-next2", id: "sideNext2Label" }, ""),
-
-        // 中央：線＋現在位置（赤丸）＋次の駅（長方形）
-        el("div", { class: "side-track" }, [
-            el("div", { class: "side-track-line" }),
-            el("div", { class: "side-marker" }), // 赤丸（JSからは操作しない・CSSだけで位置固定）
-            el("div", { class: "side-station-box", id: "sideStationBox" }, ""),
-        ]),
-
-        // 画面下：ひとつ前の駅ラベル
-        el("div", { class: "side-label side-prev", id: "sidePrevLabel" }, ""),
-    ]);
-
-    // レイアウト全体に左右 2 エリアを配置
-    layout.append(main, side);
-    root.append(layout);
-
-    // ===== メニュー用モーダル（buildMenuModal は使わず、ここで直接構築） =====
+    // Menu modal（従来通り）
     const modal = el("div", { class: "modal", id: "menuModal" }, [
         el("div", { class: "panel" }, [
             el("h3", {}, "メニュー"),
@@ -1043,38 +1016,29 @@ function screenGuidance() {
 
     const panel = modal.querySelector(".panel");
 
-    // ===== 各要素への参照を root に保持（他の処理から使う） =====
+    // ★ 各要素への参照
     root._band1       = band1;
+    root._gpsStatus   = band2.querySelector("#gpsStatus");
+    root._gpsSpeed    = band2.querySelector("#gpsSpeed");
+    root._speechText  = band2.querySelector("#speechText");
     root._badgeType   = band1.querySelector("#badgeType");
 
-    // GPS 状態（速度表示は廃止）
-    root._gpsStatus   = band6.querySelector("#gpsStatus");
-
-    // 列番・行先
+    // ★ 3段目へ移動
     root._cellNo      = band3.querySelector("#cellNo");
     root._cellDest    = band3.querySelector("#cellDest");
 
-    // 駅間表示
-    root._segmentInfo = band3.querySelector("#segmentInfo");
 
-    // 発車時刻
+    // ★ 駅間表示（地下中は非表示運用）
+    root._segmentInfo = band3.querySelector("#segmentInfo"); // ★追加
+
+    // ★ 発車時刻は 4段目へ
     root._nextDepart  = band4.querySelector("#nextDepart");
 
-    // 時計・遅延
-    root._clock       = band6.querySelector("#clock");
-    root._delayInfo   = band6.querySelector("#delayInfo");
-
-    // 音声停止ボタン
+    root._clock       = band5.querySelector("#clock");
+    root._delayInfo   = band5.querySelector("#delayInfo");
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-
-    // 右側エリア（カーナビ表示）のエレメントも保存
-    root._sideArea       = side;
-    root._sideStationBox = side.querySelector("#sideStationBox");
-    root._sidePrevLabel  = side.querySelector("#sidePrevLabel");
-    root._sideNext2Label = side.querySelector("#sideNext2Label");
-
-    // ===== メニュー開閉処理 =====
+    // --- メニュー開閉 ---
     band5.querySelector("#btnMenu").onclick = () => {
         modal.classList.add("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
@@ -1090,7 +1054,8 @@ function screenGuidance() {
     modal.querySelector("#m-end").onclick = () => {
         modal.classList.remove("active");
         stopGuidance();
-        showScreen("screen-settings");
+        document.getElementById("screen-guidance").classList.remove("active");
+        document.getElementById("screen-settings").classList.add("active");
     };
 
     modal.querySelector("#m-dest").onclick = () =>
@@ -1103,10 +1068,10 @@ function screenGuidance() {
             state.config.type = normalizeTypeName(v);
         });
 
-    modal.querySelector("#m-stop").onclick   = () => openStopList();
-    modal.querySelector("#m-train").onclick  = () => openTrainChange();
+    modal.querySelector("#m-stop").onclick = () => openStopList();
+    modal.querySelector("#m-train").onclick = () => openTrainChange();
     modal.querySelector("#m-volume").onclick = () => openVolumePanel();
-    modal.querySelector("#m-info").onclick   = () => openOperationInfo();
+    modal.querySelector("#m-info").onclick = () => openOperationInfo();
 
     modal.querySelector("#m-reset").onclick = () => {
         exitUndergroundMode(null);
@@ -1126,7 +1091,7 @@ function screenGuidance() {
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
     };
 
-    // ===== 音声停止トグル =====
+    // --- 音声停止トグル ---
     if (root._btnVoiceMute) {
         root._btnVoiceMute.onclick = () => {
             state.runtime.voiceMuted = !state.runtime.voiceMuted;
@@ -1140,8 +1105,6 @@ function screenGuidance() {
 
     return root;
 }
-
-
 
 // ★ 自動地下待機中の GPS 点滅（黄/灰）
 let gpsBlinkTimer = null;
@@ -1279,6 +1242,7 @@ function setGpsStatus(text) {
         s._gpsSpeed.style.color = color;
     }
 }
+
 
 
 
@@ -1876,32 +1840,29 @@ function baseIsStop(stationName) {
 
 // ==== 停車パターン（ダイヤ上の基本停車駅） ====
 
-// 種別を指定して「ダイヤ上で停車する駅かどうか」を判定
 function baseIsStopRawForType(stationName, type) {
     const info = state.datasets.stations[stationName];
-    if (!info || !info.stopPatterns) return true; // 情報がない駅は安全側で「停車扱い」
+    if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
 
     const sp = info.stopPatterns;
 
-    // 種別名は必ず正規化してから見る（SトレB上/下 などに対応）
     const tt = normalizeTypeName(type);
-    if (!tt) return true; // 種別未指定も安全側で「停車扱い」
+    if (!tt) return true; // 種別が未指定なら安全側で停車扱い
 
     return !!sp[tt];
 }
 
-// 現在選択中の種別（state.config.type）での「ダイヤ上の基本停車駅」
+// 既存の baseIsStopRaw は、現在の state.config.type を使う薄いラッパーに変更
 function baseIsStopRaw(stationName) {
     return baseIsStopRawForType(stationName, state.config.type);
 }
 
-// 回送・試運転・臨時の「追加停車駅」を反映した実際の停車駅判定
 function baseIsStop(stationName) {
-    // まずダイヤ上の停車かどうか（現在種別で判定）
+    // まずダイヤ上の停車かどうか（現在の種別で判定）
     let base = baseIsStopRaw(stationName);
 
     // 回送・試運転・臨時など非客扱い列車で、
-    // 追加設定画面で選んだ駅は「停車」に格上げする
+    // 追加画面で選ばれた駅は「通常停車扱い」にする
     if (isNonPassenger(state.config.type)) {
         const extra = state.runtime.nonPassengerExtraStops;
         if (extra && extra.has(stationName)) {
@@ -1911,6 +1872,12 @@ function baseIsStop(stationName) {
     return base;
 }
 
+function baseIsStopRaw(stationName) {
+    const info = state.datasets.stations[stationName];
+    if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
+    const sp = info.stopPatterns;
+    return !!sp[state.config.type]; // 例: "快速急行" など
+}
 
 // ==== 停車駅/通過駅リスト生成（ダイヤ基準） ====
 function buildPassStationList() {
@@ -2434,6 +2401,7 @@ function handleUndergroundToStationName(toName) {
 
 
 
+
 // ==== 発着番線取得 ====
 // platform.json: dayType ("平日" / "土休日") → 駅名 → 番線番号 → [列車番号...]
 function getPlatformForStation(stationName) {
@@ -2762,12 +2730,6 @@ function stopGpsWatch() {
 
 
 function startGuidance() {
-    // ★ 案内開始時点の高さでもう一度測っておく
-    updateViewportHeight();
-
-    // ★ 案内中はページスクロールを禁止
-    document.body.classList.add("guidance-lock");
-
     // ★ runtime のショートカット
     const rt = state.runtime;
 
@@ -2844,15 +2806,9 @@ function startGuidance() {
 
     // 時計表示
     clockTimer = setInterval(() => {
-        const root = document.getElementById("screen-guidance");
-        // 画面未生成 or _clock 未設定なら何もしない（安全対策）
-        if (!root || !root._clock) return;
-
         const d = new Date();
-        root._clock.textContent =
-            `${String(d.getHours()).padStart(2, "0")}:` +
-            `${String(d.getMinutes()).padStart(2, "0")}:` +
-            `${String(d.getSeconds()).padStart(2, "0")}`;
+        document.getElementById("screen-guidance")._clock.textContent =
+            `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
     }, 200);
 
     // ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
@@ -2869,16 +2825,13 @@ function stopGuidance() {
     state.runtime.voiceMuted = false;   // ★ 追加
     releaseWakeLock();
 
-    // ★ 案内終了時はスクロールロックを解除
-    document.body.classList.remove("guidance-lock");
-
-    if (clockTimer) {
-        clearInterval(clockTimer);
-        clockTimer = null;
-    }
+	if (clockTimer) {
+		clearInterval(clockTimer);
+		clockTimer = null;
+	}
     // ★ GPSも停止
     stopGpsWatch();
-    
+	
     // ★ 遅延情報更新も停止
     stopDelayWatch();
 
@@ -2893,25 +2846,17 @@ function stopGuidance() {
     stopGpsBlink();
 }
 
-
 function renderGuidance() {
-    const root = document.getElementById("screen-guidance");
-    if (!root) return;  // 画面未生成なら何もしない
+  const root = document.getElementById("screen-guidance");
 
-    if (root._badgeType) {
-        root._badgeType.className =
-            "badge badge-vertical " + typeClass(state.config.type);
-        root._badgeType.textContent = state.config.type;
-    }
+  // 種別：縦書きバッジ
+  root._badgeType.className =
+    "badge badge-vertical " + typeClass(state.config.type);
+  root._badgeType.textContent = state.config.type;
 
-    if (root._cellNo) {
-        root._cellNo.textContent = state.config.trainNo;
-    }
-    if (root._cellDest) {
-        root._cellDest.textContent = state.config.dest;
-    }
+  root._cellNo.textContent   = state.config.trainNo;
+  root._cellDest.textContent = state.config.dest;
 }
-
 
 
 function updateNotes(lat, lng, timeMs) {
@@ -2950,27 +2895,10 @@ function nearestStation(lat, lng) {
 
 function clearSegmentDisplay() {
     const root = document.getElementById("screen-guidance");
-    if (!root) return;
-
-    // 駅間テキスト
-    if (root._segmentInfo) {
-        root._segmentInfo.textContent = "";
-        root._segmentInfo.style.visibility = "hidden";
-    }
-
-    // 右側カーナビ部もリセット
-    if (root._sideStationBox) {
-        root._sideStationBox.textContent = "";
-        root._sideStationBox.style.top = "10%";
-    }
-    if (root._sidePrevLabel) {
-        root._sidePrevLabel.textContent = "";
-    }
-    if (root._sideNext2Label) {
-        root._sideNext2Label.textContent = "";
-    }
+    if (!root || !root._segmentInfo) return;
+    root._segmentInfo.textContent = "";
+    root._segmentInfo.style.visibility = "hidden";
 }
-
 
 function getLineOrderById(lineId) {
     if (lineId === "main") return MAIN_LINE_ORDER;
@@ -2979,28 +2907,6 @@ function getLineOrderById(lineId) {
     if (lineId === "sayama") return SAYAMA_LINE_ORDER;
     return null;
 }
-
-function getNext2StationName(seg) {
-    if (!seg || !seg.next) return null;
-
-    // どの線区か（routeLine が分かっていればそれを優先）
-    const lineId =
-        state.runtime.routeLine ||
-        getLineForStation(seg.next);
-
-    const order = getLineOrderById(lineId);
-    if (!order) return null;
-
-    const idx = order.indexOf(seg.next);
-    if (idx === -1) return null;
-
-    const isDown = state.config.direction === "下り";
-    const idx2 = isDown ? idx + 1 : idx - 1;
-
-    if (idx2 < 0 || idx2 >= order.length) return null;
-    return order[idx2];
-}
-
 
 // 1つの路線配列上で「現在位置が属しそうな隣接駅ペア」を推定
 function computeBestAdjacentPairOnLine(lat, lng, order) {
@@ -3129,132 +3035,6 @@ function updateSegmentDisplay(ns, lat, lng) {
 
     root._segmentInfo.textContent = `${seg.prev}⇒${seg.next}`;
     root._segmentInfo.style.visibility = "visible";
-
-    // 右側カーナビ風表示も更新
-    updateSideNavigator(seg, lat, lng);
-}
-
-
-function updateSideNavigator(seg, lat, lng) {
-    const root = document.getElementById("screen-guidance");
-    if (!root || !root._sideArea || !root._sideStationBox) return;
-
-    // 情報がない時はリセットして終了
-    if (!seg || !seg.next || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-        root._sideStationBox.textContent = "";
-        root._sideStationBox.style.top = "10%";
-        if (root._sidePrevLabel)  root._sidePrevLabel.textContent = "";
-        if (root._sideNext2Label) root._sideNext2Label.textContent = "";
-        return;
-    }
-
-    const stations = state.datasets.stations || {};
-    const nextInfo = stations[seg.next];
-
-    // ひとつ前の駅ラベル
-    if (root._sidePrevLabel) {
-        root._sidePrevLabel.textContent = seg.prev ? `前駅：${seg.prev}` : "";
-    }
-
-    // 次の次の駅ラベル
-    if (root._sideNext2Label) {
-        const next2 = getNext2StationName(seg);
-        root._sideNext2Label.textContent = next2 ? `次の次：${next2}` : "";
-    }
-
-    // 長方形内の駅名
-    root._sideStationBox.textContent = seg.next || "";
-
-    // 駅までの距離 → 縦位置に反映
-    if (!nextInfo || !Number.isFinite(nextInfo.lat) || !Number.isFinite(nextInfo.lng)) {
-        root._sideStationBox.style.top = "10%";
-        return;
-    }
-
-    const dNext = haversine(lat, lng, nextInfo.lat, nextInfo.lng); // m 単位
-    const maxDist = 2000; // 2km 以上は同じ位置に固定
-    const clamped = Math.max(0, Math.min(dNext, maxDist));
-    const ratio = 1 - clamped / maxDist; // 0(遠い)〜1(駅直前)
-
-    // 駅が近づくと「上から降りてくる」感じになるよう、
-    // 10%（遠い）〜50%（現在位置マーカー付近）の間で動かす
-    const topPercent = 10 + (50 - 10) * ratio;
-    root._sideStationBox.style.top = `${topPercent}%`;
-}
-
-
-function updateSideNavigator(ns, lat, lng) {
-    const root = document.getElementById("screen-guidance");
-    if (!root || !root._sideArea) return;
-
-    const rect    = root._sideStationRect || root._sideArea.querySelector("#sideStationRect");
-    const next2El = root._sideNext2Label  || root._sideArea.querySelector("#sideNext2");
-    const prevEl  = root._sidePrevLabel   || root._sideArea.querySelector("#sidePrev");
-
-    if (!rect || !next2El || !prevEl) return;
-
-    // 地下モード中 or 位置情報なし → 非表示
-    if (state.runtime.undergroundMode ||
-        !Number.isFinite(lat) || !Number.isFinite(lng)) {
-        rect.style.visibility = "hidden";
-        next2El.textContent = "";
-        prevEl.textContent  = "";
-        return;
-    }
-
-    // 前駅⇒次駅のペアを推定
-    const seg = computeCurrentSegmentPair(lat, lng);
-    if (!seg) {
-        rect.style.visibility = "hidden";
-        next2El.textContent = "";
-        prevEl.textContent  = "";
-        return;
-    }
-
-    // 中央の長方形：次駅
-    rect.textContent = seg.next || "";
-    rect.style.visibility = "visible";
-
-    // 下部ラベル：ひとつ前の駅
-    prevEl.textContent = seg.prev || "";
-
-    // 上部ラベル：次の次駅（ルート確定時のみ）
-    let next2Name = "";
-    const rt = state.runtime;
-    const order = rt.routeLine ? getLineOrderById(rt.routeLine) : null;
-    if (order && seg.next) {
-        const idx = order.indexOf(seg.next);
-        if (idx !== -1) {
-            const down = state.config.direction === "下り";
-            const nextIdx = down ? idx + 1 : idx - 1;
-            if (nextIdx >= 0 && nextIdx < order.length) {
-                next2Name = order[nextIdx];
-            }
-        }
-    }
-    next2El.textContent = next2Name || "";
-
-    // 次駅までの距離 → 長方形の縦位置（上：遠い／下：近い）
-    const stationMap = state.datasets.stations || {};
-    const infoNext   = stationMap[seg.next];
-
-    let dNext = null;
-    if (infoNext && infoNext.lat != null && infoNext.lng != null) {
-        dNext = haversine(lat, lng, infoNext.lat, infoNext.lng);
-    }
-
-    const maxDisplay = 1500; // m：これ以上は「一番遠い」扱い
-    let ratio = 1;
-    if (typeof dNext === "number" && dNext >= 0) {
-        // ratio = 0（駅直近）〜1（遠い）
-        ratio = Math.min(1, dNext / maxDisplay);
-    }
-
-    const center = 50; // 赤丸（現在位置）の top% 想定
-    const span   = 40; // 上方向への最大オフセット
-    const topPercent = center - span * ratio; // 遠い: 10%、近い: 50% 付近
-
-    rect.style.top = `${topPercent}%`;
 }
 
 
@@ -3682,9 +3462,6 @@ function onPos(pos) {
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
     updateSegmentDisplay(ns, latitude, longitude);
 
-    // ★ 右側カーナビ風表示の更新
-    updateSideNavigator(ns, latitude, longitude);    
-
     // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
     if (
         rt.undergroundMode &&
@@ -3717,8 +3494,7 @@ function onPos(pos) {
 
 
 function isNonPassenger(t) {
-    const s = normalizeTypeName(t || "");
-    return /(回送|試運転|臨時)/.test(s);
+    return /(回送|試運転|臨時)/.test(t);
 }
 
 // ==== Sトレイン特例判定 ====
@@ -4237,7 +4013,6 @@ function screenExtraStops() {
             "開始画面へ"
         ),
     ]);
-    btnRow.id = "extraStopsButtons";
     root.appendChild(btnRow);
 
     // ボタンの動作
@@ -4246,7 +4021,8 @@ function screenExtraStops() {
     		// 設定画面に戻る
     		state.runtime.extraStopsQueue = [];
     		state.runtime.extraStopsMode  = null;
-    		showScreen("screen-settings");
+    		root.classList.remove("active");
+	    	document.getElementById("screen-settings").classList.add("active");
     
 	    } else if (e.target.id === "extraNext") {
 	    	// チェックされた駅を保存
@@ -4289,10 +4065,13 @@ function screenExtraStops() {
     
              // GPS開始 → 開始画面へ
             startGpsWatch();
-            showScreen("screen-start");
+            root.classList.remove("active");
             const startRoot = document.getElementById("screen-start");
-            if (startRoot && startRoot._updateUndergroundButtonVisibility) {
-                startRoot._updateUndergroundButtonVisibility();
+            if (startRoot) {
+                startRoot.classList.add("active");
+                if (startRoot._updateUndergroundButtonVisibility) {
+                    startRoot._updateUndergroundButtonVisibility();
+                }
             }
 
     	}
@@ -4307,10 +4086,7 @@ function init() {
 	app.append(screenSettings());
 	app.append(screenStart());
 	app.append(screenGuidance());
-    app.append(screenExtraStops());
-
-    // ★ 初期状態：設定画面だけ表示
-    showScreen("screen-settings");
+    app.append(screenExtraStops()); 
 }
 
 // ★ 追加停車駅画面のリストを描画
@@ -4399,16 +4175,3 @@ window.addEventListener("load", async () => {
 	await loadData();
 	init();
 });
-
-// 実際の画面の高さから、CSS変数 --vh を更新する
-function updateViewportHeight() {
-    const vh = window.innerHeight * 0.01;  // 1vh相当のピクセル
-    document.documentElement.style.setProperty("--vh", `${vh}px`);
-}
-
-// 起動直後と、向き/サイズが変わったときに再計算
-window.addEventListener("resize", updateViewportHeight);
-window.addEventListener("orientationchange", updateViewportHeight);
-
-// 最初に1回だけ呼んでおく
-updateViewportHeight();
