@@ -479,60 +479,13 @@ body.guidance-lock {
    すでに上の「Guidance layout」セクションで定義済みなので
    ここには書かない */
 
-   /* 種別バッジが横方向に潰されないようにする */
-.band1-right .badge-vertical {
-  flex: 0 0 auto;      /* 親のflexレイアウトでも縮まないようにする */
-  max-height: none;    /* 行高さに縛らない */
-}
-
-/* バンド1右側も、必要以上に縮まないようにしておく */
-.band1-right {
-  flex: 1 0 0;         /* shrinkを抑えつつ、2:1比率は維持 */
-}
-
-
-/* ===== Band1 レイアウト再定義（両数 + 種別） ===== */
-
-
-
-/* ===== Band1（両数＋種別）の最終調整 ===== */
-
-/* 両数 : 種別 の幅配分を 2.4 : 1.6 にして、
-   種別側の横幅を少し多めに確保する */
-#screen-guidance .band1 {
-  display: grid;
-  grid-template-columns: minmax(0, 2.4fr) minmax(96px, 1.6fr);
-  column-gap: 0;
-  align-items: stretch;
-  justify-content: stretch;
-  padding: 0;
-}
-
-/* 左右の子は flex 比率を使わない（グリッドに任せる） */
-#screen-guidance .band1-left,
-#screen-guidance .band1-right {
-  flex: none;
-}
-
-/* 種別エリアは「左寄せ＋中央揃え」で、左の余白を消す */
-#screen-guidance .band1-right {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start; /* ← center から変更 */
-}
-
-/* 種別バッジ自体を少しだけコンパクトにして、折り返しを防ぐ */
-#screen-guidance .band1-right .badge-vertical {
-  font-size: clamp(22px, 8vh, 48px);  /* ほんの少しだけ小さく */
-  padding: 18px 6px;                  /* 横の余白も気持ち細く */
-  max-width: 100%;
-  max-height: 100%;
-}
-
-/* ===== Band1 最終版（両数：種別 = およそ 2:1、横並び固定）===== */
+/* =========================
+   Band1 最終版（両数＋種別）
+   左：両数 / 右：種別（横並び固定）
+========================= */
 
 /* band1 全体：左右フレックスで横一列に並べる */
-#screen-guidance .guidance-main > .band1 {
+.band1 {
   display: flex;
   flex-direction: row;
   align-items: stretch;
@@ -540,30 +493,41 @@ body.guidance-lock {
   padding: 0;
 }
 
-/* 左：両数アイコン（全体の約 64% を使用） */
-#screen-guidance .guidance-main > .band1 .band1-left {
-  flex: 0 0 64%;
+/* 左：両数（およそ全体の 2/3） */
+.band1-left {
+  flex: 2 1 0;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* 右：種別（全体の約 36% を使用・最小幅も確保） */
-#screen-guidance .guidance-main > .band1 .band1-right {
-  flex: 0 0 36%;
-  min-width: 90px;              /* ★ ここで横幅の下限を確保 */
+/* 右：種別（およそ全体の 1/3 ＋ 最小幅を保証） */
+.band1-right {
+  flex: 1 1 0;
+  min-width: 90px;          /* 種別表示のために最低限の横幅を確保 */
   display: flex;
   align-items: center;
-  justify-content: center;      /* 中央寄せ */
+  justify-content: center;
 }
 
-/* 種別バッジを少しスリムにして、折り返しを防ぐ＋圧迫感を軽減 */
-#screen-guidance .band1-right .badge-vertical {
-  font-size: clamp(20px, 7vh, 44px);  /* ほんの少し小さくする */
-  padding: 16px 6px;                  /* 上下・左右の余白も少しだけ細く */
-  border-width: 4px;                  /* ★ 枠線を細く（元は 6px） */
+/* 縦書き種別バッジの最終調整（少しスリムに＆枠線細く） */
+.badge-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+
+  font-size: clamp(20px, 6.5vh, 40px); /* 以前より少し小さめ：折り返しを防ぐ */
+  font-weight: 900;
+
+  padding: 16px 8px;        /* 上下・左右の余白も少しスリムに */
   border-radius: 14px;
-  max-width: 100%;
-  max-height: 100%;
-}
+  border-width: 4px;        /* ★ 枠線を細く（元は 6px） */
+  border-style: solid;
 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  box-sizing: border-box;
+  max-width: 100%;
+  /* 高さ方向はグリッドの行高に合わせる。溢れたらそのまま（隠さない） */
+}
