@@ -544,3 +544,100 @@ body.guidance-lock {
   display: flex;          /* もともと flex で組んでいるので flex に */
   flex-direction: column; /* 縦積みレイアウト */
 }
+
+/* =========================
+   右側カーナビ風トラック表示
+========================= */
+
+/* 右側エリア全体：中央寄せ */
+.guidance-side {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* トラック全体の枠 */
+.side-track {
+  position: relative;
+  width: 100%;
+  height: 90%;             /* 右エリアの高さの 9 割を使う */
+  padding: 8px 4px;
+  box-sizing: border-box;
+}
+
+/* 実際に描画する内側エリア */
+.side-track-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* 縦の線（進行方向を表す） */
+.side-track-line {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  margin-left: -2px;
+  background: #666;
+  border-radius: 2px;
+}
+
+/* 現在位置（赤丸）中央固定 */
+.side-current-marker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  margin-top: -7px;
+  background: #ff3333;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(255, 80, 80, 0.9);
+}
+
+/* 駅の長方形（次駅） */
+.side-station-box {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 70%;
+  max-width: 90%;
+  padding: 3px 6px;
+  background: #ffb347;   /* 橙黄色 */
+  color: #000;
+  text-align: center;
+  border-radius: 6px;
+  font-size: clamp(10px, 2.4vw, 14px);
+  white-space: nowrap;
+}
+
+.side-station-box--next {
+  /* 縦位置は JS で style.top に代入する */
+}
+
+.side-station-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 「次の次」「ひとつ前」のテキスト */
+.side-station-text {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  font-size: clamp(9px, 2.1vw, 13px);
+  color: #ddd;
+  text-align: center;
+}
+
+.side-station-text--after {
+  top: 0;            /* 画面上部 */
+}
+
+.side-station-text--prev {
+  bottom: 0;         /* 画面下部 */
+}

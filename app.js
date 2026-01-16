@@ -946,103 +946,106 @@ function band1RenderCars(elm, show, cars) {
 
 
 function screenGuidance() {
-    const root = el("div", { class: "screen guidance", id: "screen-guidance" });
+    const root = el("div", { class: "screen guidance", id: "screen-guidance" }, []);
 
-    // ===== レイアウト全体（左 4/5 = バンド群 / 右 1/5 = 専用エリア） =====
-    const layout = el("div", { class: "guidance-layout" });
+    // 左右 2 カラムレイアウト
+    const layout = el("div", { class: "guidance-layout" }, []);
+    const main   = el("div", { class: "guidance-main" }, []);
 
-    // --- 左側：従来の 6 バンドをまとめたエリア（画面幅の 4/5） ---
-    const main = el("div", { class: "guidance-main" });
-
-    // --- Band1: 左=両数 / 右=種別（縦書き） ---
-    const band1 = el("div", { class: "band band1" }, [
-        el("div", { class: "band1-left cars-wrapper" }, [
-            // 両数アイコン（band1RenderCars が img.carIcon を差し込む）
-        ]),
-        el("div", { class: "band1-right" }, [
-            el("div", { id: "badgeType", class: "badge badge-vertical" }, ""),
-        ]),
-    ]);
-
-    // --- Band2: 速度・音声テキストは廃止（空バンド） ---
-    const band2 = el("div", { class: "band band2" });
-
-    // --- Band3: 左=列番+行先 / 右=駅間表示 ---
-    const band3 = el("div", { class: "band band3" }, [
-        el("div", { class: "band3-left" }, [
-            el("div", { class: "traininfo" }, [
-                el("div", { class: "cell", id: "cellNo" }, "----"),
-                el("div", { class: "cell", id: "cellDest" }, "----"),
+    // ★ 右側：カーナビ風サイドエリア
+    const side   = el("div", { class: "guidance-side", id: "guidanceSide" }, [
+        el("div", { class: "side-track" }, [
+            // 上部：次の次駅
+            el("div", { class: "side-label side-next2", id: "sideNext2" }, [""]),
+            // 中央：現在位置（赤丸）＋次駅の長方形
+            el("div", { class: "side-track-inner" }, [
+                el("div", { class: "side-current-marker", id: "sideCurrentMarker" }, []),
+                el("div", { class: "side-station-rect", id: "sideStationRect" }, [""]),
             ]),
-        ]),
-        el("div", { class: "band3-right" }, [
-            el("div", { class: "notes segment", id: "segmentInfo" }, ""),
-        ]),
-    ]);
-
-    // --- Band4: 発車時刻 ---
-    const band4 = el("div", { class: "band band4" }, [
-        el("div", { id: "nextDepart" }, ""),
-    ]);
-
-    // --- Band5: メニュー＋音声停止 ---
-    const band5 = el("div", { class: "band band5" }, [
-        el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
-        el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
-    ]);
-
-    // --- Band6: 時計＋遅延＋GPS 状態 ---
-    const band6 = el("div", { class: "band band6" }, [
-        el("div", { class: "clock", id: "clock" }, "00:00:00"),
-        el("div", { class: "clock", id: "delayInfo" }, ""),
-        el("div", { class: "clock", id: "gpsStatus" }, ""),
-    ]);
-
-    // 左側 main に 6 バンドを追加
-    main.append(band1, band2, band3, band4, band5, band6);
-
-    // --- 右側：画面幅 1/5 の専用エリア（中身は後で指示） ---
-    const side = el("div", { class: "guidance-side", id: "guidanceSide" }, [
-        // ※ 今は空。後で中身を追加予定。
-    ]);
-
-    // レイアウト全体に左右 2 エリアを配置
-    layout.append(main, side);
-    root.append(layout);
-
-    // ===== 以下、メニューなどは従来どおり root にぶら下げ =====
-
-    const modal = el("div", { class: "modal", id: "menuModal" }, [
-        el("div", { class: "panel" }, [
-            el("h3", {}, "メニュー"),
-            el("div", { class: "list" }, [
-                el("button", { class: "btn secondary", id: "m-end" }, "案内終了"),
-                el("button", { class: "btn secondary", id: "m-stop" }, "臨時停車・通過"),
-                el("button", { class: "btn secondary", id: "m-dest" }, "行先変更"),
-                el("button", { class: "btn secondary", id: "m-type" }, "種別変更"),
-                el("button", { class: "btn secondary", id: "m-train" }, "列番変更"),
-                el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),
-                el("button", { class: "btn secondary", id: "m-reset" }, "地点リセット"),
-                el("button", { class: "btn secondary", id: "m-info" }, "運行情報"),
-                el("button", { class: "btn secondary", id: "m-underground" }, "強制地下"),
-                el("button", { class: "btn secondary", id: "m-close" }, "とじる"),
-            ]),
+            // 下部：ひとつ前の駅
+            el("div", { class: "side-label side-prev", id: "sidePrev" }, [""]),
         ]),
     ]);
+
+    layout.appendChild(main);
+    layout.appendChild(side);
+    root.appendChild(layout);
+
+    // --- band1〜band6 を作成 ---
+    const band1 = el("div", { class: "band band1" }, []);
+    const band2 = el("div", { class: "band band2" }, []);
+    const band3 = el("div", { class: "band band3" }, []);
+    const band4 = el("div", { class: "band band4" }, []);
+    const band5 = el("div", { class: "band band5" }, []);
+    const band6 = el("div", { class: "band band6" }, []);
+
+    main.appendChild(band1);
+    main.appendChild(band2);
+    main.appendChild(band3);
+    main.appendChild(band4);
+    main.appendChild(band5);
+    main.appendChild(band6);
+
+    // band1: 両数 + 種別
+    const carsWrapper = el("div", { class: "cars-wrapper" }, []);
+    const carIcon     = el("div", { id: "carsIcon" }, []);
+    carsWrapper.appendChild(carIcon);
+
+    const badgeType = el("div", { class: "badge badge-vertical", id: "badgeType" }, []);
+
+    const left  = el("div", { class: "band1-left" }, [carsWrapper]);
+    const right = el("div", { class: "band1-right" }, [badgeType]);
+
+    band1.appendChild(left);
+    band1.appendChild(right);
+
+    // band2: お知らせ
+    const notes = el("div", { class: "notes", id: "notes" }, []);
+    band2.appendChild(notes);
+
+    // band3: 列番・行先 + 駅間表示
+    const trainInfo = el("div", { class: "traininfo" }, [
+        el("div", { class: "cell", id: "cellNo" },   []),
+        el("div", { class: "cell", id: "cellDest" }, []),
+    ]);
+    const segInfo = el("div", { id: "segmentInfo" }, []);
+
+    const band3Left  = el("div", { class: "band3-left" },  [trainInfo]);
+    const band3Right = el("div", { class: "band3-right" }, [segInfo]);
+
+    band3.appendChild(band3Left);
+    band3.appendChild(band3Right);
+
+    // band4: 発車時刻
+    const nextDepart = el("div", { id: "nextDepart" }, []);
+    band4.appendChild(nextDepart);
+
+    // band5: メニュー（左：音声停止 / 右：メニュー）
+    const btnMute = el("button", { id: "btnVoiceMute", class: "btn secondary" }, ["音声停止"]);
+    const btnMenu = el("button", { id: "btnMenu", class: "btn menu-btn" }, ["メニュー"]);
+
+    band5.appendChild(btnMute);
+    band5.appendChild(btnMenu);
+
+    // band6: 時計・遅延・GPS
+    const clock    = el("div", { id: "clock", class: "clock" }, []);
+    const delay    = el("div", { id: "delayInfo" }, []);
+    const gpsState = el("div", { id: "gpsStatusCompact" }, []);
+
+    band6.appendChild(clock);
+    band6.appendChild(delay);
+    band6.appendChild(gpsState);
+
+    // メニュー用モーダルはそのまま
+    const modal = buildMenuModal();
     root.appendChild(modal);
 
-    const panel = modal.querySelector(".panel");
+    // --- DOM 参照を root にぶら下げる ---
+    root._badgeType = badgeType;
+    root._carsIcon  = carIcon;
 
-    // --- 各要素への参照を保存 ---
-    root._band1       = band1;
-    root._badgeType   = band1.querySelector("#badgeType");
-
-    // GPS 状態のみ（速度の DOM はもう無い）
-    root._gpsStatus   = band6.querySelector("#gpsStatus");
-
-    // 列番・行先
-    root._cellNo      = band3.querySelector("#cellNo");
-    root._cellDest    = band3.querySelector("#cellDest");
+    root._cellNo   = trainInfo.querySelector("#cellNo");
+    root._cellDest = trainInfo.querySelector("#cellDest");
 
     // 駅間表示
     root._segmentInfo = band3.querySelector("#segmentInfo");
@@ -1051,16 +1054,19 @@ function screenGuidance() {
     root._nextDepart  = band4.querySelector("#nextDepart");
 
     // 時計・遅延
-    root._clock       = band6.querySelector("#clock");
-    root._delayInfo   = band6.querySelector("#delayInfo");
+    root._clock     = band6.querySelector("#clock");
+    root._delayInfo = band6.querySelector("#delayInfo");
 
     // 音声停止ボタン
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-    // 右側エリアへの参照（後で使えるように）
-    root._sideArea = side;
+    // ★ 右側エリア＆その中の要素
+    root._sideArea        = side;
+    root._sideStationRect = side.querySelector("#sideStationRect");
+    root._sideNext2Label  = side.querySelector("#sideNext2");
+    root._sidePrevLabel   = side.querySelector("#sidePrev");
 
-    // --- メニュー開閉 ---
+    // --- メニュー開閉など既存のハンドラ群 ---
     band5.querySelector("#btnMenu").onclick = () => {
         modal.classList.add("active");
         panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
@@ -3064,6 +3070,80 @@ function updateSegmentDisplay(ns, lat, lng) {
     root._segmentInfo.style.visibility = "visible";
 }
 
+function updateSideNavigator(ns, lat, lng) {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._sideArea) return;
+
+    const rect    = root._sideStationRect || root._sideArea.querySelector("#sideStationRect");
+    const next2El = root._sideNext2Label  || root._sideArea.querySelector("#sideNext2");
+    const prevEl  = root._sidePrevLabel   || root._sideArea.querySelector("#sidePrev");
+
+    if (!rect || !next2El || !prevEl) return;
+
+    // 地下モード中 or 位置情報なし → 非表示
+    if (state.runtime.undergroundMode ||
+        !Number.isFinite(lat) || !Number.isFinite(lng)) {
+        rect.style.visibility = "hidden";
+        next2El.textContent = "";
+        prevEl.textContent  = "";
+        return;
+    }
+
+    // 前駅⇒次駅のペアを推定
+    const seg = computeCurrentSegmentPair(lat, lng);
+    if (!seg) {
+        rect.style.visibility = "hidden";
+        next2El.textContent = "";
+        prevEl.textContent  = "";
+        return;
+    }
+
+    // 中央の長方形：次駅
+    rect.textContent = seg.next || "";
+    rect.style.visibility = "visible";
+
+    // 下部ラベル：ひとつ前の駅
+    prevEl.textContent = seg.prev || "";
+
+    // 上部ラベル：次の次駅（ルート確定時のみ）
+    let next2Name = "";
+    const rt = state.runtime;
+    const order = rt.routeLine ? getLineOrderById(rt.routeLine) : null;
+    if (order && seg.next) {
+        const idx = order.indexOf(seg.next);
+        if (idx !== -1) {
+            const down = state.config.direction === "下り";
+            const nextIdx = down ? idx + 1 : idx - 1;
+            if (nextIdx >= 0 && nextIdx < order.length) {
+                next2Name = order[nextIdx];
+            }
+        }
+    }
+    next2El.textContent = next2Name || "";
+
+    // 次駅までの距離 → 長方形の縦位置（上：遠い／下：近い）
+    const stationMap = state.datasets.stations || {};
+    const infoNext   = stationMap[seg.next];
+
+    let dNext = null;
+    if (infoNext && infoNext.lat != null && infoNext.lng != null) {
+        dNext = haversine(lat, lng, infoNext.lat, infoNext.lng);
+    }
+
+    const maxDisplay = 1500; // m：これ以上は「一番遠い」扱い
+    let ratio = 1;
+    if (typeof dNext === "number" && dNext >= 0) {
+        // ratio = 0（駅直近）〜1（遠い）
+        ratio = Math.min(1, dNext / maxDisplay);
+    }
+
+    const center = 50; // 赤丸（現在位置）の top% 想定
+    const span   = 40; // 上方向への最大オフセット
+    const topPercent = center - span * ratio; // 遠い: 10%、近い: 50% 付近
+
+    rect.style.top = `${topPercent}%`;
+}
+
 
 // ★ 遅延情報の取得＆画面反映
 async function fetchAndUpdateDelay() {
@@ -3488,6 +3568,9 @@ function onPos(pos) {
 
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
     updateSegmentDisplay(ns, latitude, longitude);
+
+    // ★ 右側カーナビ風表示の更新
+    updateSideNavigator(ns, latitude, longitude);    
 
     // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
     if (
