@@ -954,18 +954,16 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band2: GPS/速度 + 音声表示 ---
+    // --- Band2: 速度 + 音声表示（GPS状態はBand5へ移動） ---
     const band2 = el("div", { class: "band band2" }, [
         el("div", { class: "notes gps-row" }, [
-            el("span", { id: "gpsStatus" }, ""),
+            // ★ GPS 状態表示はここから削除し、速度のみ表示
             el("span", { id: "gpsSpeed" }, ""),
         ]),
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
 
     // --- Band3: 左=列番+行先 / 右=駅間表示 ---
-    // 駅間表示の id は、あなたが前回追加した表示ロジックに合わせてください。
-    // （ここでは "betweenStations" に統一しています）
     const band3 = el("div", { class: "band band3" }, [
         el("div", { class: "band3-left" }, [
             el("div", { class: "traininfo" }, [
@@ -983,12 +981,14 @@ function screenGuidance() {
         el("div", { id: "nextDepart" }, ""),
     ]);
 
-    // --- Band5: メニュー・音声停止・時計・遅延 ---
+    // --- Band5: メニュー・音声停止・時計・遅延・GPS状態 ---
     const band5 = el("div", { class: "band band5" }, [
         el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
         el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
         el("div", { class: "clock", id: "delayInfo" }, ""),
+        // ★ 追加: 遅延表示の右隣に GPS 状態表示を移動
+        el("div", { class: "clock", id: "gpsStatus" }, ""),
     ]);
 
     // ★ 6段目（band6）は廃止：append しない
@@ -1018,18 +1018,19 @@ function screenGuidance() {
 
     // ★ 各要素への参照
     root._band1       = band1;
-    root._gpsStatus   = band2.querySelector("#gpsStatus");
+    // ★ GPS 状態は Band5 の要素を紐づけ
+    root._gpsStatus   = band5.querySelector("#gpsStatus");
+    // ★ 速度表示は従来通り Band2
     root._gpsSpeed    = band2.querySelector("#gpsSpeed");
     root._speechText  = band2.querySelector("#speechText");
     root._badgeType   = band1.querySelector("#badgeType");
 
-    // ★ 3段目へ移動
+    // ★ 3段目: 列番・行先
     root._cellNo      = band3.querySelector("#cellNo");
     root._cellDest    = band3.querySelector("#cellDest");
 
-
     // ★ 駅間表示（地下中は非表示運用）
-    root._segmentInfo = band3.querySelector("#segmentInfo"); // ★追加
+    root._segmentInfo = band3.querySelector("#segmentInfo");
 
     // ★ 発車時刻は 4段目へ
     root._nextDepart  = band4.querySelector("#nextDepart");
