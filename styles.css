@@ -141,7 +141,7 @@ input[type="text"], select, input[type="number"] {
   align-items: center;
   justify-content: center;
   order: 2;             /* 種別を右側に固定 */
-  min-width: 100px;      /* ★ 種別表示のために最低幅を確保 */
+  min-width: 72px;      /* ★ 種別表示のために最低幅を確保 */
 }
 
 /* 両数表示エリアの中央寄せ用 */
@@ -488,4 +488,39 @@ body.guidance-lock {
 /* バンド1右側も、必要以上に縮まないようにしておく */
 .band1-right {
   flex: 1 0 0;         /* shrinkを抑えつつ、2:1比率は維持 */
+}
+
+
+/* ===== Band1 レイアウト再定義（両数 + 種別） ===== */
+
+/* band1 全体を 2列グリッドにする。
+   左: 両数（3fr） / 右: 種別（最低 70px〜、1fr） */
+#screen-guidance .band1 {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(70px, 1fr);
+  column-gap: 0;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+}
+
+/* 左右の子は「flex の比率指定」をやめて、普通のボックスにする */
+#screen-guidance .band1-left,
+#screen-guidance .band1-right {
+  flex: none;               /* 既存の flex 指定を無効化 */
+}
+
+/* 右側（種別）は中央寄せだけ維持 */
+#screen-guidance .band1-right {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 種別バッジが行の高さ・幅で潰れないようにしておく */
+#screen-guidance .band1-right .badge-vertical {
+  max-height: 100%;
+  max-width: 100%;
+  /* 必要なら少しだけ余裕を持たせる:
+     padding: 20px 8px; などに調整可 */
 }
