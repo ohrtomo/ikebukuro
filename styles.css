@@ -262,7 +262,6 @@ input[type="text"], select, input[type="number"] {
   padding: 4px 6px;
   font-size: clamp(14px, 4.3vw, 26px);
   font-weight: 700;
-  border: 1px solid #333;
 }
 
 /* 駅間表示 */
@@ -436,4 +435,8 @@ body.guidance-lock {
   /* 古いブラウザ向けのフォールバック */
   height: 100vh;
   overflow: hidden;
+}
+
+.band3 {
+  border-bottom: none;
 }
