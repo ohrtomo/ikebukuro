@@ -545,99 +545,73 @@ body.guidance-lock {
   flex-direction: column; /* 縦積みレイアウト */
 }
 
-/* =========================
-   右側カーナビ風トラック表示
-========================= */
 
-/* 右側エリア全体：中央寄せ */
+
+/* ===== カーナビ風サイドエリア ===== */
 .guidance-side {
+  position: relative;
+  background: #000;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
 }
 
-/* トラック全体の枠 */
+/* 真ん中の走行エリア */
 .side-track {
   position: relative;
-  width: 100%;
-  height: 90%;             /* 右エリアの高さの 9 割を使う */
-  padding: 8px 4px;
-  box-sizing: border-box;
+  flex: 1 1 auto;
+  margin: 8px 4px;
 }
 
-/* 実際に描画する内側エリア */
-.side-track-inner {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-/* 縦の線（進行方向を表す） */
+/* 縦の線 */
 .side-track-line {
   position: absolute;
   left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  margin-left: -2px;
-  background: #666;
-  border-radius: 2px;
+  top: 5%;
+  bottom: 5%;
+  width: 3px;
+  background: #555;
+  transform: translateX(-50%);
 }
 
-/* 現在位置（赤丸）中央固定 */
-.side-current-marker {
+/* 現在位置マーカー（赤丸） */
+.side-marker {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 14px;
-  height: 14px;
-  margin-left: -7px;
-  margin-top: -7px;
-  background: #ff3333;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  box-shadow: 0 0 4px rgba(255, 80, 80, 0.9);
+  background: #ff4444;
+  transform: translate(-50%, -50%);
 }
 
-/* 駅の長方形（次駅） */
+/* 駅の長方形（橙黄色） */
 .side-station-box {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
   min-width: 70%;
-  max-width: 90%;
-  padding: 3px 6px;
-  background: #ffb347;   /* 橙黄色 */
+  padding: 4px 6px;
+  background: #ffb347;
   color: #000;
-  text-align: center;
+  font-size: clamp(10px, 2.6vw, 14px);
+  font-weight: 700;
   border-radius: 6px;
-  font-size: clamp(10px, 2.4vw, 14px);
-  white-space: nowrap;
-}
-
-.side-station-box--next {
-  /* 縦位置は JS で style.top に代入する */
-}
-
-.side-station-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 「次の次」「ひとつ前」のテキスト */
-.side-station-text {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 90%;
-  font-size: clamp(9px, 2.1vw, 13px);
-  color: #ddd;
   text-align: center;
 }
 
-.side-station-text--after {
-  top: 0;            /* 画面上部 */
+/* 上下のラベル */
+.side-label {
+  font-size: clamp(10px, 2.6vw, 13px);
+  padding: 2px 4px;
+  text-align: center;
+}
+.side-next2 {
+  margin-top: 4px;
+}
+.side-prev {
+  margin-bottom: 4px;
 }
 
-.side-station-text--prev {
-  bottom: 0;         /* 画面下部 */
-}

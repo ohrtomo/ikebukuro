@@ -1001,9 +1001,20 @@ function screenGuidance() {
     // 左側 main に 6 バンドを追加
     main.append(band1, band2, band3, band4, band5, band6);
 
-    // --- 右側：画面幅 1/5 の専用エリア（今は空。ナビ用の領域） ---
+    // --- 右側：画面幅 1/5 の専用エリア（カーナビ表示） ---
     const side = el("div", { class: "guidance-side", id: "guidanceSide" }, [
-        // ここに今後、カーナビ風の図を描画していく想定
+        // 画面上：次の次の駅ラベル
+        el("div", { class: "side-label side-next2", id: "sideNext2Label" }, ""),
+
+        // 中央：線＋現在位置（赤丸）＋次の駅（長方形）
+        el("div", { class: "side-track" }, [
+            el("div", { class: "side-track-line" }),
+            el("div", { class: "side-marker" }), // 赤丸（JSからは操作しない・CSSだけで位置固定）
+            el("div", { class: "side-station-box", id: "sideStationBox" }, ""),
+        ]),
+
+        // 画面下：ひとつ前の駅ラベル
+        el("div", { class: "side-label side-prev", id: "sidePrevLabel" }, ""),
     ]);
 
     // レイアウト全体に左右 2 エリアを配置
@@ -1056,8 +1067,14 @@ function screenGuidance() {
     // 音声停止ボタン
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-    // 右側エリアへの参照（カーナビ用）
-    root._sideArea = side;
+    // 駅間表示のエレメントを保存（updateSegmentDisplay から参照）
+    root._segmentInfo = segmentSpan;
+
+    // 右側エリア（カーナビ表示）のエレメントも保存
+    root._sideArea       = side;
+    root._sideStationBox = side.querySelector("#sideStationBox");
+    root._sidePrevLabel  = side.querySelector("#sidePrevLabel");
+    root._sideNext2Label = side.querySelector("#sideNext2Label");
 
     // ===== メニュー開閉処理 =====
     band5.querySelector("#btnMenu").onclick = () => {
@@ -2929,10 +2946,27 @@ function nearestStation(lat, lng) {
 
 function clearSegmentDisplay() {
     const root = document.getElementById("screen-guidance");
-    if (!root || !root._segmentInfo) return;
-    root._segmentInfo.textContent = "";
-    root._segmentInfo.style.visibility = "hidden";
+    if (!root) return;
+
+    // 駅間テキスト
+    if (root._segmentInfo) {
+        root._segmentInfo.textContent = "";
+        root._segmentInfo.style.visibility = "hidden";
+    }
+
+    // 右側カーナビ部もリセット
+    if (root._sideStationBox) {
+        root._sideStationBox.textContent = "";
+        root._sideStationBox.style.top = "10%";
+    }
+    if (root._sidePrevLabel) {
+        root._sidePrevLabel.textContent = "";
+    }
+    if (root._sideNext2Label) {
+        root._sideNext2Label.textContent = "";
+    }
 }
+
 
 function getLineOrderById(lineId) {
     if (lineId === "main") return MAIN_LINE_ORDER;
@@ -2941,6 +2975,28 @@ function getLineOrderById(lineId) {
     if (lineId === "sayama") return SAYAMA_LINE_ORDER;
     return null;
 }
+
+function getNext2StationName(seg) {
+    if (!seg || !seg.next) return null;
+
+    // どの線区か（routeLine が分かっていればそれを優先）
+    const lineId =
+        state.runtime.routeLine ||
+        getLineForStation(seg.next);
+
+    const order = getLineOrderById(lineId);
+    if (!order) return null;
+
+    const idx = order.indexOf(seg.next);
+    if (idx === -1) return null;
+
+    const isDown = state.config.direction === "下り";
+    const idx2 = isDown ? idx + 1 : idx - 1;
+
+    if (idx2 < 0 || idx2 >= order.length) return null;
+    return order[idx2];
+}
+
 
 // 1つの路線配列上で「現在位置が属しそうな隣接駅ペア」を推定
 function computeBestAdjacentPairOnLine(lat, lng, order) {
@@ -3069,7 +3125,59 @@ function updateSegmentDisplay(ns, lat, lng) {
 
     root._segmentInfo.textContent = `${seg.prev}⇒${seg.next}`;
     root._segmentInfo.style.visibility = "visible";
+
+    // 右側カーナビ風表示も更新
+    updateSideNavigator(seg, lat, lng);
 }
+
+
+function updateSideNavigator(seg, lat, lng) {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._sideArea || !root._sideStationBox) return;
+
+    // 情報がない時はリセットして終了
+    if (!seg || !seg.next || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+        root._sideStationBox.textContent = "";
+        root._sideStationBox.style.top = "10%";
+        if (root._sidePrevLabel)  root._sidePrevLabel.textContent = "";
+        if (root._sideNext2Label) root._sideNext2Label.textContent = "";
+        return;
+    }
+
+    const stations = state.datasets.stations || {};
+    const nextInfo = stations[seg.next];
+
+    // ひとつ前の駅ラベル
+    if (root._sidePrevLabel) {
+        root._sidePrevLabel.textContent = seg.prev ? `前駅：${seg.prev}` : "";
+    }
+
+    // 次の次の駅ラベル
+    if (root._sideNext2Label) {
+        const next2 = getNext2StationName(seg);
+        root._sideNext2Label.textContent = next2 ? `次の次：${next2}` : "";
+    }
+
+    // 長方形内の駅名
+    root._sideStationBox.textContent = seg.next || "";
+
+    // 駅までの距離 → 縦位置に反映
+    if (!nextInfo || !Number.isFinite(nextInfo.lat) || !Number.isFinite(nextInfo.lng)) {
+        root._sideStationBox.style.top = "10%";
+        return;
+    }
+
+    const dNext = haversine(lat, lng, nextInfo.lat, nextInfo.lng); // m 単位
+    const maxDist = 2000; // 2km 以上は同じ位置に固定
+    const clamped = Math.max(0, Math.min(dNext, maxDist));
+    const ratio = 1 - clamped / maxDist; // 0(遠い)〜1(駅直前)
+
+    // 駅が近づくと「上から降りてくる」感じになるよう、
+    // 10%（遠い）〜50%（現在位置マーカー付近）の間で動かす
+    const topPercent = 10 + (50 - 10) * ratio;
+    root._sideStationBox.style.top = `${topPercent}%`;
+}
+
 
 function updateSideNavigator(ns, lat, lng) {
     const root = document.getElementById("screen-guidance");
