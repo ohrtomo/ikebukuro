@@ -216,7 +216,7 @@ input[type="text"], select, input[type="number"] {
 .band2 {
   background: #111;
   color: #fff;
-  padding: 8px;
+  padding: 1px 8px;
 }
 .notes {
   font-size: clamp(12px, 3.8vw, 18px);
@@ -241,7 +241,7 @@ input[type="text"], select, input[type="number"] {
   display: grid;
   grid-template-columns: 1fr 1fr; /* 中央で半分 */
   gap: 8px;
-  padding: 3px 8px;
+  padding: 1px 8px;
   align-items: center;
 }
 
