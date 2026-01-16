@@ -50,6 +50,9 @@ input[type="text"], select, input[type="number"] {
   gap: 10px;
 }
 
+.screen { display: none; }
+.screen.active { display: block; }
+
 .active-selected {
   background: #2c7be5 !important;
   color: #fff !important;
@@ -60,52 +63,18 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* =========================
-   画面共通レイアウト
-========================= */
-
-:root {
-  /* デフォルト値として 1vh を入れておく（あとでJSで上書き） */
-  --vh: 1vh;
-}
-
-/* すべての画面はデフォルトでは非表示 */
-.screen {
-  display: none;
-  width: 100%;
-  height: calc(var(--vh, 1vh) * 100);
-}
-
-/* active が付いた画面だけを表示 */
-.screen.active {
-  display: block;
-}
-
-/* 案内画面中はページ全体のスクロールを禁止 */
-body.guidance-lock {
-  overflow: hidden;      /* ページ全体の縦スクロールを止める */
-}
-
-/* 中央寄せの開始画面など */
-.centered {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-}
-
-/* =========================
    Guidance layout
-   左 4/5: バンド1〜6
+   左 4/5: バンド1〜6（以前と同じ高さ比）
    右 1/5: 専用サイドエリア
 ========================= */
 
 /* 案内画面のルート要素 */
 #screen-guidance {
+  /* vh対策をしていれば var(--vh) を使う。していなくても 1vh にフォールバック */
   height: calc(var(--vh, 1vh) * 100);
   width: 100%;
   overflow: hidden;
+
   display: flex;           /* 左右 2 カラムに分ける */
 }
 
@@ -117,11 +86,11 @@ body.guidance-lock {
   height: 100%;
 }
 
-/* 左側: バンド群（4/5幅）→ 6 段グリッド */
+/* 左側: バンド群（4/5幅）→ ここを以前と同じ 6 段グリッドにする */
 .guidance-main {
   flex: 4 1 0;
   display: grid;
-  grid-template-rows: 2.0fr 1.2fr 0.6fr 0.8fr 0.5fr 0.5fr;  /* 6 段の比率 */
+  grid-template-rows: 2.0fr 1.2fr 0.6fr 0.8fr 0.5fr 0.5fr;  /* ★ 以前と同じ比率で 6 段 */
   height: 100%;
 }
 
@@ -136,7 +105,8 @@ body.guidance-lock {
   */
 }
 
-/* バンド共通 */
+
+
 .band {
   display: flex;
   align-items: center;
@@ -147,31 +117,31 @@ body.guidance-lock {
 /* =========================
    Band1（両数＋種別縦書き）
 ========================= */
-
-/* band1 全体：左右フレックスで横一列に並べる */
 .band1 {
   display: flex;
-  flex-direction: row;
+  flex-direction: row;   /* 必ず左右並び */
   align-items: stretch;
   justify-content: stretch;
-  padding: 0;
+  padding: 0px 0px;
 }
 
-/* 左：両数（およそ全体の 2/3） */
+/* 左 2/3：両数アイコン */
 .band1-left {
-  flex: 2 1 0;
+  flex: 2;
   display: flex;
   align-items: center;
   justify-content: center;
+  order: 1;             /* 両数を左側に固定 */
 }
 
-/* 右：種別（およそ全体の 1/3 ＋ 最小幅を保証） */
+/* 右 1/3：種別縦書き */
 .band1-right {
-  flex: 1 1 0;
-  min-width: 90px;          /* 種別表示のために最低限の横幅を確保 */
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  order: 2;             /* 種別を右側に固定 */
+  min-width: 72px;      /* ★ 種別表示のために最低幅を確保 */
 }
 
 /* 両数表示エリアの中央寄せ用 */
@@ -243,28 +213,28 @@ body.guidance-lock {
 .j-rinji-a          { background: #fff; color: #d90429; border-color: #d90429; }
 
 /* =========================
-   縦書き種別バッジ（最終版）
+   縦書き種別バッジ（上書き）
    class="badge badge-vertical j-xxx"
 ========================= */
 .badge-vertical {
   writing-mode: vertical-rl;
   text-orientation: mixed;
 
-  font-size: clamp(20px, 6.5vh, 40px); /* 少し小さめ：折り返しを防ぐ */
+  /* 文字サイズをかなり大きく（約3倍クラス） */
+  font-size: clamp(24px, 10vw, 200px);
   font-weight: 900;
 
-  padding: 16px 8px;        /* 上下・左右の余白も少しスリムに */
-  border-radius: 14px;
-  border-width: 4px;        /* 枠線をやや細く */
-  border-style: solid;
+  /* 余白と枠も太めに */
+  padding: 24px 10px;
+  border-radius: 16px;
+  border-width: 6px;
 
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 
-  box-sizing: border-box;
-  max-width: 100%;
-  /* 高さ方向はグリッドの行高に合わせる。溢れたらそのまま（隠さない） */
+  max-height: 100%;
+  overflow: hidden;
 }
 
 /* =========================
@@ -333,6 +303,7 @@ body.guidance-lock {
 ========================= */
 .band4 {
   background: #000;
+
   display: flex;
   align-items: center;
   justify-content: center;
@@ -374,41 +345,32 @@ body.guidance-lock {
   padding: 1px 8px;
 }
 
+
 /* =========================
-   ガイダンス画面全体の縦方向余白を圧縮
+   Start screen
 ========================= */
-
-/* 各バンド（band1〜band6）の上下パディングを小さくする */
-#screen-guidance .band {
-  padding-top: 0px;
-  padding-bottom: 0px;
+.centered {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
 }
 
-/* バンド同士のスキマも少しだけにする */
-#screen-guidance .band + .band {
-  margin-top: 0px;
+/* =========================
+   音声停止ボタン
+========================= */
+.btn.muted,
+.btn.secondary.muted {
+  background-color: #b44;
+  color: #fff;
+  border-color: #922;
 }
 
-/* band6 だけ別に指定していた場合はこちらで上書き */
-#screen-guidance .band6 {
-  padding-top: 1px;
-  padding-bottom: 2px;
-}
-
-/* バンド内テキストの上下余白も軽く絞る */
-#screen-guidance .clock,
-#screen-guidance #delayInfo,
-#screen-guidance #gpsStatusCompact,
-#screen-guidance .notes,
-#screen-guidance .traininfo .cell {
-  padding-top: 0;
-  padding-bottom: 0;
-  line-height: 1.1;   /* デフォルトより少しだけ詰める */
-}
-
-/* band3 の下線を消す（あれば） */
-.band3 {
-  border-bottom: none;
+.btn.muted:hover,
+.btn.secondary.muted:hover {
+  background-color: #a33;
 }
 
 /* =========================
@@ -418,15 +380,15 @@ body.guidance-lock {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
-  display: none;                   /* 初期状態では非表示 */
+  display: none;                   /* ★ 初期状態では非表示 */
   align-items: center;
   justify-content: center;
   padding: 18px;
-  z-index: 1000;                   /* 前面に */
+  z-index: 1000;                   /* 念のため前面に */
 }
 
 .modal.active {
-  display: flex;                   /* JSで .active を付けたときだけ表示 */
+  display: flex;                   /* ★ JSで .active を付けたときだけ表示 */
 }
 
 .panel {
@@ -454,4 +416,131 @@ body.guidance-lock {
 .small {
   font-size: 12px;
   color: #aaa;
+}
+
+/* =========================
+   ガイダンス画面全体の縦方向余白を圧縮
+========================= */
+
+/* 各バンド（band1〜band6）の上下パディングを小さくする */
+#screen-guidance .band {
+  padding-top: 0px;   /* ここを 1px にするとさらに詰まります */
+  padding-bottom: 0px;
+}
+
+/* バンド同士のスキマも少しだけにする */
+#screen-guidance .band + .band {
+  margin-top: 0px;    /* 以前より大きければ 0〜1px にしてもOK */
+}
+
+/* band6 だけ別に指定していた場合はこちらで上書き */
+#screen-guidance .band6 {
+  padding-top: 1px;
+  padding-bottom: 2px;
+}
+
+/* バンド内テキストの上下余白も軽く絞る */
+#screen-guidance .clock,
+#screen-guidance #delayInfo,
+#screen-guidance #gpsStatusCompact,
+#screen-guidance .notes,
+#screen-guidance .traininfo .cell {
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1.1;   /* デフォルトより少しだけ詰める */
+}
+
+/* ===== 案内画面中はページ全体のスクロールを禁止 ===== */
+body.guidance-lock {
+  overflow: hidden;      /* ページ全体の縦スクロールを止める */
+}
+
+
+.band3 {
+  border-bottom: none;
+}
+
+:root {
+  /* デフォルト値として 1vh を入れておく（あとでJSで上書き） */
+  --vh: 1vh;
+}
+
+/* ===== 案内画面の左右分割レイアウト ===== */
+/* ★ ここでは .screen.guidance だけ残して、
+   guidance-layout / guidance-main / guidance-side は定義しない */
+.screen.guidance {
+  /* #screen-guidance で height や flex はすでに指定済みなので、
+     向きだけ column にしておけばOK（モーダルなどの重なり対策） */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ★ guidance-layout / guidance-main / guidance-side は
+   すでに上の「Guidance layout」セクションで定義済みなので
+   ここには書かない */
+
+/* =========================
+   Band1 最終版（両数＋種別）
+   左：両数 / 右：種別（横並び固定）
+========================= */
+
+/* band1 全体：左右フレックスで横一列に並べる */
+.band1 {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+}
+
+/* 左：両数（およそ全体の 2/3） */
+.band1-left {
+  flex: 2 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 右：種別（およそ全体の 1/3 ＋ 最小幅を保証） */
+.band1-right {
+  flex: 1 1 0;
+  min-width: 90px;          /* 種別表示のために最低限の横幅を確保 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 縦書き種別バッジの最終調整（少しスリムに＆枠線細く） */
+.badge-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+
+  font-size: clamp(20px, 6.5vh, 40px); /* 以前より少し小さめ：折り返しを防ぐ */
+  font-weight: 900;
+
+  padding: 16px 8px;        /* 上下・左右の余白も少しスリムに */
+  border-radius: 14px;
+  border-width: 4px;        /* ★ 枠線を細く（元は 6px） */
+  border-style: solid;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  box-sizing: border-box;
+  max-width: 100%;
+  /* 高さ方向はグリッドの行高に合わせる。溢れたらそのまま（隠さない） */
+}
+
+/* すべての画面はデフォルトでは非表示 */
+.screen {
+  display: none;
+  width: 100%;
+  height: calc(var(--vh, 1vh) * 100);
+}
+
+/* active が付いた 1画面だけを表示する */
+.screen.active {
+  display: flex;          /* もともと flex で組んでいるので flex に */
+  flex-direction: column; /* 縦積みレイアウト */
 }
