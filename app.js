@@ -697,17 +697,16 @@ function screenSettings() {
         // 前半設定
         state.config.trainNo   = trainNo.value.trim();
         state.config.direction = selectedDir;
-        state.config.type      = typeSel.value;
+        state.config.type      = normalizeTypeName(typeSel.value);
         state.config.dest      = destSel.value;
         state.config.cars      = selectedCars;
-        state.config.dayType   = dayTypeSel.value || "平日";
-        state.config.type      = normalizeTypeName(typeSel.value);        
+        state.config.dayType   = dayTypeSel.value || "平日";            
 
         // 途中駅で列情変更
         state.config.endChange = endChange.checked;
         if (endChange.checked) {
             state.config.second.trainNo       = trainNo2.value.trim();
-            state.config.second.type          = typeSel2.value;
+            state.config.second.type          = normalizeTypeName(typeSel2.value);
             state.config.second.dest          = destSel2.value;
             state.config.second.cars          = state.config.cars;
             state.config.second.changeStation = changeStationSel.value;
@@ -1861,29 +1860,32 @@ function baseIsStop(stationName) {
 
 // ==== 停車パターン（ダイヤ上の基本停車駅） ====
 
+// 種別を指定して「ダイヤ上で停車する駅かどうか」を判定
 function baseIsStopRawForType(stationName, type) {
     const info = state.datasets.stations[stationName];
-    if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
+    if (!info || !info.stopPatterns) return true; // 情報がない駅は安全側で「停車扱い」
 
     const sp = info.stopPatterns;
 
+    // 種別名は必ず正規化してから見る（SトレB上/下 などに対応）
     const tt = normalizeTypeName(type);
-    if (!tt) return true; // 種別が未指定なら安全側で停車扱い
+    if (!tt) return true; // 種別未指定も安全側で「停車扱い」
 
     return !!sp[tt];
 }
 
-// 既存の baseIsStopRaw は、現在の state.config.type を使う薄いラッパーに変更
+// 現在選択中の種別（state.config.type）での「ダイヤ上の基本停車駅」
 function baseIsStopRaw(stationName) {
     return baseIsStopRawForType(stationName, state.config.type);
 }
 
+// 回送・試運転・臨時の「追加停車駅」を反映した実際の停車駅判定
 function baseIsStop(stationName) {
-    // まずダイヤ上の停車かどうか（現在の種別で判定）
+    // まずダイヤ上の停車かどうか（現在種別で判定）
     let base = baseIsStopRaw(stationName);
 
     // 回送・試運転・臨時など非客扱い列車で、
-    // 追加画面で選ばれた駅は「通常停車扱い」にする
+    // 追加設定画面で選んだ駅は「停車」に格上げする
     if (isNonPassenger(state.config.type)) {
         const extra = state.runtime.nonPassengerExtraStops;
         if (extra && extra.has(stationName)) {
@@ -1893,12 +1895,6 @@ function baseIsStop(stationName) {
     return base;
 }
 
-function baseIsStopRaw(stationName) {
-    const info = state.datasets.stations[stationName];
-    if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
-    const sp = info.stopPatterns;
-    return !!sp[state.config.type]; // 例: "快速急行" など
-}
 
 // ==== 停車駅/通過駅リスト生成（ダイヤ基準） ====
 function buildPassStationList() {
@@ -3525,7 +3521,8 @@ function onPos(pos) {
 
 
 function isNonPassenger(t) {
-    return /(回送|試運転|臨時)/.test(t);
+    const s = normalizeTypeName(t || "");
+    return /(回送|試運転|臨時)/.test(s);
 }
 
 // ==== Sトレイン特例判定 ====
