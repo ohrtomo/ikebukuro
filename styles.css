@@ -276,7 +276,7 @@ input[type="text"], select, input[type="number"] {
 ========================= */
 .band4 {
   background: #000;
-  border-top: 1px solid #333;
+
   display: flex;
   align-items: center;
   justify-content: center;
