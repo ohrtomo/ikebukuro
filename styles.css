@@ -493,37 +493,7 @@ body.guidance-lock {
 
 /* ===== Band1 レイアウト再定義（両数 + 種別） ===== */
 
-/* band1 全体を 2列グリッドにする。
-   左: 両数（3fr） / 右: 種別（最低 70px〜、1fr） */
-#screen-guidance .band1 {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(70px, 1fr);
-  column-gap: 0;
-  align-items: stretch;
-  justify-content: stretch;
-  padding: 0;
-}
 
-/* 左右の子は「flex の比率指定」をやめて、普通のボックスにする */
-#screen-guidance .band1-left,
-#screen-guidance .band1-right {
-  flex: none;               /* 既存の flex 指定を無効化 */
-}
-
-/* 右側（種別）は中央寄せだけ維持 */
-#screen-guidance .band1-right {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* 種別バッジが行の高さ・幅で潰れないようにしておく */
-#screen-guidance .band1-right .badge-vertical {
-  max-height: 100%;
-  max-width: 100%;
-  /* 必要なら少しだけ余裕を持たせる:
-     padding: 20px 8px; などに調整可 */
-}
 
 /* ===== Band1（両数＋種別）の最終調整 ===== */
 
@@ -558,3 +528,42 @@ body.guidance-lock {
   max-width: 100%;
   max-height: 100%;
 }
+
+/* ===== Band1 最終版（両数：種別 = およそ 2:1、横並び固定）===== */
+
+/* band1 全体：左右フレックスで横一列に並べる */
+#screen-guidance .guidance-main > .band1 {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+}
+
+/* 左：両数アイコン（全体の約 64% を使用） */
+#screen-guidance .guidance-main > .band1 .band1-left {
+  flex: 0 0 64%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 右：種別（全体の約 36% を使用・最小幅も確保） */
+#screen-guidance .guidance-main > .band1 .band1-right {
+  flex: 0 0 36%;
+  min-width: 90px;              /* ★ ここで横幅の下限を確保 */
+  display: flex;
+  align-items: center;
+  justify-content: center;      /* 中央寄せ */
+}
+
+/* 種別バッジを少しスリムにして、折り返しを防ぐ＋圧迫感を軽減 */
+#screen-guidance .band1-right .badge-vertical {
+  font-size: clamp(20px, 7vh, 44px);  /* ほんの少し小さくする */
+  padding: 16px 6px;                  /* 上下・左右の余白も少しだけ細く */
+  border-width: 4px;                  /* ★ 枠線を細く（元は 6px） */
+  border-radius: 14px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
