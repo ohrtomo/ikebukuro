@@ -1067,8 +1067,6 @@ function screenGuidance() {
     // 音声停止ボタン
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
-    // 駅間表示のエレメントを保存（updateSegmentDisplay から参照）
-    root._segmentInfo = segmentSpan;
 
     // 右側エリア（カーナビ表示）のエレメントも保存
     root._sideArea       = side;
@@ -2846,9 +2844,15 @@ function startGuidance() {
 
     // 時計表示
     clockTimer = setInterval(() => {
+        const root = document.getElementById("screen-guidance");
+        // 画面未生成 or _clock 未設定なら何もしない（安全対策）
+        if (!root || !root._clock) return;
+
         const d = new Date();
-        document.getElementById("screen-guidance")._clock.textContent =
-            `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+        root._clock.textContent =
+            `${String(d.getHours()).padStart(2, "0")}:` +
+            `${String(d.getMinutes()).padStart(2, "0")}:` +
+            `${String(d.getSeconds()).padStart(2, "0")}`;
     }, 200);
 
     // ★ 案内開始時にも念のため GPS 監視開始（開始画面側ですでに動いていれば何もしない）
