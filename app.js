@@ -3766,7 +3766,7 @@ function maybeSpeak(ns) {
         state.runtime.lastDepartPrevDist = null;
     }
 
-    // ===== (B) 手前 400m の「まもなく○○」案内 =====
+    // ===== (B) 手前 400m の案内 =====
     // 400m より外側 → 400m 以内に入った瞬間
     const crossed400 =
         !isFirstMeasurement &&
@@ -3777,7 +3777,7 @@ function maybeSpeak(ns) {
     if (crossed400) {
         const stopWord = isExtraStop ? "臨時停車" : "停車";
 
-        let text = `まもなく${ns.name}、${stopWord}、${state.config.cars}両`;
+        let text = `${ns.name}${stopWord}、${state.config.cars}両`;
 
         // ★ この駅が着発線変更されている場合のみ付加
         if (isPlatformChanged(ns.name)) {
@@ -3815,7 +3815,7 @@ function maybeSpeak(ns) {
                     state.config.direction === "上り"
                         ? ns.up8pos
                         : ns.down8pos
-                }あわせ`,
+                }`,
             );
         } else if (state.config.cars === 10) {
             speakOnce("arr200_" + key, `${stopWord}、10両`);
@@ -3844,7 +3844,7 @@ function maybeSpeak(ns) {
         if (isSTrain(t)) {
             // 1) 練馬/石神井公園/保谷/所沢：ホームドア表示灯「S」確認（先に）
             if (STRAIN_HOME_S_STATIONS.has(ns.name)) {
-                speakOnce("strain_homeS_" + key, "ホームドア表示灯「S」確認");
+                speakOnce("strain_homeS_" + key, "ホームドア「S」確認");
             }
 
             // 2) 練馬：SトレA と 上りSトレB → 「運転停車、ドア扱い注意」（後に）
@@ -3906,11 +3906,11 @@ function maybeSpeak(ns) {
     // （客扱い列車・回送・試運転・臨時すべて共通）
     if (!isStop && ns.distance <= 200 && d <= 45) {
         const passWord = isExtraPass ? "臨時通過" : "通過";
-        speakOnce("pass200_" + key, `種別${t}、${passWord}`);
+        speakOnce("pass200_" + key, `${t}、${passWord}`);
     }
     if (!isStop && ns.distance <= 120 && d <= 30) {
         const passWord = isExtraPass ? "臨時通過" : "通過";
-        speakOnce("pass120_" + key, `種別${t}、${passWord}、速度注意`);
+        speakOnce("pass120_" + key, `${t}、${passWord}、速度注意`);
     }
 
     // ★ 次回比較用距離を保存
@@ -3955,7 +3955,7 @@ function otherSpeaks(ns) {
         ns.name === "所沢" &&
         ns.distance <= 400
     ) {
-        speakOnce("rule-tokorozawa", "列車無線チャンネル切り替え");
+        speakOnce("rule-tokorozawa", "列車無線切り替え");
     }
 
     // ★ 椎名町（池袋行・上り）
@@ -3978,7 +3978,7 @@ function otherSpeaks(ns) {
         if (crossed220Out) {
             // ドア扱い確認：夕方〜深夜のみ（従来どおり時間帯指定）
             if (timeOK) {
-                speakOnce("rule-shiinamachi", "ドアかいひかた、確認");
+                speakOnce("rule-shiinamachi", "整列、確認");
             }
             // 方向幕確認：時間帯に関係なく必ず実施
             speakOnce("rule-shiinamachi_maku", "方向幕確認");
