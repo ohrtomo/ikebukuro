@@ -531,3 +531,16 @@ body.guidance-lock {
   max-width: 100%;
   /* 高さ方向はグリッドの行高に合わせる。溢れたらそのまま（隠さない） */
 }
+
+/* すべての画面はデフォルトでは非表示 */
+.screen {
+  display: none;
+  width: 100%;
+  height: calc(var(--vh, 1vh) * 100);
+}
+
+/* active が付いた 1画面だけを表示する */
+.screen.active {
+  display: flex;          /* もともと flex で組んでいるので flex に */
+  flex-direction: column; /* 縦積みレイアウト */
+}

@@ -4216,3 +4216,5 @@ window.addEventListener("orientationchange", updateViewportHeight);
 
 // 最初に1回だけ呼んでおく
 updateViewportHeight();
+
+
