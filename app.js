@@ -3,7 +3,7 @@ function haversine(lat1, lon1, lat2, lon2) {
 	const R = 6371000;
 	const toRad = (x) => (x * Math.PI) / 180;
 	const dLat = toRad(lat2 - lat1);
-	const dLon = toRad(lon2 - lon1);
+	const dLon = toRad(lat2 - lon1);
 	const a =
 		Math.sin(dLat / 2) ** 2 +
 		Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
@@ -382,6 +382,22 @@ function isJapaneseHoliday(date) {
 }
 
 // ==== Screens ====
+
+// ★ 共通：画面切り替えヘルパー
+//   指定した id の .screen だけを表示し、それ以外は必ず非表示にする
+function showScreen(targetId) {
+    const screens = document.querySelectorAll(".screen");
+    screens.forEach((scr) => {
+        if (scr.id === targetId) {
+            scr.classList.add("active");
+            scr.style.display = "";       // CSS のデフォルト表示に任せる
+        } else {
+            scr.classList.remove("active");
+            scr.style.display = "none";   // 強制的に非表示
+        }
+    });
+}
+
 function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
 	const c = el("div", { class: "container" });
@@ -558,7 +574,7 @@ function screenSettings() {
 	const typeSel2 = el("select");
 	typeSel2.appendChild(el("option", { value: "" }, "")); // ★
 
-		state.datasets.types.forEach((t) => {
+	state.datasets.types.forEach((t) => {
 		typeSel2.appendChild(el("option", { value: t }, t));
 	});
 
@@ -601,7 +617,7 @@ function screenSettings() {
 			el("div", {}, [el("label", {}, "行先(後)"), destSel2]),
 		]),
 
-            // ★ 変更となる駅
+        // ★ 変更となる駅
     	el("div", { class: "row" }, [
     	    el("label", {}, "変更となる駅"),
     	    changeStationSel,
@@ -739,25 +755,17 @@ function screenSettings() {
         if (nonPassengerFirst)  state.runtime.extraStopsQueue.push("first");
         if (nonPassengerSecond) state.runtime.extraStopsQueue.push("second");
 
-        // 設定画面を一旦閉じる
-        document
-            .getElementById("screen-settings")
-            .classList.remove("active");
-
+        // 設定画面を閉じる
+        // → 共通ヘルパーで画面切り替え
         if (state.runtime.extraStopsQueue.length > 0) {
-            // 追加停車駅設定からスタート
             const mode = state.runtime.extraStopsQueue.shift();
             state.runtime.extraStopsMode = mode;
             renderNonPassengerExtraStopsScreen();
-            document
-                .getElementById("screen-extra-stops")
-                .classList.add("active");
+            showScreen("screen-extra-stops");
         } else {
             // 回送・試運転・臨時が一切ない場合 → そのまま開始画面へ
             startGpsWatch();
-            document
-                .getElementById("screen-start")
-                .classList.add("active");
+            showScreen("screen-start");
 
             // ★ 下り列車なら「地下起動」ボタンを表示
             const startRoot = document.getElementById("screen-start");
@@ -765,7 +773,7 @@ function screenSettings() {
                 startRoot._updateUndergroundButtonVisibility();
             }
         }
-    }
+    };
 
 
     // ---- 画面にパーツを配置 ----
@@ -852,13 +860,11 @@ function screenStart() {
             // ★ 案内開始から10秒間は他の案内をミュート
             state.runtime.muteUntil = Date.now() + 10000;
 
-            document.getElementById("screen-start").classList.remove("active");
-            document.getElementById("screen-guidance").classList.add("active");
+            showScreen("screen-guidance");
             startGuidance();
 
         } else if (e.target.id === "btn-cancel") {
-            document.getElementById("screen-start").classList.remove("active");
-            document.getElementById("screen-settings").classList.add("active");
+            showScreen("screen-settings");
 
         } else if (e.target.id === "btn-underground-start") {
             // ★ 地下起動ボタン：有楽町線地下モードで案内開始（下り列車想定）
@@ -869,8 +875,7 @@ function screenStart() {
             // 地下モード開始（下り用）
             enterUndergroundMode("downButton");
 
-            document.getElementById("screen-start").classList.remove("active");
-            document.getElementById("screen-guidance").classList.add("active");
+            showScreen("screen-guidance");
             startGuidance();
         }
     };
@@ -1071,8 +1076,7 @@ function screenGuidance() {
     modal.querySelector("#m-end").onclick = () => {
         modal.classList.remove("active");
         stopGuidance();
-        document.getElementById("screen-guidance").classList.remove("active");
-        document.getElementById("screen-settings").classList.add("active");
+        showScreen("screen-settings");
     };
 
     modal.querySelector("#m-dest").onclick = () =>
@@ -1122,8 +1126,6 @@ function screenGuidance() {
 
     return root;
 }
-
-
 
 
 // ★ 自動地下待機中の GPS 点滅（黄/灰）
@@ -1262,7 +1264,6 @@ function setGpsStatus(text) {
         s._gpsSpeed.style.color = color;
     }
 }
-
 
 
 
@@ -2415,7 +2416,6 @@ function handleUndergroundToStationName(toName) {
         return;
     }
 }
-
 
 
 
@@ -4041,6 +4041,7 @@ function screenExtraStops() {
             "開始画面へ"
         ),
     ]);
+    btnRow.id = "extraStopsButtons";
     root.appendChild(btnRow);
 
     // ボタンの動作
@@ -4049,8 +4050,7 @@ function screenExtraStops() {
     		// 設定画面に戻る
     		state.runtime.extraStopsQueue = [];
     		state.runtime.extraStopsMode  = null;
-    		root.classList.remove("active");
-	    	document.getElementById("screen-settings").classList.add("active");
+    		showScreen("screen-settings");
     
 	    } else if (e.target.id === "extraNext") {
 	    	// チェックされた駅を保存
@@ -4093,13 +4093,10 @@ function screenExtraStops() {
     
              // GPS開始 → 開始画面へ
             startGpsWatch();
-            root.classList.remove("active");
+            showScreen("screen-start");
             const startRoot = document.getElementById("screen-start");
-            if (startRoot) {
-                startRoot.classList.add("active");
-                if (startRoot._updateUndergroundButtonVisibility) {
-                    startRoot._updateUndergroundButtonVisibility();
-                }
+            if (startRoot && startRoot._updateUndergroundButtonVisibility) {
+                startRoot._updateUndergroundButtonVisibility();
             }
 
     	}
@@ -4114,7 +4111,10 @@ function init() {
 	app.append(screenSettings());
 	app.append(screenStart());
 	app.append(screenGuidance());
-    app.append(screenExtraStops()); 
+    app.append(screenExtraStops());
+
+    // ★ 初期状態：設定画面だけ表示
+    showScreen("screen-settings");
 }
 
 // ★ 追加停車駅画面のリストを描画
@@ -4216,5 +4216,3 @@ window.addEventListener("orientationchange", updateViewportHeight);
 
 // 最初に1回だけ呼んでおく
 updateViewportHeight();
-
-
