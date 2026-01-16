@@ -524,3 +524,37 @@ body.guidance-lock {
   /* 必要なら少しだけ余裕を持たせる:
      padding: 20px 8px; などに調整可 */
 }
+
+/* ===== Band1（両数＋種別）の最終調整 ===== */
+
+/* 両数 : 種別 の幅配分を 2.4 : 1.6 にして、
+   種別側の横幅を少し多めに確保する */
+#screen-guidance .band1 {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(96px, 1.6fr);
+  column-gap: 0;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+}
+
+/* 左右の子は flex 比率を使わない（グリッドに任せる） */
+#screen-guidance .band1-left,
+#screen-guidance .band1-right {
+  flex: none;
+}
+
+/* 種別エリアは「左寄せ＋中央揃え」で、左の余白を消す */
+#screen-guidance .band1-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start; /* ← center から変更 */
+}
+
+/* 種別バッジ自体を少しだけコンパクトにして、折り返しを防ぐ */
+#screen-guidance .band1-right .badge-vertical {
+  font-size: clamp(22px, 8vh, 48px);  /* ほんの少しだけ小さく */
+  padding: 18px 6px;                  /* 横の余白も気持ち細く */
+  max-width: 100%;
+  max-height: 100%;
+}
