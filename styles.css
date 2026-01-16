@@ -98,7 +98,7 @@ input[type="text"], select, input[type="number"] {
   flex-direction: row;   /* 必ず左右並び */
   align-items: stretch;
   justify-content: stretch;
-  padding: 4px 6px;
+  padding: 0px 0px;
 }
 
 /* 左 2/3：両数アイコン */
@@ -438,4 +438,39 @@ body.guidance-lock {
 :root {
   /* デフォルト値として 1vh を入れておく（あとでJSで上書き） */
   --vh: 1vh;
+}
+
+/* ===== 案内画面の左右分割レイアウト ===== */
+.screen.guidance {
+  /* 既に height: calc(var(--vh) * 100); などがあればそのまま */
+  display: flex;
+  flex-direction: column; /* 上にモーダルなどが来ても破綻しないよう一旦 column */
+}
+
+/* 実際のレイアウト枠（バンド＋右側エリア） */
+.guidance-layout {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+}
+
+/* 左側：バンド群（画面幅の 4/5） */
+.guidance-main {
+  flex: 4 1 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 右側：専用エリア（画面幅の 1/5） */
+.guidance-side {
+  flex: 1 1 0;
+  height: 100%;
+  /* 右エリアと左エリアの間に「余白を作らない」 */
+  margin: 0;
+  padding: 0;
+  /* 必要なら背景だけ変えておく（任意）
+     background: #181818;
+  */
 }

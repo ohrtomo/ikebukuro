@@ -944,6 +944,12 @@ function band1RenderCars(elm, show, cars) {
 function screenGuidance() {
     const root = el("div", { class: "screen guidance", id: "screen-guidance" });
 
+    // ===== レイアウト全体（左 4/5 = バンド群 / 右 1/5 = 専用エリア） =====
+    const layout = el("div", { class: "guidance-layout" });
+
+    // --- 左側：従来の 6 バンドをまとめたエリア（画面幅の 4/5） ---
+    const main = el("div", { class: "guidance-main" });
+
     // --- Band1: 左=両数 / 右=種別（縦書き） ---
     const band1 = el("div", { class: "band band1" }, [
         el("div", { class: "band1-left cars-wrapper" }, [
@@ -954,14 +960,8 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band2: 速度 + 音声表示（GPS 状態は Band6 へ移動） ---
-    const band2 = el("div", { class: "band band2" }, [
-        el("div", { class: "notes gps-row" }, [
-            // ★ GPS 状態表示はここには置かず、速度のみ
-            el("span", { id: "gpsSpeed" }, ""),
-        ]),
-        el("div", { class: "notes speech", id: "speechText" }, ""),
-    ]);
+    // --- Band2: 速度・音声テキストは廃止（空バンド） ---
+    const band2 = el("div", { class: "band band2" });
 
     // --- Band3: 左=列番+行先 / 右=駅間表示 ---
     const band3 = el("div", { class: "band band3" }, [
@@ -994,10 +994,20 @@ function screenGuidance() {
         el("div", { class: "clock", id: "gpsStatus" }, ""),
     ]);
 
-    // 6 段すべて追加
-    root.append(band1, band2, band3, band4, band5, band6);
+    // 左側 main に 6 バンドを追加
+    main.append(band1, band2, band3, band4, band5, band6);
 
-    // --- Menu modal（メニューウィンドウ） ---
+    // --- 右側：画面幅 1/5 の専用エリア（中身は後で指示） ---
+    const side = el("div", { class: "guidance-side", id: "guidanceSide" }, [
+        // ※ 今は空。後で中身を追加予定。
+    ]);
+
+    // レイアウト全体に左右 2 エリアを配置
+    layout.append(main, side);
+    root.append(layout);
+
+    // ===== 以下、メニューなどは従来どおり root にぶら下げ =====
+
     const modal = el("div", { class: "modal", id: "menuModal" }, [
         el("div", { class: "panel" }, [
             el("h3", {}, "メニュー"),
@@ -1023,12 +1033,8 @@ function screenGuidance() {
     root._band1       = band1;
     root._badgeType   = band1.querySelector("#badgeType");
 
-    // GPS 関連
-    root._gpsSpeed    = band2.querySelector("#gpsSpeed");
+    // GPS 状態のみ（速度の DOM はもう無い）
     root._gpsStatus   = band6.querySelector("#gpsStatus");
-
-    // 音声テキスト
-    root._speechText  = band2.querySelector("#speechText");
 
     // 列番・行先
     root._cellNo      = band3.querySelector("#cellNo");
@@ -1046,6 +1052,9 @@ function screenGuidance() {
 
     // 音声停止ボタン
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
+
+    // 右側エリアへの参照（後で使えるように）
+    root._sideArea = side;
 
     // --- メニュー開閉 ---
     band5.querySelector("#btnMenu").onclick = () => {
@@ -1077,10 +1086,10 @@ function screenGuidance() {
             state.config.type = normalizeTypeName(v);
         });
 
-    modal.querySelector("#m-stop").onclick = () => openStopList();
-    modal.querySelector("#m-train").onclick = () => openTrainChange();
+    modal.querySelector("#m-stop").onclick   = () => openStopList();
+    modal.querySelector("#m-train").onclick  = () => openTrainChange();
     modal.querySelector("#m-volume").onclick = () => openVolumePanel();
-    modal.querySelector("#m-info").onclick = () => openOperationInfo();
+    modal.querySelector("#m-info").onclick   = () => openOperationInfo();
 
     modal.querySelector("#m-reset").onclick = () => {
         exitUndergroundMode(null);
@@ -1114,6 +1123,8 @@ function screenGuidance() {
 
     return root;
 }
+
+
 
 
 // ★ 自動地下待機中の GPS 点滅（黄/灰）
@@ -2742,7 +2753,7 @@ function stopGpsWatch() {
 function startGuidance() {
     // ★ 案内開始時点の高さでもう一度測っておく
     updateViewportHeight();
-    
+
     // ★ 案内中はページスクロールを禁止
     document.body.classList.add("guidance-lock");
 
