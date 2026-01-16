@@ -423,3 +423,17 @@ input[type="text"], select, input[type="number"] {
   padding-bottom: 0;
   line-height: 1.1;   /* デフォルトより少しだけ詰める */
 }
+
+/* ===== 案内画面中はページ全体のスクロールを禁止 ===== */
+body.guidance-lock {
+  overflow: hidden;      /* ページ全体の縦スクロールを止める */
+}
+
+/* ===== 案内画面（screen-guidance）の高さを常に画面ぴったりに ===== */
+.screen.guidance {
+  /* 新しいブラウザでは 100dvh を優先（アドレスバーの分を自動調整） */
+  height: 100dvh;
+  /* 古いブラウザ向けのフォールバック */
+  height: 100vh;
+  overflow: hidden;
+}

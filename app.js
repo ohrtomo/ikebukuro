@@ -2740,6 +2740,9 @@ function stopGpsWatch() {
 
 
 function startGuidance() {
+    // ★ 案内中はページスクロールを禁止
+    document.body.classList.add("guidance-lock");
+
     // ★ runtime のショートカット
     const rt = state.runtime;
 
@@ -2835,13 +2838,16 @@ function stopGuidance() {
     state.runtime.voiceMuted = false;   // ★ 追加
     releaseWakeLock();
 
-	if (clockTimer) {
-		clearInterval(clockTimer);
-		clockTimer = null;
-	}
+    // ★ 案内終了時はスクロールロックを解除
+    document.body.classList.remove("guidance-lock");
+
+    if (clockTimer) {
+        clearInterval(clockTimer);
+        clockTimer = null;
+    }
     // ★ GPSも停止
     stopGpsWatch();
-	
+    
     // ★ 遅延情報更新も停止
     stopDelayWatch();
 
@@ -2855,6 +2861,7 @@ function stopGuidance() {
     // ★ 追加：GPS点滅停止
     stopGpsBlink();
 }
+
 
 function renderGuidance() {
   const root = document.getElementById("screen-guidance");
