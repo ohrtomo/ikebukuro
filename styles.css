@@ -477,3 +477,14 @@ body.guidance-lock {
 /* ★ guidance-layout / guidance-main / guidance-side は
    すでに上の「Guidance layout」セクションで定義済みなので
    ここには書かない */
+
+   /* 種別バッジが横方向に潰されないようにする */
+.band1-right .badge-vertical {
+  flex: 0 0 auto;      /* 親のflexレイアウトでも縮まないようにする */
+  max-height: none;    /* 行高さに縛らない */
+}
+
+/* バンド1右側も、必要以上に縮まないようにしておく */
+.band1-right {
+  flex: 1 0 0;         /* shrinkを抑えつつ、2:1比率は維持 */
+}
