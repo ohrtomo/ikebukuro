@@ -67,8 +67,8 @@ input[type="text"], select, input[type="number"] {
    band1: 両数＋種別縦書き
    band2: お知らせ
    band4: 列番・行先
-   band5: 時計＋メニュー
-   band6: 次駅発車時刻
+   band5: メニュー
+   band6: 時計＋遅延＋GPS
 ========================= */
 .screen.guidance.active {
   display: grid;
@@ -290,7 +290,7 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* =========================
-   Band5（時計とメニュー）
+   Band5（メニュー）
 ========================= */
 .band5 {
   background: #000;
@@ -305,6 +305,18 @@ input[type="text"], select, input[type="number"] {
 }
 .menu-btn {
   font-size: clamp(12px, 3.8vw, 22px);
+}
+
+/* =========================
+   Band6（時刻・遅延・GPS）
+========================= */
+.band6 {
+  background: #000;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;  /* 時刻 / 遅延 / GPS を3列で横並び */
+  align-items: center;
+  justify-items: center;
+  padding: 4px 8px;
 }
 
 

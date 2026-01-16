@@ -954,10 +954,10 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band2: 速度 + 音声表示（GPS状態はBand5へ移動） ---
+    // --- Band2: 速度 + 音声表示（GPS 状態は Band6 へ移動） ---
     const band2 = el("div", { class: "band band2" }, [
         el("div", { class: "notes gps-row" }, [
-            // ★ GPS 状態表示はここから削除し、速度のみ表示
+            // ★ GPS 状態表示はここには置かず、速度のみ
             el("span", { id: "gpsSpeed" }, ""),
         ]),
         el("div", { class: "notes speech", id: "speechText" }, ""),
@@ -976,25 +976,28 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band4: 発車時刻（旧 band6） ---
+    // --- Band4: 発車時刻 ---
     const band4 = el("div", { class: "band band4" }, [
         el("div", { id: "nextDepart" }, ""),
     ]);
 
-    // --- Band5: メニュー・音声停止・時計・遅延・GPS状態 ---
+    // --- Band5: メニュー＋音声停止 ---
     const band5 = el("div", { class: "band band5" }, [
         el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
         el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
+    ]);
+
+    // --- Band6: 時計＋遅延＋GPS 状態 ---
+    const band6 = el("div", { class: "band band6" }, [
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
         el("div", { class: "clock", id: "delayInfo" }, ""),
-        // ★ 追加: 遅延表示の右隣に GPS 状態表示を移動
         el("div", { class: "clock", id: "gpsStatus" }, ""),
     ]);
 
-    // ★ 6段目（band6）は廃止：append しない
-    root.append(band1, band2, band3, band4, band5);
+    // 6 段すべて追加
+    root.append(band1, band2, band3, band4, band5, band6);
 
-    // Menu modal（従来通り）
+    // --- Menu modal（メニューウィンドウ） ---
     const modal = el("div", { class: "modal", id: "menuModal" }, [
         el("div", { class: "panel" }, [
             el("h3", {}, "メニュー"),
@@ -1016,27 +1019,32 @@ function screenGuidance() {
 
     const panel = modal.querySelector(".panel");
 
-    // ★ 各要素への参照
+    // --- 各要素への参照を保存 ---
     root._band1       = band1;
-    // ★ GPS 状態は Band5 の要素を紐づけ
-    root._gpsStatus   = band5.querySelector("#gpsStatus");
-    // ★ 速度表示は従来通り Band2
-    root._gpsSpeed    = band2.querySelector("#gpsSpeed");
-    root._speechText  = band2.querySelector("#speechText");
     root._badgeType   = band1.querySelector("#badgeType");
 
-    // ★ 3段目: 列番・行先
+    // GPS 関連
+    root._gpsSpeed    = band2.querySelector("#gpsSpeed");
+    root._gpsStatus   = band6.querySelector("#gpsStatus");
+
+    // 音声テキスト
+    root._speechText  = band2.querySelector("#speechText");
+
+    // 列番・行先
     root._cellNo      = band3.querySelector("#cellNo");
     root._cellDest    = band3.querySelector("#cellDest");
 
-    // ★ 駅間表示（地下中は非表示運用）
+    // 駅間表示
     root._segmentInfo = band3.querySelector("#segmentInfo");
 
-    // ★ 発車時刻は 4段目へ
+    // 発車時刻
     root._nextDepart  = band4.querySelector("#nextDepart");
 
-    root._clock       = band5.querySelector("#clock");
-    root._delayInfo   = band5.querySelector("#delayInfo");
+    // 時計・遅延
+    root._clock       = band6.querySelector("#clock");
+    root._delayInfo   = band6.querySelector("#delayInfo");
+
+    // 音声停止ボタン
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
 
     // --- メニュー開閉 ---
@@ -1106,6 +1114,7 @@ function screenGuidance() {
 
     return root;
 }
+
 
 // ★ 自動地下待機中の GPS 点滅（黄/灰）
 let gpsBlinkTimer = null;
