@@ -428,14 +428,6 @@ body.guidance-lock {
   overflow: hidden;      /* ページ全体の縦スクロールを止める */
 }
 
-/* ===== 案内画面（screen-guidance）の高さを常に画面ぴったりに ===== */
-.screen.guidance {
-  /* 新しいブラウザでは 100dvh を優先（アドレスバーの分を自動調整） */
-  height: 100dvh;
-  /* 古いブラウザ向けのフォールバック */
-  height: 100vh;
-  overflow: hidden;
-}
 
 .band3 {
   border-bottom: none;
