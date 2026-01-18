@@ -1074,6 +1074,12 @@ function screenGuidance() {
     root._sidePrevLabel  = side.querySelector("#sidePrevLabel");
     root._sideNext2Label = side.querySelector("#sideNext2Label");
 
+    // 初期表示（データが揃うまでは非表示）
+    if (root._sideStationBox) {
+        root._sideStationBox.style.top = "10%";
+        root._sideStationBox.style.visibility = "hidden";
+    }
+
     // ===== メニュー開閉処理 =====
     band5.querySelector("#btnMenu").onclick = () => {
         modal.classList.add("active");
@@ -2962,6 +2968,7 @@ function clearSegmentDisplay() {
     if (root._sideStationBox) {
         root._sideStationBox.textContent = "";
         root._sideStationBox.style.top = "10%";
+        root._sideStationBox.style.visibility = "hidden";
     }
     if (root._sidePrevLabel) {
         root._sidePrevLabel.textContent = "";
@@ -3093,6 +3100,33 @@ function computeCurrentSegmentPair(lat, lng) {
         : { prev: best.b, next: best.a };
 }
 
+
+// 駅構内（200m 圏内）にいる時：その駅を基準に「前駅 / 次駅」を確定する
+// ※ next(進行方向側) が取れない終端駅では null になる
+function computeSegmentFromStation(stationName) {
+    if (!stationName) return null;
+
+    const lineId = state.runtime.routeLine || getLineForStation(stationName);
+    const order = lineId ? getLineOrderById(lineId) : null;
+    if (!order) return null;
+
+    const idx = order.indexOf(stationName);
+    if (idx === -1) return null;
+
+    const down = state.config.direction === "下り";
+    const prevIdx = down ? idx - 1 : idx + 1;
+    const nextIdx = down ? idx + 1 : idx - 1;
+
+    const prev = (prevIdx >= 0 && prevIdx < order.length) ? order[prevIdx] : null;
+    const next = (nextIdx >= 0 && nextIdx < order.length) ? order[nextIdx] : null;
+
+    // next が無い（終端）なら、カーナビ表示は消す
+    if (!next) return null;
+
+    return { prev, next };
+}
+
+
 function updateSegmentDisplay(ns, lat, lng) {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._segmentInfo) return;
@@ -3107,11 +3141,18 @@ function updateSegmentDisplay(ns, lat, lng) {
     if (ns) {
         updateRouteLock(ns);
     }
-
     // 駅 200m 圏内は「ただいま駅」
     if (ns && ns.name && typeof ns.distance === "number" && ns.distance <= 200) {
         root._segmentInfo.textContent = `ただいま${ns.name}`;
         root._segmentInfo.style.visibility = "visible";
+
+        // ★ 右側カーナビ風表示も更新（駅構内でも更新しないと固まるため）
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            const seg = computeSegmentFromStation(ns.name);
+            updateSideNavigator(seg, lat, lng);
+        } else {
+            updateSideNavigator(null, lat, lng);
+        }
         return;
     }
 
@@ -3139,10 +3180,21 @@ function updateSideNavigator(seg, lat, lng) {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._sideArea || !root._sideStationBox) return;
 
+    // 地下モード中はカーナビ表示も消す
+    if (state.runtime.undergroundMode) {
+        root._sideStationBox.textContent = "";
+        root._sideStationBox.style.top = "10%";
+        root._sideStationBox.style.visibility = "hidden";
+        if (root._sidePrevLabel)  root._sidePrevLabel.textContent = "";
+        if (root._sideNext2Label) root._sideNext2Label.textContent = "";
+        return;
+    }
+
     // 情報がない時はリセットして終了
     if (!seg || !seg.next || !Number.isFinite(lat) || !Number.isFinite(lng)) {
         root._sideStationBox.textContent = "";
         root._sideStationBox.style.top = "10%";
+        root._sideStationBox.style.visibility = "hidden";
         if (root._sidePrevLabel)  root._sidePrevLabel.textContent = "";
         if (root._sideNext2Label) root._sideNext2Label.textContent = "";
         return;
@@ -3153,14 +3205,16 @@ function updateSideNavigator(seg, lat, lng) {
 
     // ひとつ前の駅ラベル
     if (root._sidePrevLabel) {
-        root._sidePrevLabel.textContent = seg.prev ? `前駅：${seg.prev}` : "";
+        root._sidePrevLabel.textContent = seg.prev || "";
     }
 
     // 次の次の駅ラベル
     if (root._sideNext2Label) {
         const next2 = getNext2StationName(seg);
-        root._sideNext2Label.textContent = next2 ? `次の次：${next2}` : "";
+        root._sideNext2Label.textContent = next2 || "";
     }
+
+    root._sideStationBox.style.visibility = "visible";
 
     // 長方形内の駅名
     root._sideStationBox.textContent = seg.next || "";
@@ -3168,6 +3222,7 @@ function updateSideNavigator(seg, lat, lng) {
     // 駅までの距離 → 縦位置に反映
     if (!nextInfo || !Number.isFinite(nextInfo.lat) || !Number.isFinite(nextInfo.lng)) {
         root._sideStationBox.style.top = "10%";
+        root._sideStationBox.style.visibility = "hidden";
         return;
     }
 
@@ -3183,79 +3238,6 @@ function updateSideNavigator(seg, lat, lng) {
 }
 
 
-function updateSideNavigator(ns, lat, lng) {
-    const root = document.getElementById("screen-guidance");
-    if (!root || !root._sideArea) return;
-
-    const rect    = root._sideStationRect || root._sideArea.querySelector("#sideStationRect");
-    const next2El = root._sideNext2Label  || root._sideArea.querySelector("#sideNext2");
-    const prevEl  = root._sidePrevLabel   || root._sideArea.querySelector("#sidePrev");
-
-    if (!rect || !next2El || !prevEl) return;
-
-    // 地下モード中 or 位置情報なし → 非表示
-    if (state.runtime.undergroundMode ||
-        !Number.isFinite(lat) || !Number.isFinite(lng)) {
-        rect.style.visibility = "hidden";
-        next2El.textContent = "";
-        prevEl.textContent  = "";
-        return;
-    }
-
-    // 前駅⇒次駅のペアを推定
-    const seg = computeCurrentSegmentPair(lat, lng);
-    if (!seg) {
-        rect.style.visibility = "hidden";
-        next2El.textContent = "";
-        prevEl.textContent  = "";
-        return;
-    }
-
-    // 中央の長方形：次駅
-    rect.textContent = seg.next || "";
-    rect.style.visibility = "visible";
-
-    // 下部ラベル：ひとつ前の駅
-    prevEl.textContent = seg.prev || "";
-
-    // 上部ラベル：次の次駅（ルート確定時のみ）
-    let next2Name = "";
-    const rt = state.runtime;
-    const order = rt.routeLine ? getLineOrderById(rt.routeLine) : null;
-    if (order && seg.next) {
-        const idx = order.indexOf(seg.next);
-        if (idx !== -1) {
-            const down = state.config.direction === "下り";
-            const nextIdx = down ? idx + 1 : idx - 1;
-            if (nextIdx >= 0 && nextIdx < order.length) {
-                next2Name = order[nextIdx];
-            }
-        }
-    }
-    next2El.textContent = next2Name || "";
-
-    // 次駅までの距離 → 長方形の縦位置（上：遠い／下：近い）
-    const stationMap = state.datasets.stations || {};
-    const infoNext   = stationMap[seg.next];
-
-    let dNext = null;
-    if (infoNext && infoNext.lat != null && infoNext.lng != null) {
-        dNext = haversine(lat, lng, infoNext.lat, infoNext.lng);
-    }
-
-    const maxDisplay = 1500; // m：これ以上は「一番遠い」扱い
-    let ratio = 1;
-    if (typeof dNext === "number" && dNext >= 0) {
-        // ratio = 0（駅直近）〜1（遠い）
-        ratio = Math.min(1, dNext / maxDisplay);
-    }
-
-    const center = 50; // 赤丸（現在位置）の top% 想定
-    const span   = 40; // 上方向への最大オフセット
-    const topPercent = center - span * ratio; // 遠い: 10%、近い: 50% 付近
-
-    rect.style.top = `${topPercent}%`;
-}
 
 
 // ★ 遅延情報の取得＆画面反映
@@ -3682,8 +3664,6 @@ function onPos(pos) {
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
     updateSegmentDisplay(ns, latitude, longitude);
 
-    // ★ 右側カーナビ風表示の更新
-    updateSideNavigator(ns, latitude, longitude);    
 
     // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
     if (
