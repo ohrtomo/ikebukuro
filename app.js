@@ -2729,10 +2729,13 @@ function startGpsWatch() {
 
     gpsWatchId = navigator.geolocation.watchPosition(
         (pos) => {
-            // ★ ① 精度チェック（accuracyが大きすぎるものは破棄）
+            // ★ ① 精度チェック
+            // これまで「200m超は破棄」していたが、屋内などで更新が完全に止まるケースがあるため、
+            // 表示更新は続ける（ただし精度が極端に悪いものだけ破棄し、警告文言を表示する）。
             const acc = pos.coords.accuracy ?? 9999;
-            if (acc > 200) {
-                setGpsStatus(`位置情報の精度が低いため無視しました（約${acc.toFixed(0)}m）`);
+            // 1000m超はさすがに危険なので破棄
+            if (acc > 1000) {
+                setGpsStatus(`精度が低すぎます（約${acc.toFixed(0)}m）`);
                 return;
             }
 
@@ -2745,7 +2748,13 @@ function startGpsWatch() {
                 return;
             }
 
-            // ★ ③ 実処理は従来通り onPos に渡す
+            // ★ ③ 精度が悪い場合は警告を出しつつ処理は継続
+            //（updateNotes 側で最新精度を表示するため、ここではメッセージだけ先出し）
+            if (acc > 200) {
+                setGpsStatus(`精度低（約${acc.toFixed(0)}m）`);
+            }
+
+            // ★ ④ 実処理は従来通り onPos に渡す
             onPos(pos);
         },
         (err) => {
@@ -2921,13 +2930,21 @@ function renderGuidance() {
 
 
 
-function updateNotes(lat, lng, timeMs) {
+function updateNotes(lat, lng, timeMs, accuracy) {
     // 座標表示は廃止し、GPS 更新時刻の記録と状態更新のみ行う
     const rt = state.runtime;
     rt.lastGpsUpdate = Date.now();
 
-    // 色判定を含む GPS 表示更新
-    setGpsStatus("GPS");
+    // ★ 最新の精度（m）も保存（表示・判定に使う）
+    const acc = Number.isFinite(accuracy) ? accuracy : null;
+    rt.gpsAccuracy = acc;
+
+    // 色判定を含む GPS 表示更新（精度が悪い場合は文言を変える）
+    if (acc != null && acc > 200) {
+        setGpsStatus(`精度低（約${Math.round(acc)}m）`);
+    } else {
+        setGpsStatus("GPS");
+    }
 }
 
 function nearestStation(lat, lng) {
@@ -3661,8 +3678,8 @@ function onPos(pos) {
         time: gpsTime
     };
 
-    // ★ 本当の GPS 時刻で表示
-    updateNotes(latitude, longitude, gpsTime);
+    // ★ 本当の GPS 時刻で表示（精度も渡す）
+    updateNotes(latitude, longitude, gpsTime, pos.coords.accuracy);
 
     // ★ 最寄り駅判定（ルートロック付き）
     const ns = nearestStation(latitude, longitude);
