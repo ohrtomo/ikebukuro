@@ -3162,8 +3162,9 @@ function updateSegmentDisplay(ns, lat, lng) {
     // 駅間表示（前駅⇒次駅）
     seg = computeCurrentSegmentPair(lat, lng);
 
-    // どうしても推定できない場合は、最寄駅が近いときだけフォールバック
-    if (!seg && ns && ns.name && typeof ns.distance === "number" && ns.distance <= 800) {
+    // ★ 重要：駅間推定に失敗しても、最寄駅から「次駅」を推定して右側表示を生かす
+    // （線路から離れた場所でのテスト時や、GPSが飛んだ時でも「駅ボックスが出ない」問題を回避）
+    if (!seg && ns && ns.name) {
         seg = computeSegmentFromStation(ns.name);
     }
 
@@ -3172,8 +3173,15 @@ function updateSegmentDisplay(ns, lat, lng) {
         return;
     }
 
-    root._segmentInfo.textContent = `${seg.prev}⇒${seg.next}`;
-    root._segmentInfo.style.visibility = "visible";
+    // 表示文字（prev が無い端点対策）
+    if (seg.prev && seg.next) {
+        root._segmentInfo.textContent = `${seg.prev}⇒${seg.next}`;
+    } else if (seg.next) {
+        root._segmentInfo.textContent = `⇒${seg.next}`;
+    } else {
+        root._segmentInfo.textContent = "";
+    }
+    root._segmentInfo.style.visibility = root._segmentInfo.textContent ? "visible" : "hidden";
 
     // 右側カーナビ風表示も更新
     updateSideNavigator(seg, lat, lng);
