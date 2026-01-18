@@ -600,6 +600,8 @@ body.guidance-lock {
   font-weight: 700;
   border-radius: 6px;
   text-align: center;
+  transition: top 0.15s linear;
+  will-change: top;
 }
 
 /* 上下のラベル */
