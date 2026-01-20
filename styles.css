@@ -74,11 +74,26 @@ input[type="text"], select, input[type="number"] {
   display: grid;
 }
 
+/* 画面全体：左 3/4 に band 群、右 1/4 は共通の空きスペース */
 .guidance {
-  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1fr 0.9fr; /* 6 段 */
+  grid-template-columns: 3fr 1fr; /* 左: 案内 / 右: 空きスペース */
   height: 100vh;
   width: 100%;
   overflow: hidden;
+}
+
+/* 左側：band1〜band6 を縦に並べる領域（比率は従来どおり） */
+.guidance-bands {
+  display: grid;
+  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1fr 0.9fr; /* 6 段 */
+  height: 100%;
+}
+
+/* 右側：各 band に関係しない共通スペース（現状は空白） */
+.side-space {
+  grid-row: 1 / -1;          /* 全段を縦にまたぐ */
+  border-left: 1px solid #333;
+  background: #050505;       /* ほんの少し暗い背景（必要なら調整可） */
 }
 
 .band {
@@ -87,6 +102,7 @@ input[type="text"], select, input[type="number"] {
   justify-content: center;
   padding: 8px;
 }
+
 
 /* =========================
    Band1（両数＋種別縦書き）
