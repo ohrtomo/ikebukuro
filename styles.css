@@ -64,31 +64,31 @@ input[type="text"], select, input[type="number"] {
 
 /* =========================
    Guidance layout
-   左 3/4: band1〜5
+   左 3/4: band1〜6
    右 1/4: 共通スペース
 ========================= */
 .screen.guidance.active {
   display: grid;
   grid-template-columns: 3fr 1fr;            /* 左: 案内 / 右: 空きスペース */
-  grid-template-rows: 2fr 2fr 2fr 1fr 1fr;   /* band1〜5（比率 2:2:2:1:1） */
+  grid-template-rows: 2fr 2fr 2fr 1fr 1fr 1fr; /* band1〜6（比率 2:2:2:1:1:1） */
   height: 100vh;
   width: 100%;
   overflow: hidden;
 }
 
-/* 左カラムに band1〜5 を固定配置 */
+/* 左カラムに band1〜6 を固定配置 */
 #screen-guidance .band1 { grid-column: 1 / 2; grid-row: 1 / 2; }
 #screen-guidance .band2 { grid-column: 1 / 2; grid-row: 2 / 3; }
 #screen-guidance .band3 { grid-column: 1 / 2; grid-row: 3 / 4; }
 #screen-guidance .band4 { grid-column: 1 / 2; grid-row: 4 / 5; }
 #screen-guidance .band5 { grid-column: 1 / 2; grid-row: 5 / 6; }
+#screen-guidance .band6 { grid-column: 1 / 2; grid-row: 6 / 7; }
 
 /* 右側 1/4 の空きスペース */
 #screen-guidance .side-space {
   grid-column: 2 / 3;
-  grid-row: 1 / 6;         /* band1〜5 を縦に全部またぐ */
+  grid-row: 1 / 7;         /* band1〜6 を縦に全部またぐ */
   border-left: 1px solid #333;
-  background: #050505;     /* 必要ならお好みで変更OK */
 }
 
 
@@ -317,6 +317,24 @@ input[type="text"], select, input[type="number"] {
 .menu-btn {
   font-size: clamp(12px, 3.8vw, 22px);
 }
+
+/* =========================
+   Band6（時計・遅延・GPS）
+========================= */
+.band6 {
+  background: #000;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: center;
+  justify-items: center;
+  padding: 4px 6px;
+}
+
+.gps-indicator {
+  font-size: clamp(12px, 3.8vw, 18px);
+  font-weight: 700;
+}
+
 
 
 /* =========================
