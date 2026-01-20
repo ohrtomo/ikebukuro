@@ -995,8 +995,8 @@ function screenGuidance() {
     // --- 右側 1/4 の共通スペース（カーナビ等を置く予定の空き） ---
     const sideSpace = el("div", { class: "side-space", id: "guidance-side" });
 
-    // ★ grid レイアウト用に band1〜5 + 右側スペースを追加
-    root.append(band1, band2, band3, band4, band5, sideSpace);
+        // ★ grid レイアウト用に band1〜6 + 右側スペースを追加
+    root.append(band1, band2, band3, band4, band5, band6, sideSpace);
 
     // Menu modal（従来通り）
     const modal = el("div", { class: "modal", id: "menuModal" }, [
