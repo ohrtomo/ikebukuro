@@ -954,11 +954,10 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band2: 音声表示のみ（お知らせエリア） ---
+    // --- Band2: 音声メッセージ専用 ---
     const band2 = el("div", { class: "band band2" }, [
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
-
 
     // --- Band3: 左=列番+行先 / 右=駅間表示 ---
     const band3 = el("div", { class: "band band3" }, [
@@ -973,32 +972,33 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band4: 発車時刻（旧 band6） ---
+    // --- Band4: 次駅発車時刻 ---
     const band4 = el("div", { class: "band band4" }, [
         el("div", { id: "nextDepart" }, ""),
     ]);
 
-    // --- Band5: メニュー・音声停止 ---
+    // --- Band5: メニュー + 音声停止ボタン ---
     const band5 = el("div", { class: "band band5" }, [
         el("div", { class: "menu-btn", id: "btnMenu" }, "≡"),
         el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
     ]);
 
-    // --- Band6: 時計・遅延・GPS 状態 ---
+    // --- Band6: 時計 + 遅延 + GPS 状態表示 ---
     const band6 = el("div", { class: "band band6" }, [
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
         el("div", { class: "clock", id: "delayInfo" }, ""),
-        el("div", { class: "gps-indicator", id: "gpsStatus" }, "GPS"),
+        el("div", { class: "gps-indicator" }, [
+            el("span", { id: "gpsStatus" }, "GPS"),
+        ]),
     ]);
 
+    // --- Band7: 予備の空きエリア（空のまま） ---
+    const band7 = el("div", { class: "band band7" }, []);
 
-    // --- 右側 1/4 の共通スペース（カーナビ等を置く予定の空き） ---
-    const sideSpace = el("div", { class: "side-space", id: "guidance-side" });
+    // ★ 7段すべてを追加
+    root.append(band1, band2, band3, band4, band5, band6, band7);
 
-        // ★ grid レイアウト用に band1〜6 + 右側スペースを追加
-    root.append(band1, band2, band3, band4, band5, band6, sideSpace);
-
-    // Menu modal（従来通り）
+    // --- Menu modal（従来通り） ---
     const modal = el("div", { class: "modal", id: "menuModal" }, [
         el("div", { class: "panel" }, [
             el("h3", {}, "メニュー"),
@@ -1022,25 +1022,21 @@ function screenGuidance() {
 
     // ★ 各要素への参照
     root._band1       = band1;
-    root._gpsStatus   = band6.querySelector("#gpsStatus");   // ★ GPS は band6 へ
-    root._speechText  = band2.querySelector("#speechText");
     root._badgeType   = band1.querySelector("#badgeType");
 
-    // ★ 3段目へ移動
+    root._speechText  = band2.querySelector("#speechText");
+
     root._cellNo      = band3.querySelector("#cellNo");
     root._cellDest    = band3.querySelector("#cellDest");
+    root._segmentInfo = band3.querySelector("#segmentInfo");
 
-    // ★ 駅間表示（地下中は非表示運用）
-    root._segmentInfo = band3.querySelector("#segmentInfo"); // ★追加
-
-    // ★ 発車時刻は 4段目へ
     root._nextDepart  = band4.querySelector("#nextDepart");
 
-    // ★ 時計・遅延は 6段目へ
-    root._clock        = band6.querySelector("#clock");
-    root._delayInfo    = band6.querySelector("#delayInfo");
+    root._clock       = band6.querySelector("#clock");
+    root._delayInfo   = band6.querySelector("#delayInfo");
+    root._gpsStatus   = band6.querySelector("#gpsStatus");
+
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
-    root._sideSpace    = sideSpace;  // ← 右側エリアを将来使うための参照
 
     // --- メニュー開閉 ---
     band5.querySelector("#btnMenu").onclick = () => {
@@ -1111,6 +1107,7 @@ function screenGuidance() {
 }
 
 
+
 // ★ 自動地下待機中の GPS 点滅（黄/灰）
 let gpsBlinkTimer = null;
 let gpsBlinkOn = false;
@@ -1172,46 +1169,75 @@ function setGpsStatus(text) {
         stopGpsBlink();
     }
 
-    const displayText = text || "";
+    // 速度表示テキスト（地下モード中は表示しない）
+    const speedText =
+        rt.lastPosition &&
+        typeof rt.speedKmh === "number" &&
+        Number.isFinite(rt.speedKmh)
+            ? `${Math.round(rt.speedKmh)} km/h`
+            : "— km/h";
 
-    // ===== 地下モード中：黄色固定 =====
+    // ===== 地下モード中 =====
     if (rt.undergroundMode) {
+        // 表示文言は「GPS」、色は黄色固定
         if (g && g._gpsStatus) {
             g._gpsStatus.textContent = "GPS";
             g._gpsStatus.style.color = "yellow";
         }
         if (s && s._gpsStatus) {
-            // 開始画面側はメッセージ（「地下モード」など）をそのまま表示
-            s._gpsStatus.textContent = displayText || "GPS";
+            s._gpsStatus.textContent = "GPS";
             s._gpsStatus.style.color = "yellow";
+        }
+
+        // ★ 速度表示は完全に消す
+        if (g && g._gpsSpeed) {
+            g._gpsSpeed.textContent = "";
+            g._gpsSpeed.style.display = "none";
+        }
+        if (s && s._gpsSpeed) {
+            s._gpsSpeed.textContent = "";
+            s._gpsSpeed.style.display = "none";
         }
         return;
     }
 
-    // ===== 地下待機中：点滅ロジックに委譲 =====
+    // ===== 地下モードではない =====
+    // 速度欄は Start 画面のみ表示する（案内画面の速度表示は廃止）
+    if (s && s._gpsSpeed) {
+        s._gpsSpeed.style.display = "";
+        s._gpsSpeed.textContent = speedText;
+    }
+    // g._gpsSpeed は使わない
+
+    // 地下待機中：文言/色は点滅側が管理（ここでは上書きしない）
     if (isUndergroundWaiting) {
         applyGpsBlinkColor(); // 初回反映の保険
         return;
     }
 
-    // ===== 通常表示 =====
-    // 案内画面：ラベル「GPS」だけを出し、色で状態を表現
-    // 開始画面：従来通りメッセージを表示
+    // 通常表示（Start画面は text を表示、案内画面は "GPS" 固定で色のみ反映）
+    const displayText = text || "";
+
     const now = Date.now();
     const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
     const color = ageSec <= 3 ? "lime" : "red";
 
+    // 案内画面：常に "GPS" のみ表示
     if (g && g._gpsStatus) {
         g._gpsStatus.textContent = "GPS";
         g._gpsStatus.style.color = color;
     }
+    // Start画面：メッセージがあればそれを表示、なければ "GPS"
     if (s && s._gpsStatus) {
         s._gpsStatus.textContent = displayText || "GPS";
         s._gpsStatus.style.color = color;
     }
+
+    // 速度カラーは Start 側だけ合わせる
+    if (s && s._gpsSpeed) {
+        s._gpsSpeed.style.color = color;
+    }
 }
-
-
 
 
 

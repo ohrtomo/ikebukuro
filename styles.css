@@ -64,39 +64,32 @@ input[type="text"], select, input[type="number"] {
 
 /* =========================
    Guidance layout
-   左 3/4: band1〜6
-   右 1/4: 共通スペース
+   band1: 両数＋種別縦書き
+   band2: お知らせ
+   band3: 列番・行先＋駅間
+   band4: 発車時刻
+   band5: メニュー＋音声停止
+   band6: 時計＋遅延＋GPS
+   band7: 予備の空きエリア
 ========================= */
 .screen.guidance.active {
   display: grid;
-  grid-template-columns: 3fr 1fr;            /* 左: 案内 / 右: 空きスペース */
-  grid-template-rows: 2fr 2fr 2fr 1fr 1fr 1fr; /* band1〜6（比率 2:2:2:1:1:1） */
+}
+
+/* ★ 7 段構成に変更しつつ全体は 100vh に収める */
+.guidance {
+  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1fr 0.9fr 0.9fr; /* 7 段 */
   height: 100vh;
   width: 100%;
   overflow: hidden;
 }
 
-/* 左カラムに band1〜6 を固定配置 */
-#screen-guidance .band1 { grid-column: 1 / 2; grid-row: 1 / 2; }
-#screen-guidance .band2 { grid-column: 1 / 2; grid-row: 2 / 3; }
-#screen-guidance .band3 { grid-column: 1 / 2; grid-row: 3 / 4; }
-#screen-guidance .band4 { grid-column: 1 / 2; grid-row: 4 / 5; }
-#screen-guidance .band5 { grid-column: 1 / 2; grid-row: 5 / 6; }
-#screen-guidance .band6 { grid-column: 1 / 2; grid-row: 6 / 7; }
-
-/* 右側 1/4 の空きスペース */
-#screen-guidance .side-space {
-  grid-column: 2 / 3;
-  grid-row: 1 / 7;         /* band1〜6 を縦に全部またぐ */
-  border-left: 1px solid #333;
-}
-
-
+/* ★ 各BANDの上下余白を 0 にする（左右だけ少し余白） */
 .band {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px;
+  padding: 0 8px;  /* 上下 0 / 左右 8px */
 }
 
 /* =========================
@@ -107,7 +100,7 @@ input[type="text"], select, input[type="number"] {
   flex-direction: row;   /* 必ず左右並び */
   align-items: stretch;
   justify-content: stretch;
-  padding: 4px 6px;
+  padding: 0 6px;        /* ★ 上下 0 に変更 */
 }
 
 /* 左 2/3：両数アイコン */
@@ -116,7 +109,7 @@ input[type="text"], select, input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  order: 1;             /* 両数を左側に固定 */
+  order: 1;
 }
 
 /* 右 1/3：種別縦書き */
@@ -125,100 +118,15 @@ input[type="text"], select, input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  order: 2;             /* 種別を右側に固定 */
+  order: 2;
 }
 
-/* 両数表示エリアの中央寄せ用 */
+/* 両数表示エリアの中央寄せ用（既存定義があればそのままでOK） */
 .cars-wrapper {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
-}
-
-/* ひし形アイコン本体 */
-.diamond {
-  width:  min(27vw, 150px);
-  height: min(27vw, 150px);
-  transform: rotate(45deg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 16px solid transparent;
-}
-
-.diamond span {
-  font-size: clamp(28px, 10vw, 70px);
-  transform: rotate(-45deg);
-  font-weight: bold;
-}
-
-/* ひし形配色（両数） */
-.d10 { background: #ff7f00; color: #000; }
-.d8  { background: #ffd000; border-color: #000; color: #000; background-clip: padding-box; }
-.d6  { background: #ff8c3a; border-color: #000; color: #000; }
-.d4  { background: #0057b8; border-color: #fff; color: #fff; }
-.d7  { background: #c1121f; color: #fff; }
-
-/* ひし形アイコン画像を使う場合 */
-.carIcon {
-  width: 80%;
-  max-width: 200px;
-  object-fit: contain;
-}
-
-/* =========================
-   種別バッジ（共通：横書きベース）
-========================= */
-.badge {
-  padding: 6px 12px;
-  border-radius: 10px;
-  font-size: clamp(14px, 5vw, 32px);
-  font-weight: 800;
-  border-width: 3px;
-  border-style: solid;
-}
-
-/* 種別配色 */
-.j-tokkyu           { background: #d90429; color: #fff; }
-.j-storea,
-.j-storb_down,
-.j-storb_up         { background: #fff; color: #000; border-color: #9acd32; }
-.j-kaisokukyuko,
-.j-chikakaiku       { background: #800080; color: #fff; }
-.j-kyuko            { background: #ff7f00; color: #fff; }
-.j-tsukin_kyuko     { background: #ffae00; color: #000; }
-.j-kaisoku          { background: #87ceeb; color: #000; }
-.j-junkyu           { background: #1f7a1f; color: #fff; }
-.j-tsukin_junkyu    { background: #0057b8; color: #fff; }
-.j-kukan_junkyu     { background: #9acd32; color: #000; }
-.j-kakutei          { background: #808080; color: #fff; }
-.j-kaiso,
-.j-rinji-a          { background: #fff; color: #d90429; border-color: #d90429; }
-
-/* =========================
-   縦書き種別バッジ（上書き）
-   class="badge badge-vertical j-xxx"
-========================= */
-.badge-vertical {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-
-  /* 文字サイズをかなり大きく（約3倍クラス） */
-  font-size: clamp(24px, 10vw, 200px);
-  font-weight: 900;
-
-  /* 余白と枠も太めに */
-  padding: 24px 10px;
-  border-radius: 16px;
-  border-width: 6px;
-
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-
-  max-height: 100%;
-  overflow: hidden;
 }
 
 /* =========================
@@ -227,21 +135,12 @@ input[type="text"], select, input[type="number"] {
 .band2 {
   background: #111;
   color: #fff;
-  padding: 8px;
+  padding: 0 8px; /* ★ 上下 0 に変更 */
 }
+
 .notes {
   font-size: clamp(12px, 3.8vw, 18px);
   line-height: 1.2;
-}
-
-/* GPS表示（GPS + 速度）を横並び */
-.gps-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-#gpsSpeed {
-  font-weight: 700;
 }
 
 /* =========================
@@ -250,9 +149,9 @@ input[type="text"], select, input[type="number"] {
 .band3 {
   background: #111;
   display: grid;
-  grid-template-columns: 1fr 1fr; /* 中央で半分 */
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 0 8px; /* ★ 上下 0 に変更 */
   align-items: center;
 }
 
@@ -264,23 +163,8 @@ input[type="text"], select, input[type="number"] {
 }
 
 .band3-left .traininfo {
-  display: flex;   /* 横並び */
+  display: flex;
   gap: 6px;
-}
-
-/* cell（列番・行先） */
-.band3 .cell {
-  padding: 4px 6px;
-  font-size: clamp(14px, 4.3vw, 26px);
-  font-weight: 700;
-  border: 1px solid #333;
-}
-
-/* 駅間表示 */
-#segmentInfo {
-  font-size: clamp(12px, 4.1vw, 24px);
-  font-weight: 700;
-  white-space: nowrap;
 }
 
 /* =========================
@@ -292,7 +176,7 @@ input[type="text"], select, input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 8px;
+  padding: 0 8px; /* ★ 上下 0 に変更 */
 }
 
 .band4 #nextDepart {
@@ -301,7 +185,7 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* =========================
-   Band5（時計とメニュー）
+   Band5（メニュー＋音声停止）
 ========================= */
 .band5 {
   background: #000;
@@ -310,30 +194,35 @@ input[type="text"], select, input[type="number"] {
   align-items: stretch;
 }
 
-.clock {
-  font-size: clamp(14px, 4.2vw, 24px);
-  font-weight: 700;
-}
-.menu-btn {
-  font-size: clamp(12px, 3.8vw, 22px);
-}
-
 /* =========================
-   Band6（時計・遅延・GPS）
+   Band6（時計＋遅延＋GPS）
 ========================= */
 .band6 {
   background: #000;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 2fr 2fr 1fr; /* 時計 / 遅延 / GPS */
   align-items: center;
-  justify-items: center;
-  padding: 4px 6px;
+  padding: 0 8px;
 }
 
-.gps-indicator {
-  font-size: clamp(12px, 3.8vw, 18px);
+.band6 .clock {
+  text-align: left;
+}
+
+.band6 .gps-indicator {
+  text-align: right;
+  font-size: clamp(12px, 3.5vw, 18px);
   font-weight: 700;
 }
+
+/* =========================
+   Band7（予備の空きスペース）
+========================= */
+.band7 {
+  background: #000;
+  padding: 0 8px; /* 一応左右だけ余白 */
+}
+
 
 
 
