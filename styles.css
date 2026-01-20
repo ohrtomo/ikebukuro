@@ -64,38 +64,33 @@ input[type="text"], select, input[type="number"] {
 
 /* =========================
    Guidance layout
-   band1: 両数＋種別縦書き
-   band2: お知らせ
-   band4: 列番・行先
-   band5: 時計＋メニュー
-   band6: 次駅発車時刻
+   左 3/4: band1〜5
+   右 1/4: 共通スペース
 ========================= */
 .screen.guidance.active {
   display: grid;
-}
-
-/* 画面全体：左 3/4 に band 群、右 1/4 は共通の空きスペース */
-.guidance {
-  grid-template-columns: 3fr 1fr; /* 左: 案内 / 右: 空きスペース */
+  grid-template-columns: 3fr 1fr;            /* 左: 案内 / 右: 空きスペース */
+  grid-template-rows: 2fr 2fr 2fr 1fr 1fr;   /* band1〜5（比率 2:2:2:1:1） */
   height: 100vh;
   width: 100%;
   overflow: hidden;
 }
 
-/* 左側：band1〜band5 を縦に並べる領域 */
-.guidance-bands {
-  display: grid;
-  /* ★ 5段分だけ定義（最後の空き行を削除） */
-  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1fr;
-  height: 100%;
+/* 左カラムに band1〜5 を固定配置 */
+#screen-guidance .band1 { grid-column: 1 / 2; grid-row: 1 / 2; }
+#screen-guidance .band2 { grid-column: 1 / 2; grid-row: 2 / 3; }
+#screen-guidance .band3 { grid-column: 1 / 2; grid-row: 3 / 4; }
+#screen-guidance .band4 { grid-column: 1 / 2; grid-row: 4 / 5; }
+#screen-guidance .band5 { grid-column: 1 / 2; grid-row: 5 / 6; }
+
+/* 右側 1/4 の空きスペース */
+#screen-guidance .side-space {
+  grid-column: 2 / 3;
+  grid-row: 1 / 6;         /* band1〜5 を縦に全部またぐ */
+  border-left: 1px solid #333;
+  background: #050505;     /* 必要ならお好みで変更OK */
 }
 
-/* 右側：各 band に関係しない共通スペース（現状は空白） */
-.side-space {
-  grid-row: 1 / -1;          /* 全段を縦にまたぐ */
-  border-left: 1px solid #333;
-  background: #050505;       /* ほんの少し暗い背景（必要なら調整可） */
-}
 
 .band {
   display: flex;
@@ -103,7 +98,6 @@ input[type="text"], select, input[type="number"] {
   justify-content: center;
   padding: 8px;
 }
-
 
 /* =========================
    Band1（両数＋種別縦書き）
@@ -395,34 +389,4 @@ input[type="text"], select, input[type="number"] {
 .small {
   font-size: 12px;
   color: #aaa;
-}
-
-/* =========================
-   Guidance layout（右側 1/4 スペース固定版）
-   左: band1〜5 の表示エリア
-   右: 共通の空きスペース（将来カーナビ表示などに使用）
-========================= */
-
-.screen.guidance.active {
-  /* 2 カラムのグリッドにする */
-  display: grid;
-  grid-template-columns: 3fr 1fr;              /* 左 3/4 : 右 1/4 */
-  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1.3fr;  /* band1〜5 の 5 段 */
-  height: 100vh;
-  width: 100%;
-  overflow: hidden;
-}
-
-/* 左カラムに band1〜5 を固定（右カラムは常に空き） */
-#screen-guidance .band1 { grid-column: 1 / 2; grid-row: 1 / 2; }
-#screen-guidance .band2 { grid-column: 1 / 2; grid-row: 2 / 3; }
-#screen-guidance .band3 { grid-column: 1 / 2; grid-row: 3 / 4; }
-#screen-guidance .band4 { grid-column: 1 / 2; grid-row: 4 / 5; }
-#screen-guidance .band5 { grid-column: 1 / 2; grid-row: 5 / 6; }
-
-/* 右側の共通スペース（今は中身なしで OK） */
-#screen-guidance .guidance-side {
-  grid-column: 2 / 3;
-  grid-row: 1 / 6;   /* 上から下までぶち抜き */
-  background: #000;
 }
