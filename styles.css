@@ -82,10 +82,11 @@ input[type="text"], select, input[type="number"] {
   overflow: hidden;
 }
 
-/* 左側：band1〜band6 を縦に並べる領域（比率は従来どおり） */
+/* 左側：band1〜band5 を縦に並べる領域 */
 .guidance-bands {
   display: grid;
-  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1fr 0.9fr; /* 6 段 */
+  /* ★ 5段分だけ定義（最後の空き行を削除） */
+  grid-template-rows: 2.2fr 1.6fr 0.9fr 1fr 1fr;
   height: 100%;
 }
 
