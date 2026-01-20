@@ -959,7 +959,6 @@ function screenGuidance() {
         el("div", { class: "notes speech", id: "speechText" }, ""),
     ]);
 
-
     // --- Band3: 左=列番+行先 / 右=駅間表示 ---
     const band3 = el("div", { class: "band band3" }, [
         el("div", { class: "band3-left" }, [
@@ -973,7 +972,7 @@ function screenGuidance() {
         ]),
     ]);
 
-    // --- Band4: 発車時刻（旧 band6） ---
+    // --- Band4: 発車時刻 ---
     const band4 = el("div", { class: "band band4" }, [
         el("div", { id: "nextDepart" }, ""),
     ]);
@@ -991,12 +990,16 @@ function screenGuidance() {
         el("div", { class: "gps-indicator", id: "gpsStatus" }, "GPS"),
     ]);
 
+    // --- Band7: 空白エリア ---
+    const band7 = el("div", { class: "band band7" }, [
+        // 空白（将来の拡張用）
+    ]);
 
     // --- 右側 1/4 の共通スペース（カーナビ等を置く予定の空き） ---
     const sideSpace = el("div", { class: "side-space", id: "guidance-side" });
 
-        // ★ grid レイアウト用に band1〜6 + 右側スペースを追加
-    root.append(band1, band2, band3, band4, band5, band6, sideSpace);
+    // ★ grid レイアウト用に band1〜7 + 右側スペースを追加
+    root.append(band1, band2, band3, band4, band5, band6, band7, sideSpace);
 
     // Menu modal（従来通り）
     const modal = el("div", { class: "modal", id: "menuModal" }, [
@@ -1022,25 +1025,25 @@ function screenGuidance() {
 
     // ★ 各要素への参照
     root._band1       = band1;
-    root._gpsStatus   = band6.querySelector("#gpsStatus");   // ★ GPS は band6 へ
+    root._gpsStatus   = band6.querySelector("#gpsStatus");   // GPS は band6
     root._speechText  = band2.querySelector("#speechText");
     root._badgeType   = band1.querySelector("#badgeType");
 
-    // ★ 3段目へ移動
+    // ★ 3段目：列番・行先
     root._cellNo      = band3.querySelector("#cellNo");
     root._cellDest    = band3.querySelector("#cellDest");
 
-    // ★ 駅間表示（地下中は非表示運用）
-    root._segmentInfo = band3.querySelector("#segmentInfo"); // ★追加
+    // ★ 駅間表示
+    root._segmentInfo = band3.querySelector("#segmentInfo");
 
-    // ★ 発車時刻は 4段目へ
+    // ★ 発車時刻（band4）
     root._nextDepart  = band4.querySelector("#nextDepart");
 
-    // ★ 時計・遅延は 6段目へ
+    // ★ 時計・遅延（band6）
     root._clock        = band6.querySelector("#clock");
     root._delayInfo    = band6.querySelector("#delayInfo");
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
-    root._sideSpace    = sideSpace;  // ← 右側エリアを将来使うための参照
+    root._sideSpace    = sideSpace;  // 右側エリア
 
     // --- メニュー開閉 ---
     band5.querySelector("#btnMenu").onclick = () => {
@@ -1109,6 +1112,7 @@ function screenGuidance() {
 
     return root;
 }
+
 
 
 // ★ 自動地下待機中の GPS 点滅（黄/灰）

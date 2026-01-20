@@ -64,40 +64,43 @@ input[type="text"], select, input[type="number"] {
 
 /* =========================
    Guidance layout
-   左 3/4: band1〜6
+   左 3/4: band1〜7
    右 1/4: 共通スペース
 ========================= */
 .screen.guidance.active {
   display: grid;
-  grid-template-columns: 3fr 1fr;            /* 左: 案内 / 右: 空きスペース */
-  grid-template-rows: 2fr 2fr 2fr 1fr 1fr 1fr; /* band1〜6（比率 2:2:2:1:1:1） */
+  grid-template-columns: 3fr 1fr;              /* 左: 案内 / 右: 空きスペース */
+  grid-template-rows: 2fr 2fr 2fr 1fr 1fr 1fr 1fr; /* band1〜7（比率 2:2:2:1:1:1:1） */
   height: 100vh;
   width: 100%;
   overflow: hidden;
 }
 
-/* 左カラムに band1〜6 を固定配置 */
+/* 左カラムに band1〜7 を固定配置 */
 #screen-guidance .band1 { grid-column: 1 / 2; grid-row: 1 / 2; }
 #screen-guidance .band2 { grid-column: 1 / 2; grid-row: 2 / 3; }
 #screen-guidance .band3 { grid-column: 1 / 2; grid-row: 3 / 4; }
 #screen-guidance .band4 { grid-column: 1 / 2; grid-row: 4 / 5; }
 #screen-guidance .band5 { grid-column: 1 / 2; grid-row: 5 / 6; }
 #screen-guidance .band6 { grid-column: 1 / 2; grid-row: 6 / 7; }
+#screen-guidance .band7 { grid-column: 1 / 2; grid-row: 7 / 8; }
 
-/* 右側 1/4 の空きスペース */
+/* 右側 1/4 の空きスペース（band1〜7 を縦に全部またぐ） */
 #screen-guidance .side-space {
   grid-column: 2 / 3;
-  grid-row: 1 / 7;         /* band1〜6 を縦に全部またぐ */
+  grid-row: 1 / 8;
   border-left: 1px solid #333;
 }
+
 
 
 .band {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px;
+  padding: 0 8px; /* 上下0・左右8px に変更 */
 }
+
 
 /* =========================
    Band1（両数＋種別縦書き）
@@ -107,7 +110,7 @@ input[type="text"], select, input[type="number"] {
   flex-direction: row;   /* 必ず左右並び */
   align-items: stretch;
   justify-content: stretch;
-  padding: 4px 6px;
+  padding: 0 6px;        /* 上下0・左右6px に変更 */
 }
 
 /* 左 2/3：両数アイコン */
@@ -227,8 +230,9 @@ input[type="text"], select, input[type="number"] {
 .band2 {
   background: #111;
   color: #fff;
-  padding: 8px;
+  padding: 0 8px;        /* 上下0・左右8px に変更 */
 }
+
 .notes {
   font-size: clamp(12px, 3.8vw, 18px);
   line-height: 1.2;
@@ -252,7 +256,7 @@ input[type="text"], select, input[type="number"] {
   display: grid;
   grid-template-columns: 1fr 1fr; /* 中央で半分 */
   gap: 8px;
-  padding: 6px 8px;
+  padding: 0 8px;        /* 上下0・左右8px に変更 */
   align-items: center;
 }
 
@@ -292,7 +296,7 @@ input[type="text"], select, input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 8px;
+  padding: 0 8px;        /* 上下0・左右8px に変更 */
 }
 
 .band4 #nextDepart {
@@ -327,14 +331,21 @@ input[type="text"], select, input[type="number"] {
   grid-template-columns: 1fr 1fr 1fr;
   align-items: center;
   justify-items: center;
-  padding: 4px 6px;
+  padding: 0 6px;        /* 上下0・左右6px に変更 */
 }
+
 
 .gps-indicator {
   font-size: clamp(12px, 3.8vw, 18px);
   font-weight: 700;
 }
 
+/* =========================
+   Band7（空白エリア）
+========================= */
+.band7 {
+  background: #000;  /* 真っ黒な空白帯にしておく */
+}
 
 
 /* =========================
