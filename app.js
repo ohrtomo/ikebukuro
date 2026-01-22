@@ -3007,19 +3007,60 @@ function computeCurrentSegmentPair(lat, lng) {
 function ensureSideSegmentElements(root) {
     if (!root) return null;
 
-    // すでに作成済みなら、そのまま返す
-    if (root._navSegNext && root._navSegPrev && root._navCurrentStation) {
+    // すでに作成済みなら再利用
+    if (root._navSegNext && root._navSegPrev && root._navCurrentStation && root._navTrain) {
         return {
-            root,
             segNext: root._navSegNext,
             segPrev: root._navSegPrev,
             currentBox: root._navCurrentStation,
+            navTrain: root._navTrain,
         };
     }
 
     const wrapper = root.querySelector(".nav-track-wrapper");
     if (!wrapper) return null;
 
+    // --- 初回だけ、右側エリアを「上・中央・下」の3バンド構成に組み替える ---
+    let topBand = wrapper.querySelector(".nav-side-top");
+    let middleBand = wrapper.querySelector(".nav-side-middle");
+    let bottomBand = wrapper.querySelector(".nav-side-bottom");
+
+    if (!middleBand) {
+        // まだ旧構造（縦線と赤丸だけ）の場合は、既存要素を中央バンドに移す
+        const track = wrapper.querySelector(".nav-track");
+        const train = wrapper.querySelector(".nav-train");
+
+        topBand = document.createElement("div");
+        topBand.className = "nav-side-band nav-side-top";
+
+        middleBand = document.createElement("div");
+        middleBand.className = "nav-side-middle";
+
+        bottomBand = document.createElement("div");
+        bottomBand.className = "nav-side-band nav-side-bottom";
+
+        if (track) middleBand.appendChild(track);
+        if (train) middleBand.appendChild(train);
+
+        // ラッパー内をいったん空にしてから、3バンドを配置
+        while (wrapper.firstChild) {
+            wrapper.removeChild(wrapper.firstChild);
+        }
+        wrapper.appendChild(topBand);
+        wrapper.appendChild(middleBand);
+        wrapper.appendChild(bottomBand);
+    }
+
+    // 念のため参照をDOMから取り直し
+    topBand = topBand || wrapper.querySelector(".nav-side-top");
+    middleBand = middleBand || wrapper.querySelector(".nav-side-middle");
+    bottomBand = bottomBand || wrapper.querySelector(".nav-side-bottom");
+
+    const navTrain =
+        (middleBand && middleBand.querySelector(".nav-train")) ||
+        wrapper.querySelector(".nav-train");
+
+    // --- 上・下の駅名ラベルと中央の黄色い枠を生成 ---
     const segNext = document.createElement("div");
     segNext.className = "nav-seg-label nav-seg-label-next";
 
@@ -3029,23 +3070,24 @@ function ensureSideSegmentElements(root) {
     const currentBox = document.createElement("div");
     currentBox.className = "nav-current-station";
 
-    // wrapper 内に追加（線と赤丸の上に重なる）
-    wrapper.appendChild(segNext);
-    wrapper.appendChild(segPrev);
-    wrapper.appendChild(currentBox);
+    if (topBand) topBand.appendChild(segNext);
+    if (bottomBand) bottomBand.appendChild(segPrev);
+    if (middleBand) middleBand.appendChild(currentBox);
 
-    // 参照を root に覚えさせる
+    // 参照を保存
     root._navSegNext = segNext;
     root._navSegPrev = segPrev;
     root._navCurrentStation = currentBox;
+    root._navTrain = navTrain;
 
-    // 旧 BAND3 テキストは「裏のデバッグ用」に退避しておく（画面には出さない）
+    // 右側ナビを使うので、中央の「A⇒B」テキストは非表示にしておく
     if (root._segmentInfo) {
         root._segmentInfo.style.display = "none";
     }
 
-    return { root, segNext, segPrev, currentBox };
+    return { segNext, segPrev, currentBox, navTrain };
 }
+
 
 
 
