@@ -90,8 +90,59 @@ input[type="text"], select, input[type="number"] {
   grid-column: 2 / 3;
   grid-row: 1 / 8;
   border-left: 1px solid #333;
+  display: flex;              /* 中央寄せ用 */
+  justify-content: center;    /* 左右中央 */
+  align-items: center;        /* 上下中央 */
 }
 
+/* =========================
+   右側ナビゲーションエリア
+   （縦の線路 + 現在位置の赤丸）
+========================= */
+.nav-track-wrapper {
+  position: relative;
+  width: 40%;              /* 右エリア幅の約4割 */
+  max-width: 80px;
+  height: 80%;             /* 右エリア高さの約8割 */
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 縦の線路（白と灰の縞模様） */
+.nav-track {
+  width: 18px;
+  height: 100%;
+  border-radius: 999px;
+  background-color: #555;  /* 画像の黒部分 → 灰色 */
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+
+  /* 白いブロックを縦方向に並べる */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    #ffffff 0,
+    #ffffff 14px,
+    transparent 14px,
+    transparent 28px
+  );
+}
+
+/* 現在位置を示す赤丸 */
+.nav-train {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e53935;         /* 赤 */
+  border: 2px solid #ffffff;   /* 白い縁取り */
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+
+  /* 線路の中央に重ねる（上下も中央） */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
 
 
 .band {

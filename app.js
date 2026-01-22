@@ -995,8 +995,14 @@ function screenGuidance() {
         // 空白（将来の拡張用）
     ]);
 
-    // --- 右側 1/4 の共通スペース（カーナビ等を置く予定の空き） ---
-    const sideSpace = el("div", { class: "side-space", id: "guidance-side" });
+    // --- 右側 1/4 の共通スペース（縦線路＋赤丸） ---
+    const navWrapper = el("div", { class: "nav-track-wrapper" }, [
+        el("div", { class: "nav-track" }),
+        el("div", { class: "nav-train" }),
+    ]);
+    const sideSpace = el("div", { class: "side-space", id: "guidance-side" }, [
+        navWrapper,
+    ]);
 
     // ★ grid レイアウト用に band1〜7 + 右側スペースを追加
     root.append(band1, band2, band3, band4, band5, band6, band7, sideSpace);
@@ -1043,7 +1049,9 @@ function screenGuidance() {
     root._clock        = band6.querySelector("#clock");
     root._delayInfo    = band6.querySelector("#delayInfo");
     root._btnVoiceMute = band5.querySelector("#btnVoiceMute");
-    root._sideSpace    = sideSpace;  // 右側エリア
+    root._sideSpace    = sideSpace;                 // 右側エリア
+    root._navTrack     = navWrapper.querySelector(".nav-track");
+    root._navTrain     = navWrapper.querySelector(".nav-train");
 
     // --- メニュー開閉 ---
     band5.querySelector("#btnMenu").onclick = () => {
@@ -1112,6 +1120,7 @@ function screenGuidance() {
 
     return root;
 }
+
 
 
 
