@@ -107,18 +107,24 @@ input[type="text"], select, input[type="number"] {
   padding-left: 4px;
 }
 
-/* ★ 3バンド構成にするため、縦方向のflexコンテナに */
-#screen-guidance .nav-track-wrapper {
+/* 縦の線路（中央バンドいっぱいの高さ） */
+#screen-guidance .nav-track {
   position: relative;
-  width: 40%;
-  max-width: 80px;
+  width: 18px;
   height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column; /* 上下＋中央の3つに分割 */
-  align-items: center;
-  justify-content: center;
+  background: #222;
+  border-radius: 0;            /* ★ 角丸なし（まっすぐな柱） */
+  overflow: hidden;
+  box-shadow: 0 0 0 1px #555, 0 0 10px rgba(0, 0, 0, 0.8);
+  background-image: repeating-linear-gradient(
+    180deg,
+    #eee 0px,
+    #eee 14px,
+    transparent 14px,
+    transparent 28px
+  );
 }
+
 
 /* 上下の駅名表示用BAND（横幅＝エリア幅いっぱい） */
 #screen-guidance .nav-side-band {
@@ -126,27 +132,32 @@ input[type="text"], select, input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;       /* ★ 余白ゼロ */
+  margin: 0;        /* 念のため margin もゼロ */
 }
 
-/* 上バンド：線路の縞模様3つ分の高さ想定 */
+/* 上バンド：線路の縞模様3つ分の高さ → 2/3 に縮小 */
 #screen-guidance .nav-side-top {
-  height: calc(28px * 3);
+  height: calc(28px * 3 * 2 / 3);  /* ＝ 56px 相当 */
 }
 
-/* 下バンド：線路の縞模様5つ分の高さ想定 */
+/* 下バンド：線路の縞模様5つ分の高さ → 2/3 に縮小 */
 #screen-guidance .nav-side-bottom {
-  height: calc(28px * 5);
+  height: calc(28px * 5 * 2 / 3);  /* ＝ 約 93px 相当 */
 }
 
 /* 中央バンド：線路＋赤丸＋黄色い長方形を置くエリア */
 #screen-guidance .nav-side-middle {
-  position: relative;  /* 赤丸・黄色枠の基準 */
+  position: relative;
   flex: 1 1 auto;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;       /* ★ 余白ゼロ */
+  margin: 0;
 }
+
 
 /* 縦の線路（中央バンドいっぱいの高さ） */
 #screen-guidance .nav-track {
@@ -182,7 +193,7 @@ input[type="text"], select, input[type="number"] {
   transition: top 0.25s 0.05s ease-out;
 }
 
-/* ★ 中央の黄色い「ただいま○○」表示（縦横とも2倍に拡大） */
+/* 中央の黄色い「ただいま○○」表示 */
 #screen-guidance .nav-current-station {
   position: absolute;
   z-index: 3;
@@ -191,18 +202,19 @@ input[type="text"], select, input[type="number"] {
   transform: translate(-50%, -50%);
   background: #ffeb3b;
   color: #000;
-  padding: 0 8px;               /* もともと 0 4px → 横方向 2倍 */
+  padding: 0 16px;             /* ★ 横方向の余白をさらに増やして横幅 2 倍イメージ */
   border-radius: 8px;
   writing-mode: vertical-rl;
   text-orientation: upright;
   font-size: clamp(10px, 2.4vh, 14px);
   display: none;
-  height: calc(1em * 12);       /* もともと 6行分 → 縦方向 2倍 */
-  min-width: 2.8em;             /* もともと 1.4em → 横方向 2倍 */
+  height: calc(1em * 12);      /* 縦方向は前回の 2 倍サイズのまま */
+  min-width: 5.6em;            /* ★ 元が 2.8em 程度なら 2 倍の横幅 */
   align-items: center;
   justify-content: center;
   line-height: 1;
 }
+
 
 #screen-guidance .nav-current-station.is-visible {
   display: flex;
@@ -210,16 +222,17 @@ input[type="text"], select, input[type="number"] {
 
 /* 上下の駅名ラベル：それぞれのBAND内で中央揃え */
 #screen-guidance .nav-seg-label {
-  font-size: clamp(10px, 2.2vh, 13px);
+  font-size: clamp(14px, 3vh, 20px);  /* ★ ひと回り大きく */
   color: #fff;
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
-  white-space: nowrap;
+  white-space: nowrap;                /* ★ 何文字でも折り返さず1行 */
 }
 
 #screen-guidance .nav-side-top .nav-seg-label,
 #screen-guidance .nav-side-bottom .nav-seg-label {
   text-align: center;
 }
+
 
 /* 互換用にクラス名だけ残しておく（位置指定は不要） */
 #screen-guidance .nav-seg-label-next { }
