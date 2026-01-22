@@ -98,29 +98,28 @@ input[type="text"], select, input[type="number"] {
 
 /* =========================
    右側ナビゲーションエリア
-   （縦の線路 + 現在位置の赤丸）
+   （縦の線路 + 現在位置の赤丸 + 駅名表示）
 ========================= */
 .nav-track-wrapper {
   position: relative;
   width: 40%;
   max-width: 80px;
-  height: 100%;          /* ★ 80% → 100% にしてエリアいっぱい */
-  min-height: 0;         /* ★ 高さ制限を外す（任意ですが安全のため） */
+  height: 100%;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-
 /* 縦の線路（白と灰の縞模様） */
 .nav-track {
+  position: relative;
+  z-index: 1;                 /* 一番下のレイヤー（線路） */
   width: 18px;
   height: 100%;
-  border-radius: 0;           /* ★ 角丸をなくす */
-  background-color: #555;     /* 灰色 */
+  border-radius: 0;
+  background-color: #555;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
-
-  /* 白いブロックを縦方向に並べる */
   background-image: repeating-linear-gradient(
     to bottom,
     #ffffff 0,
@@ -130,22 +129,70 @@ input[type="text"], select, input[type="number"] {
   );
 }
 
-
 /* 現在位置を示す赤丸 */
 .nav-train {
   position: absolute;
+  z-index: 3;                 /* 一番上：赤丸 */
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #e53935;         /* 赤 */
-  border: 2px solid #ffffff;   /* 白い縁取り */
+  background: #e53935;
+  border: 2px solid #ffffff;
   box-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
-
-  /* 線路の中央に重ねる（上下も中央） */
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
 }
+
+/* 中央の「ただいま○○」駅名縦書きラベル */
+.nav-current-station {
+  position: absolute;
+  z-index: 2;                 /* 線路より上・赤丸より下 */
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: #ffeb3b;
+  color: #000;
+  font-weight: 700;
+  font-size: clamp(10px, 2.4vh, 14px);
+  border-radius: 6px;
+  padding: 0 4px;             /* 上下は余白 0、左右だけ少し */
+  box-sizing: border-box;
+  writing-mode: vertical-rl;  /* 縦書き */
+  text-orientation: mixed;
+  line-height: 1;
+  display: none;              /* デフォルト非表示 */
+  height: calc(1em * 6);      /* 最大6文字分の縦長を固定 */
+  min-width: 1.4em;           /* 1文字でもそれなりの幅 */
+  align-items: center;
+  justify-content: center;
+}
+
+/* JS から is-visible が付いたら表示 */
+.nav-current-station.is-visible {
+  display: flex;
+}
+
+/* 上下の駅名ラベル（B=向かう駅 上 / A=遠ざかる駅 下） */
+.nav-seg-label {
+  position: absolute;
+  z-index: 2;                 /* 線路より上に乗せる */
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: clamp(10px, 2.2vh, 13px);
+  color: #fff;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+}
+
+.nav-seg-label-next {
+  top: 6px;                   /* 上側（向かう駅 B） */
+}
+
+.nav-seg-label-prev {
+  bottom: 6px;                /* 下側（遠ざかる駅 A） */
+}
+
 
 
 .band {

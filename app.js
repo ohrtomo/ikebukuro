@@ -2876,10 +2876,33 @@ function nearestStation(lat, lng) {
 
 function clearSegmentDisplay() {
     const root = document.getElementById("screen-guidance");
-    if (!root || !root._segmentInfo) return;
-    root._segmentInfo.textContent = "";
-    root._segmentInfo.style.visibility = "hidden";
+    if (!root) return;
+
+    // 旧 BAND3 テキスト（裏用）
+    if (root._segmentInfo) {
+        root._segmentInfo.textContent = "";
+        root._segmentInfo.style.visibility = "hidden";
+    }
+
+    // 上：向かう駅 B
+    if (root._navSegNext) {
+        root._navSegNext.textContent = "";
+        root._navSegNext.style.display = "none";
+    }
+
+    // 下：遠ざかる駅 A
+    if (root._navSegPrev) {
+        root._navSegPrev.textContent = "";
+        root._navSegPrev.style.display = "none";
+    }
+
+    // 中央：ただいま○○
+    if (root._navCurrentStation) {
+        root._navCurrentStation.textContent = "";
+        root._navCurrentStation.classList.remove("is-visible");
+    }
 }
+
 
 function getLineOrderById(lineId) {
     if (lineId === "main") return MAIN_LINE_ORDER;
@@ -2980,11 +3003,65 @@ function computeCurrentSegmentPair(lat, lng) {
         : { prev: best.b, next: best.a };
 }
 
+// 右側ナビ（縦の線）に、駅名ラベル用の要素を用意する
+function ensureSideSegmentElements(root) {
+    if (!root) return null;
+
+    // すでに作成済みなら、そのまま返す
+    if (root._navSegNext && root._navSegPrev && root._navCurrentStation) {
+        return {
+            root,
+            segNext: root._navSegNext,
+            segPrev: root._navSegPrev,
+            currentBox: root._navCurrentStation,
+        };
+    }
+
+    const wrapper = root.querySelector(".nav-track-wrapper");
+    if (!wrapper) return null;
+
+    const segNext = document.createElement("div");
+    segNext.className = "nav-seg-label nav-seg-label-next";
+
+    const segPrev = document.createElement("div");
+    segPrev.className = "nav-seg-label nav-seg-label-prev";
+
+    const currentBox = document.createElement("div");
+    currentBox.className = "nav-current-station";
+
+    // wrapper 内に追加（線と赤丸の上に重なる）
+    wrapper.appendChild(segNext);
+    wrapper.appendChild(segPrev);
+    wrapper.appendChild(currentBox);
+
+    // 参照を root に覚えさせる
+    root._navSegNext = segNext;
+    root._navSegPrev = segPrev;
+    root._navCurrentStation = currentBox;
+
+    // 旧 BAND3 テキストは「裏のデバッグ用」に退避しておく（画面には出さない）
+    if (root._segmentInfo) {
+        root._segmentInfo.style.display = "none";
+    }
+
+    return { root, segNext, segPrev, currentBox };
+}
+
+
+
 function updateSegmentDisplay(ns, lat, lng) {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._segmentInfo) return;
 
-    // 地下モード中は表示しない
+    const ctx = ensureSideSegmentElements(root);
+    if (!ctx) return;
+
+    const segInfo = root._segmentInfo;
+    const segNextEl = ctx.segNext;      // 上：向かう駅 B
+    const segPrevEl = ctx.segPrev;      // 下：遠ざかる駅 A
+    const currentBox = ctx.currentBox;  // 中央：ただいま○○
+
+    // 地下モード中はすべて非表示
     if (state.runtime.undergroundMode) {
         clearSegmentDisplay();
         return;
@@ -2995,28 +3072,71 @@ function updateSegmentDisplay(ns, lat, lng) {
         updateRouteLock(ns);
     }
 
-    // 駅 200m 圏内は「ただいま駅」
-    if (ns && ns.name && typeof ns.distance === "number" && ns.distance <= 200) {
-        root._segmentInfo.textContent = `ただいま${ns.name}`;
-        root._segmentInfo.style.visibility = "visible";
-        return;
+    // 駅間（A⇔B）の推定
+    let seg = null;
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        seg = computeCurrentSegmentPair(lat, lng);
     }
 
-    // 駅間表示（前駅⇒次駅）
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        clearSegmentDisplay();
-        return;
-    }
+    // 上下ラベルのクリア用ヘルパー
+    const hideTopBottom = () => {
+        if (segNextEl) {
+            segNextEl.textContent = "";
+            segNextEl.style.display = "none";
+        }
+        if (segPrevEl) {
+            segPrevEl.textContent = "";
+            segPrevEl.style.display = "none";
+        }
+    };
 
-    const seg = computeCurrentSegmentPair(lat, lng);
     if (!seg) {
-        clearSegmentDisplay();
-        return;
+        // 駅間が決められないときは上下ラベルを消す
+        hideTopBottom();
+        if (segInfo) {
+            segInfo.textContent = "";
+            segInfo.style.visibility = "hidden";
+        }
+    } else {
+        // B = next（向かっている駅）を上に表示
+        if (segNextEl) {
+            segNextEl.textContent = seg.next || "";
+            segNextEl.style.display = seg.next ? "block" : "none";
+        }
+        // A = prev（遠ざかる駅）を下に表示
+        if (segPrevEl) {
+            segPrevEl.textContent = seg.prev || "";
+            segPrevEl.style.display = seg.prev ? "block" : "none";
+        }
+
+        // 旧 BAND3 テキストは裏で保持しておく（画面には出さない）
+        if (segInfo) {
+            if (seg.prev && seg.next) {
+                segInfo.textContent = `${seg.prev}⇒${seg.next}`;
+            } else {
+                segInfo.textContent = "";
+            }
+            segInfo.style.visibility = "hidden";
+        }
     }
 
-    root._segmentInfo.textContent = `${seg.prev}⇒${seg.next}`;
-    root._segmentInfo.style.visibility = "visible";
+    // 「ただいま○○」用の縦長ラベル（200m 以内）
+    if (currentBox) {
+        if (
+            ns &&
+            ns.name &&
+            typeof ns.distance === "number" &&
+            ns.distance <= 200
+        ) {
+            currentBox.textContent = ns.name;
+            currentBox.classList.add("is-visible");
+        } else {
+            currentBox.textContent = "";
+            currentBox.classList.remove("is-visible");
+        }
+    }
 }
+
 
 
 // ★ 遅延情報の取得＆画面反映
