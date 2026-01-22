@@ -107,69 +107,61 @@ input[type="text"], select, input[type="number"] {
   padding-left: 4px;
 }
 
-/* 縦の線路（中央バンドいっぱいの高さ） */
-#screen-guidance .nav-track {
+/* ★ 3バンド構成にするため、縦方向のflexコンテナに */
+#screen-guidance .nav-track-wrapper {
   position: relative;
-  width: 18px;
+  width: 40%;
+  max-width: 80px;
   height: 100%;
-  background: #222;
-  border-radius: 0;            /* ★ 角丸なし（まっすぐな柱） */
-  overflow: hidden;
-  box-shadow: 0 0 0 1px #555, 0 0 10px rgba(0, 0, 0, 0.8);
-  background-image: repeating-linear-gradient(
-    180deg,
-    #eee 0px,
-    #eee 14px,
-    transparent 14px,
-    transparent 28px
-  );
+  min-height: 0;
+  display: flex;
+  flex-direction: column; /* 上下＋中央の3つに分割 */
+  align-items: center;
+  justify-content: center;
 }
 
-
+/* 上下の駅名表示用BAND（横幅＝エリア幅いっぱい） */
 #screen-guidance .nav-side-band {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 上下の padding は触らず、左右だけ 0 にする */
-  padding-left: 0;
-  padding-right: 0;
-  margin: 0;
 }
 
-/* 上バンド：線路の縞模様3つ分の高さ → 2/3 に縮小 */
+/* 一番上の駅名バンド：以前 3本分 → 2本分に圧縮 */
 #screen-guidance .nav-side-top {
-  height: calc(28px * 3 * 2 / 3);  /* ＝ 56px 相当 */
+  /* 28px = 縞1つ分の高さ */
+  height: calc(28px * 2);        /* ★ 3 → 2（約2/3） */
 }
 
-/* 下バンド：線路の縞模様5つ分の高さ → 2/3 に縮小 */
+/* 一番下の駅名バンド：以前 5本分 → およそ 2/3 に */
 #screen-guidance .nav-side-bottom {
-  height: calc(28px * 5 * 2 / 3);  /* ＝ 約 93px 相当 */
+  /* 5本分 × 2/3 = 10/3 本分 ≒ 3.33本分 */
+  height: calc(28px * 10 / 3);   /* ★ 約 3.3 本分（元の2/3） */
 }
 
+/* 中央バンド：線路＋赤丸＋黄色い長方形を置くエリア */
 #screen-guidance .nav-side-middle {
-  position: relative;
+  position: relative;  /* 赤丸・黄色枠の基準 */
   flex: 1 1 auto;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* こちらも左右だけ 0 に */
-  padding-left: 0;
-  padding-right: 0;
-  margin: 0;
 }
-
 
 /* 縦の線路（中央バンドいっぱいの高さ） */
 #screen-guidance .nav-track {
   position: relative;
   width: 18px;
   height: 100%;
+
+  /* ★ 端の丸みをなくす */
+  border-radius: 0;
+
   background: #222;
-  border-radius: 999px;
-  overflow: hidden;
   box-shadow: 0 0 0 1px #555, 0 0 10px rgba(0, 0, 0, 0.8);
+
   background-image: repeating-linear-gradient(
     180deg,
     #eee 0px,
@@ -178,6 +170,7 @@ input[type="text"], select, input[type="number"] {
     transparent 28px
   );
 }
+
 
 /* 赤い丸（列車位置）は中央バンドの中央を基準に */
 #screen-guidance .nav-train {
@@ -195,23 +188,31 @@ input[type="text"], select, input[type="number"] {
   transition: top 0.25s 0.05s ease-out;
 }
 
-/* 中央の黄色い「ただいま○○」表示 */
+/* ★ 中央の黄色い「ただいま○○」表示（縦横とも2倍に拡大） */
 #screen-guidance .nav-current-station {
   position: absolute;
-  z-index: 3;
+  z-index: 2;                   /* 線路より上・赤丸より下 */
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
   background: #ffeb3b;
   color: #000;
-  padding: 0 16px;             /* ★ 横方向の余白をさらに増やして横幅 2 倍イメージ */
+  padding: 0 8px;               /* 上下0・左右だけ少し余白 */
   border-radius: 8px;
   writing-mode: vertical-rl;
   text-orientation: upright;
-  font-size: clamp(10px, 2.4vh, 14px);
+
+  /* ★ フォントを少し大きめに（縦書きでも読みやすく） */
+  font-size: clamp(14px, 3vh, 20px);
+
   display: none;
-  height: calc(1em * 12);      /* 縦方向は前回の 2 倍サイズのまま */
-  min-width: 5.6em;            /* ★ 元が 2.8em 程度なら 2 倍の横幅 */
+
+  /* ★ 縦方向はそのまま（最大6文字×2倍高さ） */
+  height: calc(1em * 12);
+
+  /* ★ 横幅をさらに2倍（以前 2.8em → 5.6em） */
+  min-width: 5.6em;
+
   align-items: center;
   justify-content: center;
   line-height: 1;
@@ -222,19 +223,23 @@ input[type="text"], select, input[type="number"] {
   display: flex;
 }
 
-/* 上下の駅名ラベル：それぞれのBAND内で中央揃え */
 #screen-guidance .nav-seg-label {
-  font-size: clamp(14px, 3vh, 20px);  /* ★ ひと回り大きく */
+  /* ★ フォント大きめ（でも画面に収まる範囲） */
+  font-size: clamp(14px, 2.8vh, 20px);
+
   color: #fff;
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
-  white-space: nowrap;                /* ★ 何文字でも折り返さず1行 */
+  white-space: nowrap;           /* ★ 必ず1行にする */
+  max-width: 100%;               /* バンド幅からはみ出さない */
+  overflow: hidden;
+  
 }
+
 
 #screen-guidance .nav-side-top .nav-seg-label,
 #screen-guidance .nav-side-bottom .nav-seg-label {
   text-align: center;
 }
-
 
 /* 互換用にクラス名だけ残しておく（位置指定は不要） */
 #screen-guidance .nav-seg-label-next { }
