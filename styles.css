@@ -126,14 +126,15 @@ input[type="text"], select, input[type="number"] {
 }
 
 
-/* 上下の駅名表示用BAND（横幅＝エリア幅いっぱい） */
 #screen-guidance .nav-side-band {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;       /* ★ 余白ゼロ */
-  margin: 0;        /* 念のため margin もゼロ */
+  /* 上下の padding は触らず、左右だけ 0 にする */
+  padding-left: 0;
+  padding-right: 0;
+  margin: 0;
 }
 
 /* 上バンド：線路の縞模様3つ分の高さ → 2/3 に縮小 */
@@ -146,7 +147,6 @@ input[type="text"], select, input[type="number"] {
   height: calc(28px * 5 * 2 / 3);  /* ＝ 約 93px 相当 */
 }
 
-/* 中央バンド：線路＋赤丸＋黄色い長方形を置くエリア */
 #screen-guidance .nav-side-middle {
   position: relative;
   flex: 1 1 auto;
@@ -154,7 +154,9 @@ input[type="text"], select, input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;       /* ★ 余白ゼロ */
+  /* こちらも左右だけ 0 に */
+  padding-left: 0;
+  padding-right: 0;
   margin: 0;
 }
 
