@@ -90,10 +90,11 @@ input[type="text"], select, input[type="number"] {
   grid-column: 2 / 3;
   grid-row: 1 / 8;
   border-left: 1px solid #333;
-  display: flex;              /* 中央寄せ用 */
-  justify-content: center;    /* 左右中央 */
-  align-items: center;        /* 上下中央 */
+  display: flex;
+  justify-content: center;    /* 横方向中央 → そのまま */
+  align-items: stretch;       /* ★ 縦方向いっぱいに広げる */
 }
+
 
 /* =========================
    右側ナビゲーションエリア
@@ -101,21 +102,22 @@ input[type="text"], select, input[type="number"] {
 ========================= */
 .nav-track-wrapper {
   position: relative;
-  width: 40%;              /* 右エリア幅の約4割 */
+  width: 40%;
   max-width: 80px;
-  height: 80%;             /* 右エリア高さの約8割 */
-  min-height: 180px;
+  height: 100%;          /* ★ 80% → 100% にしてエリアいっぱい */
+  min-height: 0;         /* ★ 高さ制限を外す（任意ですが安全のため） */
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+
 /* 縦の線路（白と灰の縞模様） */
 .nav-track {
   width: 18px;
   height: 100%;
-  border-radius: 999px;
-  background-color: #555;  /* 画像の黒部分 → 灰色 */
+  border-radius: 0;           /* ★ 角丸をなくす */
+  background-color: #555;     /* 灰色 */
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
 
   /* 白いブロックを縦方向に並べる */
@@ -127,6 +129,7 @@ input[type="text"], select, input[type="number"] {
     transparent 28px
   );
 }
+
 
 /* 現在位置を示す赤丸 */
 .nav-train {
