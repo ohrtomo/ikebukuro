@@ -423,15 +423,15 @@ input[type="text"], select, input[type="number"] {
 }
 
 /* =========================
-   Band3（列番・行先 + 駅間表示）
+   Band3（列番・行先のみ）
+   駅間表示用の右側欄はレイアウトから除外
 ========================= */
 .band3 {
   background: #111;
-  display: grid;
-  grid-template-columns: 1fr 1fr; /* 中央で半分 */
-  gap: 8px;
-  padding: 0 8px;        /* 上下0・左右8px に変更 */
+  display: flex;                /* 子要素を1つだけ中央に */
   align-items: center;
+  justify-content: center;      /* 左カラム内の中央に配置 */
+  padding: 0;                   /* ★ 余白を 0 に */
 }
 
 .band3-left,
@@ -441,8 +441,13 @@ input[type="text"], select, input[type="number"] {
   justify-content: center;
 }
 
+/* 右側の駅間表示欄はレイアウトから除外（要素自体は残す） */
+.band3-right {
+  display: none;
+}
+
 .band3-left .traininfo {
-  display: flex;   /* 横並び */
+  display: flex;   /* 列番と行先を横並び */
   gap: 6px;
 }
 
@@ -451,27 +456,28 @@ input[type="text"], select, input[type="number"] {
   padding: 4px 6px;
   font-size: clamp(14px, 4.3vw, 26px);
   font-weight: 700;
-  border: 1px solid #333;
+  border: none;                 /* ★ 四角い枠線を削除 */
+  text-align: center;
 }
 
-/* 駅間表示 */
+/* 駅間表示は右エリア用に使うので、ここでは完全に非表示 */
 #segmentInfo {
-  font-size: clamp(12px, 4.1vw, 24px);
-  font-weight: 700;
-  white-space: nowrap;
+  display: none;
 }
+
 
 /* =========================
    Band4（発車時刻）
 ========================= */
 .band4 {
   background: #000;
-  border-top: 1px solid #333;
+  border-top: none;      /* ★ 細い線を消す */
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;        /* 上下0・左右8px に変更 */
+  padding: 0 8px;
 }
+
 
 .band4 #nextDepart {
   font-size: clamp(12px, 4.8vw, 36px);
