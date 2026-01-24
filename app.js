@@ -3282,7 +3282,6 @@ function updateNavSpotsOnBand2(latitude, longitude) {
   if (!root) return;
 
   // 右側 BAND2 の線路要素
-  // 既存のレイアウトを想定して .nav-track / #navTrack を探します
   const trackEl =
     root._navBand2Track ||
     root.querySelector(".nav-track") ||
@@ -3302,6 +3301,12 @@ function updateNavSpotsOnBand2(latitude, longitude) {
     // 進行方向がまだ決まっていない（GPS 1 回目など）
     return;
   }
+
+  // ★ 列車の方向（上り/下り）によって「前方をどちら側に描くか」を決める
+  //   - 下り: 進行方向側(offset>0) を「上側」に描画
+  //   - 上り: 進行方向側(offset>0) を「下側」に描画（上下反転）
+  const direction = (state.config && state.config.direction) || "上り";
+  const forwardSign = direction === "上り" ? -1 : 1;
 
   // 既存のスポット表示を削除
   trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
@@ -3326,7 +3331,8 @@ function updateNavSpotsOnBand2(latitude, longitude) {
     if (!Number.isFinite(dist) || dist > 600) continue; // 半径600m 以内のみ表示
 
     // 進行方向ベクトルに沿った前後距離 [m]
-    const offset = sx * axis.x + sy * axis.y; // + が進行方向側, - が後ろ側
+    // offset: + が進行方向側, - が後ろ側
+    const offset = sx * axis.x + sy * axis.y;
 
     if (offset < -600 || offset > 600) continue;
 
@@ -3339,20 +3345,23 @@ function updateNavSpotsOnBand2(latitude, longitude) {
   markers.sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset));
 
   for (const { spot, offset } of markers) {
-    // BAND2 の上下 1200m（中心=0m, 上端= +600m, 下端= -600m）
-    // offset=+600m → 上端(0%), offset=0 → 中央(50%), offset=-600m → 下端(100%)
-    const topPercent = 50 - (offset / 600) * 50;
+    // ★ 上り/下りに応じて、画面上の上下方向を反転させる
+    const displayOffset = offset * forwardSign;
+
+    // BAND2 の上下 1200m（中心=0m, 上端= +600m, 下端= -600m）を 0〜100% にマッピング
+    // displayOffset=+600m → 上端(0%), displayOffset=0 → 中央(50%), displayOffset=-600m → 下端(100%)
+    const topPercent = 50 - (displayOffset / 600) * 50;
     const clamped = Math.max(0, Math.min(100, topPercent));
 
-    const el = document.createElement("div");
-    el.className = "nav-spot nav-spot--station";
-    el.textContent = spot.name || ""; // 「名称」列
+    const spotEl = document.createElement("div");
+    spotEl.className = "nav-spot nav-spot--station";
+    spotEl.textContent = spot.name || "";
+    spotEl.style.top = `${clamped}%`;
 
-    el.style.top = `${clamped}%`;
-
-    trackEl.appendChild(el);
+    trackEl.appendChild(spotEl);
   }
 }
+
 
 
 // ★ 遅延情報の取得＆画面反映
