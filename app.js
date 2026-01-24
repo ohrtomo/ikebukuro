@@ -3315,10 +3315,8 @@ function updateNavSpotsOnBand2(latitude, longitude) {
   for (const spot of spots) {
     if (!spot) continue;
 
-    // ★ 現段階では station.csv に「駅」しか入っていないため、
-    //    種類によるフィルタは行わない。
-    //    （Shift-JIS 文字化け環境だと kind が "駅" と一致しないため）
-    // if (spot.kind && spot.kind !== "駅") continue;
+    // 現段階では「駅」だけ表示する
+    if (spot.kind && spot.kind !== "駅") continue;
 
     // 現在位置からの相対座標（東西: x, 南北: y）[m]
     const sx = (spot.lng - longitude) * meterPerLng; // 東を +x
