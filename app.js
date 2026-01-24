@@ -3595,11 +3595,14 @@ function stopDelayWatch() {
 
 
 function onPos(pos) {
+    // ★ runtime のショートカットを先に取得
+    const rt = state.runtime;
+
     const { latitude, longitude } = pos.coords;
 
     const now = Date.now();
     const gpsTime = pos.timestamp;
-    const prevLastPos = rt.lastPosition;  // ★ 追加: 直前の位置を控えておく
+    const prevLastPos = rt.lastPosition;  // ★ 直前の位置を控えておく
     const ageMs = now - gpsTime;
 
     // ★ 追加保険：watchPosition 側でもチェックしているが、ここでも10秒以上前は無視
@@ -3611,7 +3614,6 @@ function onPos(pos) {
     // =========================================================
     // ★ 速度計算（外れ値連続→リセット ＋ GPS速度も参考）
     // =========================================================
-    const rt = state.runtime;
 
     // GPSが提供する速度（m/s）→ km/h（無いことも多い）
     const gpsSpeedMps = pos.coords.speed;
@@ -3619,10 +3621,9 @@ function onPos(pos) {
         typeof gpsSpeedMps === "number" &&
         Number.isFinite(gpsSpeedMps) &&
         gpsSpeedMps >= 0
-            ? Math.min(gpsSpeedMps * 3.6, 200) // 上限は安全側で丸め
+            ? Math.min(gpsSpeedMps * 3.6, 200) // 上限 200km/h で丸め
             : null;
 
-    // outlier カウンタが無い場合の保険
     if (typeof rt.speedOutlierStreak !== "number") {
         rt.speedOutlierStreak = 0;
     }
@@ -3812,7 +3813,7 @@ function onPos(pos) {
     // ★ 駅案内ロジック
     maybeSpeak(ns);
 
-    // ★ 車両アイコン
+    // ★ 車両アイコン（停車駅通過中のみ非表示）
     let show = true;
     if (ns && rt.passStations.has(ns.name) && ns.distance <= 500) {
         show = false;
@@ -3824,6 +3825,7 @@ function onPos(pos) {
         state.config.cars
     );
 }
+
 
 
 function isNonPassenger(t) {
