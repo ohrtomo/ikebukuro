@@ -599,3 +599,48 @@ input[type="text"], select, input[type="number"] {
   font-size: 12px;
   color: #aaa;
 }
+
+/* =========================
+   カーナビ（右側 BAND2）のスポット
+========================= */
+
+/* nav-track がまだ position: relative でなければ付けておく */
+.nav-track {
+  position: relative;
+}
+
+.nav-spot {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;               /* 線路より上, 赤丸(nav-train)よりは下 (赤丸側を z-index:3 などに) */
+  box-sizing: border-box;
+
+  background: #ffeb3b;
+  color: #000;
+  font-weight: 700;
+
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  line-height: 1;
+
+  padding: 0;               /* ★ 余白 0 指定 */
+  width: 1.6em;             /* 縦書き 1 文字分の幅 */
+  height: 5em;              /* 5文字ぶんの高さ（5文字が収まる想定） */
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: clamp(0.70rem, 1.6vh, 0.85rem);
+  white-space: nowrap;
+  overflow: hidden;
+
+  pointer-events: none;
+  border-radius: 4px;
+}
+
+/* 今は駅だけだが、種類ごとの拡張用フック */
+.nav-spot--station {
+  /* 必要ならここに影などを追加 */
+}

@@ -10,17 +10,95 @@ function haversine(lat1, lon1, lat2, lon2) {
 	return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+// 角度 → ラジアン
+function toRad(deg) {
+  return (deg * Math.PI) / 180;
+}
+
+// 2点間の距離 [m]
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // 地球半径[m]
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δφ = toRad(lat2 - lat1);
+  const Δλ = toRad(lng2 - lng1);
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// ★ 追加: 2点間の方位（北=0, 時計回り, ラジアン）
+function computeHeadingRad(lat1, lng1, lat2, lng2) {
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δλ = toRad(lng2 - lng1);
+
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x =
+    Math.cos(φ1) * Math.sin(φ2) -
+    Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+  if (x === 0 && y === 0) {
+    return null;
+  }
+  return Math.atan2(y, x);
+}
+
+// ★ 追加: station.csv からカーナビ用スポットを読み込む
+//   想定ヘッダ: 種類,名称,緯度,経度,...
+function parseNavSpotsCsv(csvText) {
+  if (!csvText) return [];
+
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+
+  if (!lines.length) return [];
+
+  const header = lines[0].split(",");
+  const idxKind = header.indexOf("種類");
+  const idxName = header.indexOf("名称");
+  const idxLat  = header.indexOf("緯度");
+  const idxLng  = header.indexOf("経度");
+
+  const spots = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    if (!cols.length) continue;
+
+    const kind = idxKind >= 0 ? cols[idxKind].trim() : "";
+    const name = idxName >= 0 ? cols[idxName].trim() : "";
+    const lat  = idxLat >= 0 ? parseFloat(cols[idxLat]) : NaN;
+    const lng  = idxLng >= 0 ? parseFloat(cols[idxLng]) : NaN;
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+    spots.push({ kind, name, lat, lng });
+  }
+
+  return spots;
+}
+
+
 // ==== Global state ====
 const state = {
     datasets: {
-        stations: null,
-        types: [],
-        dests: [],
-        trainTable: [],
-        carIcons: {},
-        platforms: null,   // ★ 追加: 発着番線データ
-        stationIds: null,   // ★ 追加: 駅IDマスタ
-        nonPassengerTypes: null,   // ★ 追加：回送/臨時の細分類
+      stations: null,
+      types: [],
+      dests: [],
+      trainTable: [],
+      carIcons: {},
+      platforms: null,          // ★ 発着番線データ
+      stationIds: null,         // ★ 駅IDマスタ
+      nonPassengerTypes: null,  // ★ 回送/臨時の細分類
+      navSpots: [],             // ★ 追加: カーナビ用スポット一覧（station.csv）
     },
     config: {
         direction: "上り",
@@ -89,40 +167,48 @@ const state = {
         autoUndergroundReady: false,   // ★ 上り(練馬→有楽町線) 自動地下切替待機
         lastGpsUpdate: 0,              // ★ GPS更新時刻（色判定用）
         speedOutlierStreak: 0,   // ★ 追加：外れ値が連続した回数
+        headingRad: null,   // ★ 追加: 進行方向（北=0, 時計回り, ラジアン）
+        navAxis: null,      // ★ 追加: 画面用進行方向ベクトル { x, y }
     },
 };
 
-// ==== Load datasets ====
+// ==== 各種 JSON / CSV ロード ====
 async function loadData() {
-    const [
-        stations,
-        types,
-        dests,
-        ttable,
-        carIcons,
-        platforms,
-        stationIds,
-        nonPassengerTypes,  
-    ] = await Promise.all([
-        fetch("./data/stations.json").then((r) => r.json()),
-        fetch("./data/types.json").then((r) => r.json()),
-        fetch("./data/destinations.json").then((r) => r.json()),
-        fetch("./data/train_number_table.json").then((r) => r.json()),
-        fetch("./data/car_icons.json").then((r) => r.json()),
-        fetch("./data/platform.json").then((r) => r.json()),
-        fetch("./data/stationID.json").then((r) => r.json()),
-        fetch("./data/nonpassenger_types.json").then((r) => r.json()),
-    ]);
+  const [
+    stations,
+    types,
+    dests,
+    ttable,
+    carIcons,
+    platforms,
+    stationIds,
+    nonPassengerTypes,
+    navSpotsCsvText,          // ★ 追加
+  ] = await Promise.all([
+    fetch("./data/stations.json").then((r) => r.json()),
+    fetch("./data/types.json").then((r) => r.json()),
+    fetch("./data/destinations.json").then((r) => r.json()),
+    fetch("./data/train_number_table.json").then((r) => r.json()),
+    fetch("./data/car_icons.json").then((r) => r.json()),
+    fetch("./data/platforms.json").then((r) => r.json()),
+    fetch("./data/stationID.json").then((r) => r.json()),
+    fetch("./data/nonpassenger_types.json").then((r) => r.json()),
+    fetch("./data/station.csv").then((r) => r.text()),  // ★ 追加
+  ]);
 
-    state.datasets.stations    = stations;
-    state.datasets.types       = types;
-    state.datasets.dests       = dests;
-    state.datasets.trainTable  = ttable;
-    state.datasets.carIcons    = carIcons;
-    state.datasets.platforms   = platforms;
-    state.datasets.stationIds  = stationIds;
-    state.datasets.nonPassengerTypes = nonPassengerTypes; 
+  state.datasets.stations          = stations;
+  state.datasets.types             = types;
+  state.datasets.dests             = dests;
+  state.datasets.trainTable        = ttable;
+  state.datasets.carIcons          = carIcons;
+  state.datasets.platforms         = platforms;
+  state.datasets.stationIds        = stationIds;
+  state.datasets.nonPassengerTypes = nonPassengerTypes;
+
+  // ★ 追加: CSV をパースして navSpots に格納
+  state.datasets.navSpots = parseNavSpotsCsv(navSpotsCsvText);
 }
+
 
 // ==== Speech ====
 function speakOnce(key, text) {
@@ -3162,23 +3248,90 @@ function updateSegmentDisplay(ns, lat, lng) {
         }
     }
 
-    // 「ただいま○○」用の縦長ラベル（200m 以内）
+    // 「ただいま○○」用の縦長ラベルは使用しない（常に非表示）
     if (currentBox) {
-        if (
-            ns &&
-            ns.name &&
-            typeof ns.distance === "number" &&
-            ns.distance <= 200
-        ) {
-            currentBox.textContent = ns.name;
-            currentBox.classList.add("is-visible");
-        } else {
-            currentBox.textContent = "";
-            currentBox.classList.remove("is-visible");
-        }
+        currentBox.textContent = "";
+        currentBox.classList.remove("is-visible");
     }
 }
 
+// ★ カーナビ: 右側 BAND2 の線路上にスポットを配置する
+function updateNavSpotsOnBand2(latitude, longitude) {
+  const root = document.getElementById("screen-guidance");
+  if (!root) return;
+
+  // 右側 BAND2 の線路要素
+  // 既存のレイアウトを想定して .nav-track / #navTrack を探します
+  const trackEl =
+    root._navBand2Track ||
+    root.querySelector(".nav-track") ||
+    root.querySelector("#navTrack");
+
+  if (!trackEl) {
+    // まだ線路 DOM を作っていない場合は何もしない
+    return;
+  }
+
+  const spots = state.datasets.navSpots;
+  if (!Array.isArray(spots) || !spots.length) return;
+
+  const rt = state.runtime;
+  const axis = rt.navAxis;
+  if (!axis || !Number.isFinite(axis.x) || !Number.isFinite(axis.y)) {
+    // 進行方向がまだ決まっていない（GPS 1 回目など）
+    return;
+  }
+
+  // 既存のスポット表示を削除
+  trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
+
+  const latRad = toRad(latitude);
+  const meterPerLat = 111320;                 // おおよその値
+  const meterPerLng = meterPerLat * Math.cos(latRad);
+
+  const markers = [];
+
+  for (const spot of spots) {
+    if (!spot) continue;
+
+    // 現段階では「駅」だけ表示する
+    if (spot.kind && spot.kind !== "駅") continue;
+
+    // 現在位置からの相対座標（東西: x, 南北: y）[m]
+    const sx = (spot.lng - longitude) * meterPerLng; // 東を +x
+    const sy = (spot.lat - latitude) * meterPerLat;  // 北を +y
+
+    const dist = Math.hypot(sx, sy);
+    if (!Number.isFinite(dist) || dist > 600) continue; // 半径600m 以内のみ表示
+
+    // 進行方向ベクトルに沿った前後距離 [m]
+    const offset = sx * axis.x + sy * axis.y; // + が進行方向側, - が後ろ側
+
+    if (offset < -600 || offset > 600) continue;
+
+    markers.push({ spot, offset, dist });
+  }
+
+  if (!markers.length) return;
+
+  // 画面上で重なりにくいように、現在位置に近い順に描画
+  markers.sort((a, b) => Math.abs(a.offset) - Math.abs(b.offset));
+
+  for (const { spot, offset } of markers) {
+    // BAND2 の上下 1200m（中心=0m, 上端= +600m, 下端= -600m）
+    // offset=+600m → 上端(0%), offset=0 → 中央(50%), offset=-600m → 下端(100%)
+    const topPercent = 50 - (offset / 600) * 50;
+    const clamped = Math.max(0, Math.min(100, topPercent));
+
+    const el = document.createElement("div");
+    el.className = "nav-spot nav-spot--station";
+    el.textContent = spot.name || ""; // 「名称」列
+
+    el.style.top = `${clamped}%`;
+
+    trackEl.appendChild(el);
+  }
+}
 
 
 // ★ 遅延情報の取得＆画面反映
@@ -3446,6 +3599,7 @@ function onPos(pos) {
 
     const now = Date.now();
     const gpsTime = pos.timestamp;
+    const prevLastPos = rt.lastPosition;  // ★ 追加: 直前の位置を控えておく
     const ageMs = now - gpsTime;
 
     // ★ 追加保険：watchPosition 側でもチェックしているが、ここでも10秒以上前は無視
@@ -3589,6 +3743,39 @@ function onPos(pos) {
 
     rt.speedKmh = newSpeedKmh;
 
+    // ★ 追加: カーナビ用の進行方向ベクトルを更新
+    if (
+      prevLastPos &&
+      typeof prevLastPos.lat === "number" &&
+      typeof prevLastPos.lng === "number"
+    ) {
+      const moveDist = haversine(
+        prevLastPos.lat,
+        prevLastPos.lng,
+        latitude,
+        longitude
+      );
+
+      // 5m 以上動いているときだけ方向を更新（GPS のブレ対策）
+      if (moveDist >= 5) {
+        const headingRad = computeHeadingRad(
+          prevLastPos.lat,
+          prevLastPos.lng,
+          latitude,
+          longitude
+        );
+
+        if (headingRad != null) {
+          rt.headingRad = headingRad;
+          // 画面用の単位ベクトル（東を +x, 北を +y）
+          rt.navAxis = {
+            x: Math.sin(headingRad),
+            y: Math.cos(headingRad),
+          };
+        }
+      }
+    }
+
     // ★ 最新位置を保存
     rt.lastPosition = {
         lat: latitude,
@@ -3604,6 +3791,9 @@ function onPos(pos) {
 
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
     updateSegmentDisplay(ns, latitude, longitude);
+
+    // ★ 追加: カーナビ（右側 BAND2）のスポット表示
+    updateNavSpotsOnBand2(latitude, longitude);
 
     // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
     if (
