@@ -51,6 +51,8 @@ function computeHeadingRad(lat1, lng1, lat2, lng2) {
 
 // ★ 追加: station.csv からカーナビ用スポットを読み込む
 //   想定ヘッダ: 種類,名称,緯度,経度,...
+// ★ 追加: station.csv からカーナビ用スポットを読み込む
+//   想定ヘッダ: 種類,名称,緯度,経度,...
 function parseNavSpotsCsv(csvText) {
   if (!csvText) return [];
 
@@ -62,10 +64,27 @@ function parseNavSpotsCsv(csvText) {
   if (!lines.length) return [];
 
   const header = lines[0].split(",");
-  const idxKind = header.indexOf("種類");
-  const idxName = header.indexOf("名称");
-  const idxLat  = header.indexOf("緯度");
-  const idxLng  = header.indexOf("経度");
+
+  // 通常ケース: ヘッダが UTF-8 できちんと読めている場合
+  let idxKind = header.indexOf("種類");
+  let idxName = header.indexOf("名称");
+  let idxLat  = header.indexOf("緯度");
+  let idxLng  = header.indexOf("経度");
+
+  // ★ フォールバック:
+  //   Shift-JIS などでヘッダが文字化けしている場合にも最低限動くように
+  if (idxKind < 0 || idxName < 0 || idxLat < 0 || idxLng < 0) {
+    if (header.length >= 4) {
+      // 0: 種類, 1: 名称, 2: 緯度, 3: 経度 とみなす
+      idxKind = 0;
+      idxName = 1;
+      idxLat  = 2;
+      idxLng  = 3;
+    } else {
+      console.warn("station.csv: ヘッダ解析に失敗しました:", header);
+      return [];
+    }
+  }
 
   const spots = [];
 
@@ -73,18 +92,20 @@ function parseNavSpotsCsv(csvText) {
     const cols = lines[i].split(",");
     if (!cols.length) continue;
 
-    const kind = idxKind >= 0 ? cols[idxKind].trim() : "";
-    const name = idxName >= 0 ? cols[idxName].trim() : "";
-    const lat  = idxLat >= 0 ? parseFloat(cols[idxLat]) : NaN;
-    const lng  = idxLng >= 0 ? parseFloat(cols[idxLng]) : NaN;
+    const kind = idxKind >= 0 && idxKind < cols.length ? cols[idxKind].trim() : "";
+    const name = idxName >= 0 && idxName < cols.length ? cols[idxName].trim() : "";
+    const lat  = idxLat  >= 0 && idxLat  < cols.length ? parseFloat(cols[idxLat])  : NaN;
+    const lng  = idxLng  >= 0 && idxLng  < cols.length ? parseFloat(cols[idxLng])  : NaN;
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
 
     spots.push({ kind, name, lat, lng });
   }
 
+  // console.log("navSpots loaded:", spots.length, spots[0]);
   return spots;
 }
+
 
 
 // ==== Global state ====
@@ -3294,8 +3315,10 @@ function updateNavSpotsOnBand2(latitude, longitude) {
   for (const spot of spots) {
     if (!spot) continue;
 
-    // 現段階では「駅」だけ表示する
-    if (spot.kind && spot.kind !== "駅") continue;
+    // ★ 現段階では station.csv に「駅」しか入っていないため、
+    //    種類によるフィルタは行わない。
+    //    （Shift-JIS 文字化け環境だと kind が "駅" と一致しないため）
+    // if (spot.kind && spot.kind !== "駅") continue;
 
     // 現在位置からの相対座標（東西: x, 南北: y）[m]
     const sx = (spot.lng - longitude) * meterPerLng; // 東を +x
