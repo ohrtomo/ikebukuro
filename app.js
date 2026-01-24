@@ -3276,138 +3276,161 @@ function updateSegmentDisplay(ns, lat, lng) {
     }
 }
 
-// ==== カーナビ（右側 BAND2）のスポット表示 ====
-// 駅の並び順＋上り/下りで「前方（上）」と「後方（下）」を決定。
+// ★ カーナビ: 右側 BAND2 の線路上にスポットを配置する
+//   現在位置と「自分がいる駅間の両端駅（prev / next）」の座標から
+//   線路方向の前後（前方=上 / 後方=下）を判定する。
 function updateNavSpotsOnBand2(latitude, longitude) {
-    const root = document.getElementById("screen-guidance");
-    if (!root) return;
+  const root = document.getElementById("screen-guidance");
+  if (!root) return;
 
-    // 線路（縦棒）の要素を取得
-    const track =
-        root._navBand2Track ||
-        root.querySelector(".nav-track") ||
-        root.querySelector("#navTrack");
-    if (!track) return;
+  // 右側 BAND2 の線路要素
+  // 既存のレイアウトを想定して .nav-track / #navTrack を探します
+  const trackEl =
+    root._navBand2Track ||
+    root.querySelector(".nav-track") ||
+    root.querySelector("#navTrack");
 
-    // 既存の駅スポットを削除（赤丸などは残す）
-    track.querySelectorAll(".nav-spot").forEach((el) => el.remove());
+  if (!trackEl) {
+    // まだ線路 DOM を作っていない場合は何もしない
+    return;
+  }
 
-    const allSpots = state.datasets.navSpots || [];
-    if (!allSpots.length) return;
+  const spots = state.datasets.navSpots;
+  if (!Array.isArray(spots) || !spots.length) {
+    // スポット情報なし
+    trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
+    return;
+  }
 
-    const cfg = state.config;
-    const rt  = state.runtime;
+  // 現在の「駅間 prev / next」を stations.json から推定
+  const seg = computeCurrentSegmentPair(latitude, longitude);
+  if (!seg || !seg.prev || !seg.next) {
+    // 駅間が決められないときは一旦何も描画しない
+    trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
+    return;
+  }
 
-    // 直近の基準駅を決める
-    //   優先順: 直前駅 → 最終発車駅 → 最後に停車した駅 → 今の最寄り駅
-    const ns = nearestStation(latitude, longitude);
-    let baseName = null;
+  const stations = state.datasets.stations || {};
+  const prevInfo = stations[seg.prev];
+  const nextInfo = stations[seg.next];
 
-    if (rt.prevStationName) {
-        baseName = rt.prevStationName;
-    } else if (rt.lastDepartStation) {
-        baseName = rt.lastDepartStation;
-    } else if (rt.lastStopStation) {
-        baseName = rt.lastStopStation;
-    } else if (ns && ns.name) {
-        baseName = ns.name;
+  if (
+    !prevInfo ||
+    !nextInfo ||
+    prevInfo.lat == null ||
+    prevInfo.lng == null ||
+    nextInfo.lat == null ||
+    nextInfo.lng == null
+  ) {
+    // 座標が取れない場合も描画を諦める
+    trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
+    return;
+  }
+
+  // 既存のスポット表示を削除
+  trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
+
+  // ==== ローカル座標系を構築（prev 駅を原点とする）====
+  const lat0 = prevInfo.lat;
+  const lng0 = prevInfo.lng;
+  const baseRad = toRad(lat0);
+  const meterPerLat = 111320; // おおよその値
+  const meterPerLng = meterPerLat * Math.cos(baseRad);
+
+  function toLocal(lat, lng) {
+    return {
+      x: (lng - lng0) * meterPerLng, // 東を +x
+      y: (lat - lat0) * meterPerLat, // 北を +y
+    };
+  }
+
+  // 線分 prev(A) → next(B)
+  const A = toLocal(prevInfo.lat, prevInfo.lng); // ほぼ (0,0)
+  const B = toLocal(nextInfo.lat, nextInfo.lng);
+  const ABx = B.x - A.x;
+  const ABy = B.y - A.y;
+  const len2 = ABx * ABx + ABy * ABy;
+
+  if (!Number.isFinite(len2) || len2 < 1) {
+    // prev / next がほぼ同じ座標 → 方向が定まらないので中止
+    return;
+  }
+
+  const segLen = Math.sqrt(len2);
+
+  // 現在位置 P のパラメータ tP（A を 0, B を 1 としたときの位置）
+  const P = toLocal(latitude, longitude);
+  const tP =
+    ((P.x - A.x) * ABx + (P.y - A.y) * ABy) / len2;
+
+  const maxRange = 600; // [m] 現在位置から半径 600m を表示範囲とする
+  const markers = [];
+
+  const rt = state.runtime;
+  const lockedLine = rt.routeLine;
+  const useRouteFilter = !!lockedLine;
+
+  for (const spot of spots) {
+    if (!spot) continue;
+
+    // 現段階では種類は「駅」のみを想定（CSV が増えたらここで種別分岐）
+    if (spot.kind && spot.kind !== "駅") continue;
+
+    const name = spot.name;
+    if (!name) continue;
+
+    // ルートロック済みなら、現在のルートに属さない駅は除外
+    // （分岐駅での分岐判定を利用）
+    if (useRouteFilter && !stationBelongsToLockedLine(name, lockedLine)) {
+      continue;
     }
 
-    // ルート ID を決定（ロックされていればそれ、無ければ基準駅から推定）
-    let lineId = rt.routeLine;
-    if (!lineId && baseName) {
-        lineId = getLineForStation(baseName);
-    }
-    if (!lineId && ns && ns.name) {
-        lineId = getLineForStation(ns.name);
-    }
+    // 現在位置からの距離 [m]（BAND 全体のスケール用）
+    const dist = haversine(latitude, longitude, spot.lat, spot.lng);
+    if (!Number.isFinite(dist) || dist > maxRange) continue;
 
-    const order = lineId ? getLineOrderById(lineId) : null;
-    if (!order || !Array.isArray(order) || !order.length) {
-        // 並び順が取れないときは何もしない
-        return;
-    }
+    // 線分 prev→next 上での位置関係を、A を基準に判定
+    const S = toLocal(spot.lat, spot.lng);
+    const tS =
+      ((S.x - A.x) * ABx + (S.y - A.y) * ABy) / len2;
 
-    const idxBase = baseName ? order.indexOf(baseName) : -1;
-    if (idxBase === -1) {
-        // 基準駅がその路線配列に存在しない場合も、いったん中止
-        return;
-    }
+    // 現在位置から見た「線路方向の符号付き距離」[m]
+    const along = (tS - tP) * segLen;
 
-    // 上り/下りで「index が増える方向が前方かどうか」を決める
-    // 下り: index が大きい方が前方 / 上り: index が小さい方が前方
-    const dirSign = cfg.direction === "上り" ? -1 : 1; // 下り=+1, 上り=-1
+    // along > 0 → 前方（進行方向側）、along < 0 → 後方（通過済み側）
+    const sign = along >= 0 ? +1 : -1;
 
-    // 分岐済みなら、そのルートに属する駅だけを対象にする
-    const lockedLine = rt.routeLine;
-    const useRouteFilter = !!lockedLine;
+    markers.push({
+      spot,
+      name,
+      dist,
+      sign,
+    });
+  }
 
-    const maxDist = 600; // [m] ±600m を表示範囲とする
-    const markers = [];
+  if (!markers.length) return;
 
-    for (const spot of allSpots) {
-        if (!spot) continue;
-        // 現段階では「駅」のみ
-        if (spot.kind && spot.kind !== "駅") continue;
+  // なるべく近いスポットから描画
+  markers.sort((a, b) => a.dist - b.dist);
+  const maxSpots = 12;
+  const useMarkers = markers.slice(0, maxSpots);
 
-        const name = spot.name;
-        if (!name) continue;
+  for (const m of useMarkers) {
+    const ratio = Math.min(m.dist, maxRange) / maxRange; // 0〜1
 
-        // ルートロック済みなら、そのルートに属さない駅は除外
-        if (useRouteFilter && !stationBelongsToLockedLine(name, lockedLine)) {
-            continue;
-        }
+    // sign = +1 → 上側 (0〜50%), sign = -1 → 下側 (50〜100%)
+    const topPercent = 50 - m.sign * ratio * 50;
+    const clampedTop = Math.max(0, Math.min(100, topPercent));
 
-        // 現在位置との距離 [m]
-        const dist = haversine(latitude, longitude, spot.lat, spot.lng);
-        if (!Number.isFinite(dist) || dist > maxDist) continue;
+    const el = document.createElement("div");
+    el.className = "nav-spot nav-spot--station";
+    el.textContent = m.name;
+    el.style.top = `${clampedTop}%`;
 
-        // 並び順上の位置
-        const idxSpot = order.indexOf(name);
-        if (idxSpot === -1) {
-            // 並び順に載っていない駅はとりあえずスキップ
-            continue;
-        }
-
-        const deltaIndex = idxSpot - idxBase;
-
-        // deltaIndex * dirSign が >0 → 前方、<0 → 後方
-        let sign = 0;
-        if (deltaIndex * dirSign > 0) {
-            sign = +1; // 前方（進行方向側）
-        } else if (deltaIndex * dirSign < 0) {
-            sign = -1; // 後方（通過済み側）
-        } else {
-            // 同じ index（= 基準駅そのもの）は前方扱いにしておく
-            sign = +1;
-        }
-
-        markers.push({ spot, name, dist, sign });
-    }
-
-    if (!markers.length) return;
-
-    // 手前から順に（距離が近い順）並べる
-    markers.sort((a, b) => a.dist - b.dist);
-
-    const maxSpots = 12; // 表示上限（重なり防止用）
-    const useMarkers = markers.slice(0, maxSpots);
-
-    for (const m of useMarkers) {
-        const ratio = Math.min(m.dist, maxDist) / maxDist; // 0〜1
-
-        // sign=+1 → 上側（0%〜50%）、sign=-1 → 下側（50%〜100%）
-        const topPercent = 50 - m.sign * ratio * 50;
-        const clampedTop = Math.max(0, Math.min(100, topPercent));
-
-        const el = document.createElement("div");
-        el.className = "nav-spot nav-spot--station";
-        el.textContent = m.name;
-        el.style.top = `${clampedTop}%`;
-
-        track.appendChild(el);
-    }
+    trackEl.appendChild(el);
+  }
 }
+
 
 
 
