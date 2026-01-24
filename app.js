@@ -190,7 +190,7 @@ async function loadData() {
     fetch("./data/destinations.json").then((r) => r.json()),
     fetch("./data/train_number_table.json").then((r) => r.json()),
     fetch("./data/car_icons.json").then((r) => r.json()),
-    fetch("./data/platforms.json").then((r) => r.json()),
+    fetch("./data/platform.json").then((r) => r.json()),
     fetch("./data/stationID.json").then((r) => r.json()),
     fetch("./data/nonpassenger_types.json").then((r) => r.json()),
     fetch("./data/station.csv").then((r) => r.text()),  // ★ 追加
