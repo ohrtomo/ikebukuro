@@ -648,3 +648,64 @@ input[type="text"], select, input[type="number"] {
 .nav-spot--station {
   /* 必要ならここに影などを追加 */
 }
+
+/* =========================
+   設定画面：列車参照
+========================= */
+
+.setting-train-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.train-ref-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.train-ref-mode-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.train-ref-status {
+  min-height: 1.4em;
+}
+
+.train-ref-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.train-ref-item {
+  display: grid;
+  grid-template-columns: 4em 5em 6em 1fr;
+  gap: 6px;
+  align-items: center;
+  text-align: left;
+  width: 100%;
+  padding: 10px;
+}
+
+.train-ref-time,
+.train-ref-no,
+.train-ref-type,
+.train-ref-dest {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.train-ref-no {
+  font-weight: 800;
+}
+
+.train-ref-close {
+  margin-top: 8px;
+  width: 100%;
+}

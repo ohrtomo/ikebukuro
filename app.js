@@ -593,6 +593,13 @@ function screenSettings() {
 	// 検索ボタン（前半用）
 	const btnSearch = el("button", { class: "btn" }, "検索");
 
+    // 参照ボタン（前半用）
+    const btnReference = el(
+        "button",
+        { class: "btn secondary", type: "button" },
+        "参照",
+    );
+
 	// ---- 上り/下り（方向ボタン） ----
 	let selectedDir = ""; // 初期値
 
@@ -831,6 +838,180 @@ function screenSettings() {
 		}
 	};
 
+    // ---- 参照モーダル ----
+    const refStatus = el("div", { class: "small train-ref-status" }, "");
+    const refList = el("div", { class: "train-ref-list" });
+
+    const refModal = el("div", { class: "modal", id: "trainRefModal" }, [
+        el("div", { class: "panel train-ref-panel" }, [
+            el("h3", {}, "列車参照"),
+            el("div", { class: "small" }, "表示方向を選択してください。"),
+            el("div", { class: "train-ref-mode-row" }, [
+                el(
+                    "button",
+                    { class: "btn secondary", type: "button", "data-ref-mode": "up" },
+                    "上り",
+                ),
+                el(
+                    "button",
+                    { class: "btn secondary", type: "button", "data-ref-mode": "down" },
+                    "下り",
+                ),
+                el(
+                    "button",
+                    { class: "btn secondary", type: "button", "data-ref-mode": "underground" },
+                    "地下",
+                ),
+            ]),
+            refStatus,
+            refList,
+            el(
+                "button",
+                { class: "btn secondary train-ref-close", type: "button" },
+                "閉じる",
+            ),
+        ]),
+    ]);
+
+    function setDirectionButton(dir) {
+        if (dir !== "上り" && dir !== "下り") return;
+
+        selectedDir = dir;
+        dirButtons.querySelectorAll("button").forEach((b) =>
+            b.classList.remove("active-selected"),
+        );
+
+        const target = dirButtons.querySelector(`button[data-dir="${dir}"]`);
+        if (target) target.classList.add("active-selected");
+    }
+
+    function setSelectValueIfExists(selectEl, value) {
+        if (!selectEl || !value) return false;
+
+        const v = String(value).trim();
+        const found = Array.from(selectEl.options).some((opt) => opt.value === v);
+
+        if (found) {
+            selectEl.value = v;
+            return true;
+        }
+
+        return false;
+    }
+
+    function resetReferenceModal() {
+        refStatus.textContent = "上り・下り・地下のいずれかを選択してください。";
+        refList.innerHTML = "";
+
+        refModal.querySelectorAll("[data-ref-mode]").forEach((btn) => {
+            btn.classList.remove("active-selected");
+            btn.disabled = false;
+        });
+    }
+
+    function applyReferenceTrain(item) {
+        trainNo.value = item.trainNo || "";
+
+        const res = parseTrainNo(trainNo.value.trim());
+
+        if (res) {
+            typeSel.value = res.type;
+            destSel.value = res.dest;
+            setDirectionButton(res.direction);
+        } else {
+            // 列番表で引けない場合は、API側の種別・行先を可能な範囲で入れる
+            setSelectValueIfExists(typeSel, item.type);
+            setSelectValueIfExists(destSel, item.dest);
+
+            if (item.directionApi === "up") {
+                setDirectionButton("上り");
+            } else if (item.directionApi === "down") {
+                setDirectionButton("下り");
+            }
+        }
+
+        refModal.classList.remove("active");
+    }
+
+    async function loadReferenceList(mode) {
+        refList.innerHTML = "";
+
+        refModal.querySelectorAll("[data-ref-mode]").forEach((btn) => {
+            btn.classList.toggle(
+                "active-selected",
+                btn.getAttribute("data-ref-mode") === mode,
+            );
+        });
+
+        const label = getReferenceModeLabel(mode);
+        refStatus.textContent = `${label}の発車列車を取得中...`;
+
+        try {
+            const stationName = await getReferenceStationName(mode);
+            const trains = await fetchReferenceDepartures(stationName, mode);
+
+            refList.innerHTML = "";
+
+            if (!trains.length) {
+                refStatus.textContent = `${stationName}：表示できる列車がありません。`;
+                return;
+            }
+
+            refStatus.textContent = `${stationName}：直近の発車列車`;
+
+            trains.forEach((item) => {
+                const hmsText = item.hms ? item.hms.slice(0, 5) : "--:--";
+                const typeText = item.type || "種別不明";
+                const destText = item.dest || "行先不明";
+
+                const btn = el(
+                    "button",
+                    { class: "btn secondary train-ref-item", type: "button" },
+                    [
+                        el("span", { class: "train-ref-time" }, hmsText),
+                        el("span", { class: "train-ref-no" }, item.trainNo),
+                        el("span", { class: "train-ref-type" }, typeText),
+                        el("span", { class: "train-ref-dest" }, destText),
+                    ],
+                );
+
+                btn.onclick = () => {
+                    applyReferenceTrain(item);
+                };
+
+                refList.appendChild(btn);
+            });
+
+        } catch (e) {
+            refList.innerHTML = "";
+            refStatus.textContent =
+                e && e.message ? e.message : "列車情報を取得できませんでした。";
+        }
+    }
+
+    btnReference.onclick = () => {
+        resetReferenceModal();
+        refModal.classList.add("active");
+    };
+
+    refModal.onclick = (e) => {
+        if (e.target === refModal) {
+            refModal.classList.remove("active");
+            return;
+        }
+
+        if (e.target.classList.contains("train-ref-close")) {
+            refModal.classList.remove("active");
+            return;
+        }
+
+        const modeBtn = e.target.closest("[data-ref-mode]");
+        if (modeBtn) {
+            const mode = modeBtn.getAttribute("data-ref-mode");
+            loadReferenceList(mode);
+        }
+    };
+
     // ---- 実行ボタン ----
     const execBtn = el("button", { class: "btn" }, "実行");
     execBtn.onclick = () => {
@@ -971,7 +1152,10 @@ function screenSettings() {
         el("div", { class: "row" }, [
             el("label", {}, "列車番号"),
             trainNo,
-            btnSearch,
+            el("div", { class: "setting-train-buttons" }, [
+                btnSearch,
+                btnReference,
+            ]),
         ]),
         el("div", { class: "grid2" }, [
             el("div", [el("label", {}, "上り/下り"), dirButtons]),
@@ -995,7 +1179,7 @@ function screenSettings() {
         execBtn,
     );
 
-    root.appendChild(c);
+    root.append(c, refModal);
     return root;
 }
 
@@ -2362,6 +2546,244 @@ function extractDepartureHms(detail) {
 
     return `${hh}:${mm}:${ss}`; // "12:14:00" の形式に整形
 }
+
+// ==== 設定画面：列車参照用ヘルパー ====
+
+// 設定画面の「参照」では、案内中の routeLine ロックを使わず単純に最寄り駅を取る
+function nearestStationForReference(lat, lng) {
+    let best = null;
+    let bestD = 1e12;
+
+    const stations = state.datasets.stations || {};
+    for (const [name, info] of Object.entries(stations)) {
+        if (info.lat == null || info.lng == null) continue;
+
+        const d = haversine(lat, lng, info.lat, info.lng);
+        if (d < bestD) {
+            bestD = d;
+            best = { name, ...info, distance: d };
+        }
+    }
+
+    return best;
+}
+
+function getCurrentGpsPositionForReference() {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+            reject(new Error("この端末ではGPSを利用できません。"));
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                resolve({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                });
+            },
+            (err) => {
+                let msg = "現在地を取得できませんでした。";
+                if (err && err.code === 1) {
+                    msg = "GPSの利用が許可されていません。ブラウザの位置情報許可を確認してください。";
+                } else if (err && err.code === 2) {
+                    msg = "現在地を取得できませんでした。電波状態や位置情報設定を確認してください。";
+                } else if (err && err.code === 3) {
+                    msg = "GPS取得がタイムアウトしました。もう一度参照してください。";
+                }
+                reject(new Error(msg));
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0,
+            },
+        );
+    });
+}
+
+async function getReferenceStationName(mode) {
+    // 地下はGPSに関係なく小竹向原固定
+    if (mode === "underground") {
+        return "小竹向原";
+    }
+
+    const pos = await getCurrentGpsPositionForReference();
+    const ns = nearestStationForReference(pos.lat, pos.lng);
+
+    if (!ns || !ns.name) {
+        throw new Error("最寄り駅を判定できませんでした。");
+    }
+
+    return ns.name;
+}
+
+function getReferenceDirectionApi(mode) {
+    if (mode === "up") return "up";
+    if (mode === "down") return "down";
+
+    // 地下は小竹向原駅の全方向を候補にする
+    return null;
+}
+
+function getReferenceModeLabel(mode) {
+    if (mode === "up") return "上り";
+    if (mode === "down") return "下り";
+    if (mode === "underground") return "地下";
+    return "";
+}
+
+function readAnyField(obj, keys) {
+    if (!obj) return "";
+
+    for (const k of keys) {
+        const v = obj[k];
+        if (v != null && String(v).trim() !== "") {
+            return String(v).trim();
+        }
+    }
+
+    return "";
+}
+
+function normalizeReferenceDirection(v) {
+    const s = String(v || "").trim();
+
+    if (s === "up" || s === "上り") return "up";
+    if (s === "down" || s === "下り") return "down";
+
+    return "";
+}
+
+function directionMatchesReferenceMode(directionValue, mode) {
+    const required = getReferenceDirectionApi(mode);
+
+    // 地下は方向で絞らない
+    if (!required) return true;
+
+    const actual = normalizeReferenceDirection(directionValue);
+
+    // API側に方向が無い場合は、安全側で候補に残す
+    if (!actual) return true;
+
+    return actual === required;
+}
+
+function hmsToSeconds(hms) {
+    if (!hms) return null;
+
+    const m = String(hms).match(/^(\d{2}):(\d{2}):(\d{2})$/);
+    if (!m) return null;
+
+    return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
+function departureRankFromNow(hms) {
+    const sec = hmsToSeconds(hms);
+    if (sec == null) return Number.MAX_SAFE_INTEGER;
+
+    const now = new Date();
+    const nowSec =
+        now.getHours() * 3600 +
+        now.getMinutes() * 60 +
+        now.getSeconds();
+
+    return (sec - nowSec + 86400) % 86400;
+}
+
+// 駅の発車一覧APIから、設定画面参照用の列車候補を取得する
+async function fetchReferenceDepartures(stationName, mode) {
+    const stationId = getStationIdByName(stationName);
+    if (!stationId) {
+        throw new Error(`${stationName}の駅IDが見つかりません。`);
+    }
+
+    const url = `https://train.seibuapp.jp/trainfo-api/ti/v1.0/stations/${stationId}/departures`;
+    const res = await fetch(url);
+
+    if (!res.ok) {
+        throw new Error("発車情報APIの取得に失敗しました。");
+    }
+
+    const data = await res.json();
+
+    const depList =
+        data.departure ||
+        data.departures ||
+        data["出発"] ||
+        [];
+
+    const map = new Map();
+
+    for (const dep of depList) {
+        const details =
+            dep.detail ||
+            dep.details ||
+            dep["detail"] ||
+            [];
+
+        for (const d of details) {
+            // dep 側に情報がある場合も拾えるように結合
+            const src = { ...dep, ...d };
+
+            const directionRaw = readAnyField(src, [
+                "direction",
+                "方向",
+            ]);
+
+            if (!directionMatchesReferenceMode(directionRaw, mode)) {
+                continue;
+            }
+
+            const trainNo = readAnyField(src, [
+                "trainNo",
+                "列車番号",
+                "列番",
+            ]);
+
+            if (!trainNo) continue;
+
+            const type = normalizeTypeName(readAnyField(src, [
+                "type",
+                "typeName",
+                "trainType",
+                "trainTypeName",
+                "種別",
+                "列車種別",
+            ]));
+
+            const dest = readAnyField(src, [
+                "dest",
+                "destination",
+                "destinationName",
+                "toStationName",
+                "toStation",
+                "行先",
+                "行先駅名",
+            ]);
+
+            const hms = extractDepartureHms(src);
+            const directionApi = normalizeReferenceDirection(directionRaw);
+
+            const key = `${trainNo}_${directionApi}_${hms || ""}`;
+            if (map.has(key)) continue;
+
+            map.set(key, {
+                trainNo,
+                type,
+                dest,
+                hms,
+                directionApi,
+                stationName,
+            });
+        }
+    }
+
+    return Array.from(map.values())
+        .sort((a, b) => departureRankFromNow(a.hms) - departureRankFromNow(b.hms))
+        .slice(0, 20);
+}
+
 
 
 // ★ 次の停車駅の発車時刻を取得して表示
