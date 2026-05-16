@@ -234,51 +234,68 @@ async function loadData() {
 // ==== Speech ====
 function speakOnce(key, text) {
     const rt = state.runtime;
-    if (!rt.started) return;
+    const k = String(key || "");
 
-    // ★追加：地下モード中は地下モード専用の音声（ug_）以外を禁止
+    // ★ 案内開始前は原則しゃべらない
+    //   ただし start_guidance は「開始ボタン押下中の音声初期化」として許可
+    if (!rt.started && k !== "start_guidance") return;
+
+    // ★ 地下モード中は地下モード専用音声のみ許可
+    //   ただし start_guidance と音量テストは許可
     if (rt.undergroundMode) {
-        const k = String(key || "");
-        if (!(k.startsWith("ug_") || k.startsWith("test_volume_"))) return;
+        if (
+            !(
+                k.startsWith("ug_") ||
+                k.startsWith("test_volume_") ||
+                k === "start_guidance"
+            )
+        ) {
+            return;
+        }
     }
 
     if (rt.voiceMuted) return;
-    if (rt.muteUntil && Date.now() < rt.muteUntil) return;
 
     const now = Date.now();
 
-    // ★ 案内開始前（start画面・設定画面など）では一切しゃべらない
-    //   ただし "start_guidance" は案内開始後に使うので例外扱い
-    if (!state.runtime.started && key !== "start_guidance") {
-        return;
-    }
-
     // ★ 案内開始から10秒間は「start_guidance」以外の音声をミュート
     if (
-        key !== "start_guidance" &&
-        state.runtime.muteUntil &&
-        now < state.runtime.muteUntil
+        k !== "start_guidance" &&
+        rt.muteUntil &&
+        now < rt.muteUntil
     ) {
         return;
     }
 
-    const last = state.runtime.lastSpoken[key] || 0;
+    const last = rt.lastSpoken[k] || 0;
     if (now - last < 30000) return; // 30秒抑止
-    state.runtime.lastSpoken[key] = now;
+    rt.lastSpoken[k] = now;
 
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = "ja-JP";
 
-    // ★ 音量反映（0.0〜1.0）＋一時ミュート
-    let vol = state.config.voiceVolume;
+    // ★ 音量反映
+    //   start_guidance（案内を開始します。）だけは最小音量で発話
+    let vol;
+    if (k === "start_guidance") {
+        vol = 0.01;
+    } else {
+        vol = state.config.voiceVolume;
+    }
 
-    // 「音声停止」ボタン押下中は強制 0
-    if (state.runtime.voiceMuted) {
+    if (rt.voiceMuted) {
         vol = 0;
     }
 
     utter.volume =
         typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
+
+    // ★ 一部ブラウザで停止状態のままになる対策
+    try {
+        speechSynthesis.resume();
+    } catch (e) {
+        console.warn("speechSynthesis.resume failed:", e);
+    }
 
     speechSynthesis.speak(utter);
 
@@ -2891,6 +2908,9 @@ function startGuidance() {
     requestWakeLock();
 
     renderGuidance();
+
+    // ★ 開始ボタン押下中に一度発話し、ブラウザの音声合成を初期化する
+    speakOnce("start_guidance", "案内を開始します。");
 
     // 時計表示
     clockTimer = setInterval(() => {
