@@ -161,6 +161,12 @@ const state = {
         muteUntil: 0,
         lastDepartStation: null,
         lastDepartPrevDist: null,
+        // ★ 発車時刻表示中の駅名
+        departureDisplayStation: null,
+
+        // ★ 190m外へ離れた駅名
+        //   GPS揺れで一度離れた駅の発車時刻に戻るのを防ぐ
+        departureLeftStation: null,
         manualPlatforms: {},
         startupMode: false,         // 起動モード中かどうか
         startupFixed: false,        // 起動モードで一度「現在駅」を確定したか
@@ -2365,6 +2371,9 @@ async function fetchAndShowNextDeparture(nextStationName) {
 
     const el = root._nextDepart;
 
+    // ★ 現在、発車時刻欄で扱っている駅名を記録
+    state.runtime.departureDisplayStation = nextStationName || null;
+
     // いったん消してから更新
     el.textContent = "";
     el.style.visibility = "hidden";
@@ -2953,6 +2962,8 @@ function startGuidance() {
     rt.lastDepartStation = null;
     rt.lastDepartPrevDist = null;
     rt.lastStopDistance = null;
+    rt.departureDisplayStation = null;
+    rt.departureLeftStation = null;
     // ★ 追加：速度算出の履歴・外れ値連続カウンタもリセット
     gpsSpeedHistory.length = 0;
     rt.speedOutlierStreak = 0;
@@ -3645,9 +3656,49 @@ async function fetchAndUpdateDelay() {
 // ★ 次駅発車時刻表示を消す
 function clearNextDepartureDisplay() {
     const root = document.getElementById("screen-guidance");
+
+    // ★ 表示中駅名もリセット
+    state.runtime.departureDisplayStation = null;
+
     if (!root || !root._nextDepart) return;
+
     root._nextDepart.textContent = "";
     root._nextDepart.style.visibility = "hidden";
+}
+
+// ★ 停車すべき駅の190m以内に入ったら、その駅の発車時刻を表示する
+//   ・地下モード中は対象外
+//   ・種別上の停車駅、臨時停車、臨時通過を passStations で反映
+//   ・同じ駅でGPS更新のたびに再取得しない
+function maybeShowDepartureForNearbyStopStation(ns, isStop) {
+    if (!ns) return;
+
+    const rt = state.runtime;
+
+    // ★ 地下モード中はこの追加処理を行わない
+    if (rt.undergroundMode) return;
+
+    const stationName = ns.name;
+    const distance = ns.distance;
+
+    if (!stationName) return;
+    if (!Number.isFinite(distance)) return;
+
+    // ★ 190m以内のみ対象
+    if (distance > 190) return;
+
+    // ★ 実際に停車すべき駅だけ対象
+    //   isStop は !state.runtime.passStations.has(ns.name) の結果。
+    //   ここで臨時停車・臨時通過も反映される。
+    if (!isStop) return;
+
+    // ★ 一度190m外へ離れた駅は、GPS揺れで戻っても再表示しない
+    if (rt.departureLeftStation === stationName) return;
+
+    // ★ すでに同じ駅を表示中なら再取得しない
+    if (rt.departureDisplayStation === stationName) return;
+
+    fetchAndShowNextDeparture(stationName);
 }
 
 // ★ 起動判定モードを開始（地点リセット共通）
@@ -3668,6 +3719,8 @@ function startStartupLocationDetection() {
     rt.lastDepartStation = null;
     rt.lastDepartPrevDist = null;
     rt.lastStopDistance = null;
+    rt.departureDisplayStation = null;
+    rt.departureLeftStation = null;
 
     // 次駅発車時刻もいったんクリア
     clearNextDepartureDisplay();
@@ -4200,6 +4253,9 @@ function maybeSpeak(ns) {
     const isExtraStop = !baseStop && isStop; // 本来通過→いま停車
     const isExtraPass = baseStop && !isStop; // 本来停車→いま通過
 
+    // ★ 停車すべき駅の190m以内では、その駅の発車時刻を表示
+    maybeShowDepartureForNearbyStopStation(ns, isStop);
+
     // ===== (A) 前駅発車後の「次は○○」案内 =====
     // 190m 以下の位置から 190m 超に抜けた瞬間のみ発報
     // ★ lastStopStation が未決定でもトリガーするように変更
@@ -4212,6 +4268,10 @@ function maybeSpeak(ns) {
 
     if (left190) {
         let nextName = state.runtime.lastStopStation;
+
+        // ★ この駅は190m圏外へ離れた扱いにする
+        //   以後、GPS揺れで190m以内に戻っても、この駅の発車時刻へ戻さない
+        state.runtime.departureLeftStation = ns.name;
 
         // ★ 200m 以内で次停車駅が決まっていなかった場合、
         //    190m を離れるタイミングで再度判定する
