@@ -505,6 +505,73 @@ function isJapaneseHoliday(date) {
     return false;
 }
 
+// ==== 1列車限りの手動設定 保存・復元 ====
+// 対象：臨時停車・臨時通過・着発線変更
+// 条件：直前の列車番号と同じ列車番号が再設定された場合だけ復元する
+
+function saveTrainScopedManualSettingsSnapshot() {
+    const rt = state.runtime;
+    const trainNo = String(state.config.trainNo || "").trim();
+
+    if (!trainNo) return;
+
+    rt.lastTrainScopedManualSettings = {
+        trainNo,
+
+        // 臨時停車・臨時通過を含む現在の停車/通過状態
+        passStations: Array.from(rt.passStations || []),
+
+        // 着発線変更
+        manualPlatforms: { ...(rt.manualPlatforms || {}) },
+
+        // 旧仕様・将来拡張用
+        platformChanges: Array.from(rt.platformChanges || []),
+    };
+}
+
+function resetTrainScopedManualSettings() {
+    const rt = state.runtime;
+
+    // 臨時停車・臨時通過
+    rt.passStations = new Set();
+
+    // 着発線変更
+    rt.manualPlatforms = {};
+
+    // 旧仕様・将来拡張用
+    rt.platformChanges = new Set();
+
+    // ★ 注意：
+    // lastTrainScopedManualSettings は消さない。
+    // ここを消すと、同一列番時の引き継ぎができなくなる。
+}
+
+function restoreTrainScopedManualSettingsIfSameTrainNo() {
+    const rt = state.runtime;
+    const snap = rt.lastTrainScopedManualSettings;
+
+    if (!snap) return false;
+
+    const currentTrainNo = String(state.config.trainNo || "").trim();
+    const savedTrainNo = String(snap.trainNo || "").trim();
+
+    if (!currentTrainNo || currentTrainNo !== savedTrainNo) {
+        // 別列車なら、着発線変更だけは明示的に空にしておく
+        rt.manualPlatforms = {};
+        rt.platformChanges = new Set();
+        return false;
+    }
+
+    // 同一列車番号の場合だけ復元
+    rt.passStations = new Set(Array.isArray(snap.passStations) ? snap.passStations : []);
+    rt.manualPlatforms = { ...(snap.manualPlatforms || {}) };
+    rt.platformChanges = new Set(
+        Array.isArray(snap.platformChanges) ? snap.platformChanges : []
+    );
+
+    return true;
+}
+
 // ==== Screens ====
 function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
@@ -1987,19 +2054,24 @@ function baseIsStopRaw(stationName) {
 
 // ==== 停車駅/通過駅リスト生成（ダイヤ基準） ====
 function buildPassStationList() {
-	const stations = state.datasets.stations;
-	const pass = [];
+    const stations = state.datasets.stations;
+    const pass = [];
 
-	for (const [name] of Object.entries(stations)) {
-		const baseStop = baseIsStop(name); // ダイヤ上の停車かどうか
+    for (const [name] of Object.entries(stations)) {
+        const baseStop = baseIsStop(name); // ダイヤ上の停車かどうか
 
-		// baseStop が false = ダイヤ上は通過駅
-		if (!baseStop) {
-			pass.push(name);
-		}
-	}
+        // baseStop が false = ダイヤ上は通過駅
+        if (!baseStop) {
+            pass.push(name);
+        }
+    }
 
-	state.runtime.passStations = new Set(pass);
+    // まずは通常どおり、今回の列車情報からダイヤ基準の通過駅を作る
+    state.runtime.passStations = new Set(pass);
+
+    // ★ 直前と同一列車番号の場合のみ、
+    //   前回の臨時停車・通過／着発線変更を復元する
+    restoreTrainScopedManualSettingsIfSameTrainNo();
 }
 
 // ==== 路線ごとの駅順（物理順） ====
@@ -2928,29 +3000,44 @@ function startGuidance() {
 
 
 function stopGuidance() {
+    const rt = state.runtime;
+
+    // ★ 案内終了時点の臨時停車・通過／着発線変更を保存
+    //   次回、同じ列車番号が設定された場合だけ復元する
+    saveTrainScopedManualSettingsSnapshot();
+
     // ★ 案内終了：状態リセット＆画面消灯許可
-    state.runtime.started = false;
-    state.runtime.voiceMuted = false;   // ★ 追加
+    rt.started = false;
+    rt.voiceMuted = false;
     releaseWakeLock();
 
-	if (clockTimer) {
-		clearInterval(clockTimer);
-		clockTimer = null;
-	}
+    if (clockTimer) {
+        clearInterval(clockTimer);
+        clockTimer = null;
+    }
+
     // ★ GPSも停止
     stopGpsWatch();
-	
+
     // ★ 遅延情報更新も停止
     stopDelayWatch();
 
     // ★ 途中駅列情変更のタイマーも解除
-    if (state.runtime.midChangeConfirmTimer) {
-        clearTimeout(state.runtime.midChangeConfirmTimer);
-        state.runtime.midChangeConfirmTimer = null;
+    if (rt.midChangeConfirmTimer) {
+        clearTimeout(rt.midChangeConfirmTimer);
+        rt.midChangeConfirmTimer = null;
     }
 
-    state.runtime.midChangeTriggerStation = null;
-    // ★ 追加：GPS点滅停止
+    rt.midChangePending = false;
+    rt.midChangeApplied = false;
+    rt.midChangeArrivalHandled = false;
+    rt.midChangeTriggerStation = null;
+
+    // ★ 現在の runtime 上の手動設定は一旦消す
+    //   ただし lastTrainScopedManualSettings は残す
+    resetTrainScopedManualSettings();
+
+    // ★ GPS点滅停止
     stopGpsBlink();
 }
 
