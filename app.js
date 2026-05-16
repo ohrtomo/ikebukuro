@@ -2723,7 +2723,7 @@ async function fetchReferenceDepartures(stationName, mode) {
             [];
 
         for (const d of details) {
-            // dep 側に情報がある場合も拾えるように結合
+            // dep側に発車時刻、detail側に列車番号などが入る場合があるため結合
             const src = { ...dep, ...d };
 
             const directionRaw = readAnyField(src, [
@@ -2743,7 +2743,19 @@ async function fetchReferenceDepartures(stationName, mode) {
 
             if (!trainNo) continue;
 
-            const type = normalizeTypeName(readAnyField(src, [
+            const hms = extractDepartureHms(src);
+            if (!hms) continue;
+
+            // ★ train_number_table.json 由来の列車情報を優先
+            const parsed = parseTrainNo(trainNo);
+
+            // ★ 種別は必ず列車番号表を優先
+            const typeFromTable = parsed && parsed.type
+                ? normalizeTypeName(parsed.type)
+                : "";
+
+
+            const typeFromApi = normalizeTypeName(readAnyField(src, [
                 "type",
                 "typeName",
                 "trainType",
@@ -2752,7 +2764,7 @@ async function fetchReferenceDepartures(stationName, mode) {
                 "列車種別",
             ]));
 
-            const dest = readAnyField(src, [
+            const destFromApi = readAnyField(src, [
                 "dest",
                 "destination",
                 "destinationName",
@@ -2762,10 +2774,19 @@ async function fetchReferenceDepartures(stationName, mode) {
                 "行先駅名",
             ]);
 
-            const hms = extractDepartureHms(src);
-            const directionApi = normalizeReferenceDirection(directionRaw);
+            // ★ 種別は列車番号表を優先、行先はAPI側を使用
+            const type = typeFromTable || typeFromApi || "";
+            const dest = destFromApi || "";
 
-            const key = `${trainNo}_${directionApi}_${hms || ""}`;
+            const directionApi =
+                parsed && parsed.direction === "上り"
+                    ? "up"
+                    : parsed && parsed.direction === "下り"
+                        ? "down"
+                        : normalizeReferenceDirection(directionRaw);
+
+            // 同一列車が重複して返る場合の重複排除
+            const key = `${trainNo}_${hms}_${directionApi || ""}`;
             if (map.has(key)) continue;
 
             map.set(key, {
@@ -2775,12 +2796,28 @@ async function fetchReferenceDepartures(stationName, mode) {
                 hms,
                 directionApi,
                 stationName,
+
+                // ★ 発車時刻順ソート用
+                sortRank: departureRankFromNow(hms),
             });
         }
     }
 
     return Array.from(map.values())
-        .sort((a, b) => departureRankFromNow(a.hms) - departureRankFromNow(b.hms))
+        // ★ 上から発車時刻順に並べる
+        .sort((a, b) => {
+            const ar = Number.isFinite(a.sortRank)
+                ? a.sortRank
+                : Number.MAX_SAFE_INTEGER;
+            const br = Number.isFinite(b.sortRank)
+                ? b.sortRank
+                : Number.MAX_SAFE_INTEGER;
+
+            if (ar !== br) return ar - br;
+
+            // 同一時刻の場合は列車番号順で安定化
+            return String(a.trainNo).localeCompare(String(b.trainNo), "ja");
+        })
         .slice(0, 20);
 }
 
