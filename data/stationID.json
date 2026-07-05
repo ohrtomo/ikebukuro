@@ -416,5 +416,15 @@
       "stationId": "S0442YM",
       "stationName": "西武園ゆうえんち"
     }
+  ],
+  "豊島線": [
+    {
+      "stationId": "S0105NE",
+      "stationName": "練馬"
+    },
+    {
+      "stationId": "S0200TO",
+      "stationName": "豊島園"
+    }
   ]
 }

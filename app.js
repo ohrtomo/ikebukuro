@@ -1289,10 +1289,11 @@ function typeClass(t) {
 }
 
 function band1RenderCars(elm, show, cars) {
+    if (!elm) return;
+
     // ★ band1 内の「両数エリア」コンテナを取得
     let container = elm.querySelector(".band1-left .cars-wrapper");
     if (!container) {
-        // 念のためフォールバック（古い構造の場合など）
         container = elm;
     }
 
@@ -1304,21 +1305,62 @@ function band1RenderCars(elm, show, cars) {
         container.appendChild(img);
     }
 
-    // 2. 両数に対応するアイコンファイルを取得
-    const iconFile = state.datasets.carIcons[cars];
+    const carsKey = String(cars);
+    const iconFile =
+        state.datasets.carIcons[carsKey] ||
+        state.datasets.carIcons[cars];
 
-    // ファイルが見つからない場合は強制的に非表示扱い
+    // ファイルが見つからない場合は非表示
     if (!iconFile) {
-        show = false;
-    } else {
-        img.src = "./data/car_icons/" + iconFile;
+        img.removeAttribute("src");
+        img.dataset.cars = "";
+        img.style.visibility = "hidden";
+        elm.style.visibility = "visible";
+        return;
     }
 
-    // 3. 画像の visibility だけ切り替える
-    img.style.visibility = show ? "visible" : "hidden";
+    const nextSrc = "./data/car_icons/" + iconFile;
+    const currentSrc = img.getAttribute("src") || "";
 
-    // （バンド自体は常に表示）
+    img.alt = `${carsKey}両`;
+    img.dataset.cars = carsKey;
+
+    // ★ 画像を切り替える場合、旧画像が一瞬残らないよう一度隠す
+    if (currentSrc !== nextSrc) {
+        img.style.visibility = "hidden";
+
+        img.onload = () => {
+            // 読み込み完了時点で、別の両数へ切り替わっていない場合だけ表示
+            if (img.dataset.cars === carsKey) {
+                img.style.visibility = show ? "visible" : "hidden";
+            }
+        };
+
+        img.onerror = () => {
+            if (img.dataset.cars === carsKey) {
+                img.style.visibility = "hidden";
+            }
+        };
+
+        img.src = nextSrc;
+    } else {
+        img.style.visibility = show ? "visible" : "hidden";
+    }
+
+    // band1 自体は常に表示
     elm.style.visibility = "visible";
+}
+
+// ★ 案内開始時点で、現在設定されている両数アイコンを必ず描画する
+function renderCurrentCarsIcon() {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._band1) return;
+
+    band1RenderCars(
+        root._band1,
+        true,
+        state.config.cars
+    );
 }
 
 
@@ -3512,15 +3554,27 @@ function stopGuidance() {
 }
 
 function renderGuidance() {
-  const root = document.getElementById("screen-guidance");
+    const root = document.getElementById("screen-guidance");
+    if (!root) return;
 
-  // 種別：縦書きバッジ
-  root._badgeType.className =
-    "badge badge-vertical " + typeClass(state.config.type);
-  root._badgeType.textContent = state.config.type;
+    // 種別：縦書きバッジ
+    if (root._badgeType) {
+        root._badgeType.className =
+            "badge badge-vertical " + typeClass(state.config.type);
+        root._badgeType.textContent = state.config.type;
+    }
 
-  root._cellNo.textContent   = state.config.trainNo;
-  root._cellDest.textContent = state.config.dest;
+    if (root._cellNo) {
+        root._cellNo.textContent = state.config.trainNo;
+    }
+
+    if (root._cellDest) {
+        root._cellDest.textContent = state.config.dest;
+    }
+
+    // ★ 通常開始・地下起動に関係なく、
+    //   開始操作時点で正しい両数アイコンを表示する
+    renderCurrentCarsIcon();
 }
 
 
