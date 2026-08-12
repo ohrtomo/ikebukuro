@@ -3126,6 +3126,39 @@ function getEffectivePlatformForStation(stationName) {
     return getPlatformForStation(stationName);
 }
 
+// ==== 8両停止位置案内用 ====
+// stations.json の up8pos / down8pos を基本にしつつ、
+// 駅・方向・番線ごとの特例がある場合だけ上書きする
+function getEightCarStopPositionForStation(ns) {
+    if (!ns || !ns.name) return null;
+
+    const stationName = ns.name;
+    const direction = state.config.direction;
+
+    const basePos =
+        direction === "上り"
+            ? ns.up8pos
+            : ns.down8pos;
+
+    // ★ 清瀬駅特例
+    //   上り8両は通常「中央」だが、1番線進入時だけ「奥」と案内する
+    //   getEffectivePlatformForStation() を使うことで、
+    //   platform.json の標準番線と手動の着発線変更の両方を反映する
+    if (
+        stationName === "清瀬" &&
+        direction === "上り" &&
+        state.config.cars === 8
+    ) {
+        const platform = getEffectivePlatformForStation(stationName);
+
+        if (String(platform) === "1") {
+            return "奥";
+        }
+    }
+
+    return basePos || null;
+}
+
 // ==== 番線が「着発線変更」されているかどうか ====
 // ・手動値が存在し、かつ標準値と異なっていれば true
 function isPlatformChanged(stationName) {
@@ -4921,17 +4954,12 @@ function maybeSpeak(ns) {
         const stopWord = isExtraStop ? "臨時停車" : "停車";
 
         // 到着案内（速度に関係なく一度だけ出す）
-        if (
-            state.config.cars === 8 &&
-            (state.config.direction === "上り" ? ns.up8pos : ns.down8pos)
-        ) {
+        const eightCarStopPos = getEightCarStopPositionForStation(ns);
+
+        if (state.config.cars === 8 && eightCarStopPos) {
             speakOnce(
                 "arr200_" + key,
-                `${stopWord}、8両、${
-                    state.config.direction === "上り"
-                        ? ns.up8pos
-                        : ns.down8pos
-                }`,
+                `${stopWord}、8両、${eightCarStopPos}`,
             );
         } else if (state.config.cars === 10) {
             speakOnce("arr200_" + key, `${stopWord}、10両`);
