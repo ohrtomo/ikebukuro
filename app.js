@@ -4798,6 +4798,42 @@ function clearNextStopDisplay() {
     box.removeAttribute("aria-label");
 }
 
+function fitNextStopDisplayText() {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._speechText) return;
+
+    const box = root._speechText;
+    if (!box.classList.contains("next-stop-display")) return;
+
+    // 初期値・最小値
+    let size = Math.min(
+        100,
+        Math.max(34, Math.floor(window.innerWidth * 0.10))
+    );
+    const minSize = 24;
+
+    box.style.setProperty("--next-stop-font-size", `${size}px`);
+
+    // レイアウト確定後に、幅・高さに収まるまで縮小
+    requestAnimationFrame(() => {
+        const maxWidth = box.clientWidth;
+        const maxHeight = box.clientHeight;
+
+        if (!maxWidth || !maxHeight) return;
+
+        while (
+            size > minSize &&
+            (
+                box.scrollWidth > maxWidth ||
+                box.scrollHeight > maxHeight
+            )
+        ) {
+            size -= 2;
+            box.style.setProperty("--next-stop-font-size", `${size}px`);
+        }
+    });
+}
+
 function showNextStopDisplay(stationName, platform) {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._speechText) return;
@@ -4841,6 +4877,9 @@ function showNextStopDisplay(stationName, platform) {
         "aria-label",
         platformText ? `次は ${name} ${platformText}` : `次は ${name}`
     );
+
+    // ★ 長い駅名でもBAND2内に収まるよう自動縮小
+    fitNextStopDisplayText();
 }
 
 
@@ -5417,4 +5456,9 @@ function renderNonPassengerExtraStopsScreen() {
 window.addEventListener("load", async () => {
 	await loadData();
 	init();
+});
+
+
+window.addEventListener("resize", () => {
+    fitNextStopDisplayText();
 });

@@ -426,41 +426,67 @@ input[type="text"], select, input[type="number"] {
    Band2：次停車駅大型表示
 ========================= */
 
-/* BAND2は次停車駅表示をエリアいっぱいに使う */
+/* ★ 長い駅名でグリッド幅が押し広げられないようにする */
+#screen-guidance,
+#screen-guidance .band,
+#screen-guidance .band2 {
+  min-width: 0;
+  overflow: hidden;
+}
+
 #screen-guidance .band2 {
   padding: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* 「次は ○○ ①」専用表示 */
 #speechText.next-stop-display {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   padding: 0 6px;
 
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(8px, 2.5vw, 24px);
+  gap: clamp(6px, 1.8vw, 18px);
 
   white-space: nowrap;
   overflow: hidden;
   text-align: center;
   line-height: 1;
   font-weight: 900;
+  box-sizing: border-box;
 }
 
+/* 各要素も幅を押し広げない */
+#speechText.next-stop-display .next-stop-label,
+#speechText.next-stop-display .next-stop-station,
+#speechText.next-stop-display .next-stop-platform {
+  display: inline-block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  line-height: 1;
+}
+
+/* JS側で --next-stop-font-size を設定する */
 #speechText.next-stop-display .next-stop-label {
-  font-size: clamp(26px, 7vw, 70px);
+  font-size: calc(var(--next-stop-font-size, 72px) * 0.7);
 }
 
 #speechText.next-stop-display .next-stop-station {
-  font-size: clamp(34px, 10vw, 100px);
+  font-size: var(--next-stop-font-size, 72px);
   letter-spacing: 0.02em;
 }
 
 #speechText.next-stop-display .next-stop-platform {
-  font-size: clamp(38px, 11vw, 110px);
-  line-height: 1;
+  font-size: calc(var(--next-stop-font-size, 72px) * 1.08);
 }
 
 
