@@ -246,9 +246,11 @@ function speakOnce(key, text) {
     //   ただし start_guidance は「開始ボタン押下中の音声初期化」として許可
     if (!rt.started && k !== "start_guidance") return;
 
-    // ★ 地下モード中は地下モード専用音声のみ許可
-    //   ただし start_guidance と音量テストは許可
+    // ★ 地下モード中は次停車駅表示を消す
+    //   地下モード中は、BAND2には何も表示しない
     if (rt.undergroundMode) {
+        clearNextStopDisplay();
+
         if (
             !(
                 k.startsWith("ug_") ||
@@ -305,10 +307,6 @@ function speakOnce(key, text) {
 
     speechSynthesis.speak(utter);
 
-    const root = document.getElementById("screen-guidance");
-    if (root && root._speechText) {
-        root._speechText.textContent = text;
-    }
 }
 
 // ★ 列車番号と運転日区分から「回送A」「臨時B」などを取得
@@ -2978,6 +2976,9 @@ function enterUndergroundMode(source) {
     rt.undergroundSource = source || null;
     rt.undergroundLastToStationName = null;
 
+    // ★ 地下モード中はBAND2の次停車駅表示を消す
+    clearNextStopDisplay();
+
     // 有楽町線として固定
     rt.routeLine = "yuraku";
     rt.routeLocked = true;
@@ -3511,7 +3512,7 @@ function startGuidance() {
 
     // ★ UI の残りもリセット（遅延表示・次発時刻・音声表示・GPS表示）
     if (g) {
-        if (g._speechText) g._speechText.textContent = "";
+        clearNextStopDisplay();
         if (g._gpsStatus)  g._gpsStatus.textContent  = "GPS";
         if (g._delayInfo) {
             g._delayInfo.textContent = "";
@@ -4748,6 +4749,100 @@ function applyMidTrainChange() {
     speakOnce("midchange_maku", "方向幕確認");
 }
 
+// ==== 次停車駅大型表示 ====
+// 「次は○○、(○番、)停車」の音声案内時だけ、BAND2に専用表示する
+
+function toCircledPlatformNumber(value) {
+    if (value == null) return "";
+
+    const normalized = String(value)
+        .trim()
+        .replace(/[０-９]/g, (ch) =>
+            String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)
+        );
+
+    const n = parseInt(normalized, 10);
+    const map = {
+        1: "①",
+        2: "②",
+        3: "③",
+        4: "④",
+        5: "⑤",
+        6: "⑥",
+        7: "⑦",
+        8: "⑧",
+        9: "⑨",
+        10: "⑩",
+        11: "⑪",
+        12: "⑫",
+        13: "⑬",
+        14: "⑭",
+        15: "⑮",
+        16: "⑯",
+        17: "⑰",
+        18: "⑱",
+        19: "⑲",
+        20: "⑳",
+    };
+
+    return map[n] || normalized;
+}
+
+function clearNextStopDisplay() {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._speechText) return;
+
+    const box = root._speechText;
+    box.textContent = "";
+    box.classList.remove("next-stop-display");
+    box.removeAttribute("aria-label");
+}
+
+function showNextStopDisplay(stationName, platform) {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._speechText) return;
+
+    // ★ 地下モード中は表示しない。既存表示も消す。
+    if (state.runtime.undergroundMode) {
+        clearNextStopDisplay();
+        return;
+    }
+
+    const name = String(stationName || "").trim();
+    if (!name) {
+        clearNextStopDisplay();
+        return;
+    }
+
+    const platformText = toCircledPlatformNumber(platform);
+
+    const box = root._speechText;
+    box.textContent = "";
+    box.classList.add("next-stop-display");
+
+    const label = document.createElement("span");
+    label.className = "next-stop-label";
+    label.textContent = "次は";
+
+    const station = document.createElement("span");
+    station.className = "next-stop-station";
+    station.textContent = name;
+
+    box.append(label, station);
+
+    if (platformText) {
+        const plat = document.createElement("span");
+        plat.className = "next-stop-platform";
+        plat.textContent = platformText;
+        box.appendChild(plat);
+    }
+
+    box.setAttribute(
+        "aria-label",
+        platformText ? `次は ${name} ${platformText}` : `次は ${name}`
+    );
+}
+
 
 function maybeSpeak(ns) {
     if (!ns) return;
@@ -4882,6 +4977,10 @@ function maybeSpeak(ns) {
                 if (isPlatformChanged(nextName)) {
                     text += "、着発線変更";
                 }
+
+                // ★ BAND2に大型表示
+                //   表示は次の「次は〜停車」案内まで継続する
+                showNextStopDisplay(nextName, plat);
 
                 // ★ まず「次は〜」を案内（190m地点）
                 speakOnce("leave190_" + nextName, text);
