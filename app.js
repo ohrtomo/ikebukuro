@@ -3522,6 +3522,12 @@ function startGuidance() {
         clearSegmentDisplay(); 
     }
 
+    // ★ BAND2表示試験用
+    //   試験終了後は showBand2TestDisplay() の呼び出しを削除する
+    setTimeout(() => {
+        showBand2TestDisplay();
+    }, 0);
+
     // ★ 案内画面中は画面消灯を防止
     requestWakeLock();
 
@@ -4833,6 +4839,25 @@ function fitNextStopDisplayText() {
         }
     });
 }
+
+// ==== BAND2 表示試験用 ====
+// 試験が終わったら BAND2_TEST_DISPLAY を false にするか、
+// このブロックごと削除してください。
+const BAND2_TEST_DISPLAY = true;
+
+function showBand2TestDisplay() {
+    if (!BAND2_TEST_DISPLAY) return;
+
+    // 地下モード中は表示しない
+    if (state.runtime.undergroundMode) {
+        clearNextStopDisplay();
+        return;
+    }
+
+    // 表示試験用：長めの駅名＋番線
+    showNextStopDisplay("練馬高野台", "1");
+}
+
 
 function showNextStopDisplay(stationName, platform) {
     const root = document.getElementById("screen-guidance");
