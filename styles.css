@@ -414,6 +414,7 @@ input[type="text"], select, input[type="number"] {
   background: #111;
   color: #fff;
   padding: 0;
+  margin: 0;
 
   /* ★ 中身を絶対配置するための基準 */
   position: relative;
@@ -455,11 +456,15 @@ input[type="text"], select, input[type="number"] {
   min-width: 0;
   min-height: 0;
 
-  padding: 0 6px;
+  /* ★ BAND2内の外側・内側余白は完全に削除 */
+  padding: 0;
+  margin: 0;
 
   display: flex;
   align-items: center;
   justify-content: center;
+
+  /* ★ これは「次は」「駅名」「番線」の間隔なので残す */
   gap: clamp(4px, 1.4vw, 14px);
 
   white-space: nowrap;
@@ -481,6 +486,10 @@ input[type="text"], select, input[type="number"] {
   min-height: 0;
   max-width: 100%;
   max-height: 100%;
+
+  /* ★ 各文字要素自体にも余白を持たせない */
+  padding: 0;
+  margin: 0;
 
   white-space: nowrap;
   overflow: hidden;
