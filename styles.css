@@ -426,11 +426,12 @@ input[type="text"], select, input[type="number"] {
    Band2：次停車駅大型表示
 ========================= */
 
-/* ★ 長い駅名でグリッド幅が押し広げられないようにする */
+/* ★ 長い駅名でグリッド幅・高さが押し広げられないようにする */
 #screen-guidance,
 #screen-guidance .band,
 #screen-guidance .band2 {
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -439,6 +440,12 @@ input[type="text"], select, input[type="number"] {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+
+  /* ★ BAND2自体は従来のグリッド行高に固定し、中身で押し広げさせない */
+  overflow: hidden;
 }
 
 /* 「次は ○○ ①」専用表示 */
@@ -446,7 +453,11 @@ input[type="text"], select, input[type="number"] {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+
   height: 100%;
+  max-height: 100%;
+  min-height: 0;
+
   padding: 0 6px;
 
   display: flex;
@@ -460,6 +471,9 @@ input[type="text"], select, input[type="number"] {
   line-height: 1;
   font-weight: 900;
   box-sizing: border-box;
+
+  /* ★ 文字の大きさでBAND2の高さを押し広げさせない */
+  contain: size layout paint;
 }
 
 /* 各要素も幅を押し広げない */
@@ -468,8 +482,12 @@ input[type="text"], select, input[type="number"] {
 #speechText.next-stop-display .next-stop-platform {
   display: inline-block;
   flex: 0 1 auto;
+
   min-width: 0;
   max-width: 100%;
+  min-height: 0;
+  max-height: 100%;
+
   white-space: nowrap;
   overflow: hidden;
   line-height: 1;
