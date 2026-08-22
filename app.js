@@ -4843,7 +4843,7 @@ function fitNextStopDisplayText() {
 // ==== BAND2 表示試験用 ====
 // 試験が終わったら BAND2_TEST_DISPLAY を false にするか、
 // このブロックごと削除してください。
-const BAND2_TEST_DISPLAY = true;
+const BAND2_TEST_DISPLAY = false;
 
 function showBand2TestDisplay() {
     if (!BAND2_TEST_DISPLAY) return;
