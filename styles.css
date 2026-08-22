@@ -69,9 +69,9 @@ input[type="text"], select, input[type="number"] {
   /* ★ 各BANDを中身の大きさで押し広げさせない */
   grid-template-rows:
     minmax(0, 3.7fr)
-    minmax(0, 1.3fr)
+    minmax(0, 1.5fr)
+    minmax(0, 0.5fr)
     minmax(0, 1fr)
-    minmax(0, 0.7fr)
     minmax(0, 0.5fr)
     minmax(0, 1fr)
     minmax(0, 0.3fr);
