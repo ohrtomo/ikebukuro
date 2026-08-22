@@ -4807,10 +4807,10 @@ function fitNextStopDisplayText() {
 
     // 初期値・最小値
     let size = Math.min(
-        100,
-        Math.max(34, Math.floor(window.innerWidth * 0.10))
+        72,
+        Math.max(26, Math.floor(window.innerWidth * 0.075))
     );
-    const minSize = 24;
+    const minSize = 20;
 
     box.style.setProperty("--next-stop-font-size", `${size}px`);
 
