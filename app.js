@@ -543,7 +543,7 @@ function getVoiceFileUrl(fileName) {
     return (
         VOICE_BASE_PATH +
         encodeURIComponent(fileName) +
-        ".wav"
+        ".mp3"
     );
 }
 
