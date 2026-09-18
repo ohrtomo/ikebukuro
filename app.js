@@ -269,6 +269,11 @@ const state = {
             changeStation: "",   // ★ 追加：変更となる駅
         },
 
+        // 音声方式
+        // "recorded" ＝ 録音音声（MP3優先・不足時は合成音声）
+        // "synthetic" ＝ 合成音声のみ
+        voiceMode: "recorded",
+
         voiceVolume: 1.0,
         dayType: "平日",
     },
@@ -1203,7 +1208,32 @@ function playSyntheticVoiceSegment(text, volume) {
  *   その文節だけ合成音声で再生
  */
 async function playSpeechText(text, volume) {
-    const segments = splitSpeechIntoVoiceSegments(text);
+    // ==========================================
+    // 合成音声モード
+    // ==========================================
+    //
+    // MP3は一切使用しない。
+    // 従来どおり案内文全体を1回の合成音声として発話する。
+    if (state.config.voiceMode === "synthetic") {
+        await playSyntheticVoiceSegment(
+            text,
+            volume,
+        );
+
+        return;
+    }
+
+
+    // ==========================================
+    // 録音音声モード
+    // ==========================================
+    //
+    // 文節ごとにMP3を探す。
+    // MP3がない文節だけ合成音声へフォールバックする。
+
+    const segments =
+        splitSpeechIntoVoiceSegments(text);
+
 
     for (const segment of segments) {
         // キューへ登録された後にミュートされた場合にも対応
@@ -1211,12 +1241,18 @@ async function playSpeechText(text, volume) {
             return;
         }
 
+
         const recordedResult =
-            await playRecordedVoiceSegment(segment, volume);
+            await playRecordedVoiceSegment(
+                segment,
+                volume,
+            );
+
 
         if (recordedResult === "played") {
             continue;
         }
+
 
         if (
             recordedResult === "missing" &&
@@ -1229,7 +1265,13 @@ async function playSpeechText(text, volume) {
             );
         }
 
-        await playSyntheticVoiceSegment(segment, volume);
+
+        // MP3がない、または再生失敗した文節だけ
+        // 合成音声を使用する
+        await playSyntheticVoiceSegment(
+            segment,
+            volume,
+        );
     }
 }
 
@@ -2450,6 +2492,7 @@ function screenGuidance() {
                 el("button", { class: "btn secondary", id: "m-type" }, "種別変更"),
                 el("button", { class: "btn secondary", id: "m-train" }, "列番変更"),
                 el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),
+                el("button", { class: "btn secondary", id: "m-voice" }, "音声変更"),
                 el("button", { class: "btn secondary", id: "m-reset" }, "地点リセット"),
                 el("button", { class: "btn secondary", id: "m-info" }, "運行情報"),
                 el("button", { class: "btn secondary", id: "m-underground" }, "強制地下"),
@@ -2518,6 +2561,7 @@ function screenGuidance() {
     modal.querySelector("#m-stop").onclick = () => openStopList();
     modal.querySelector("#m-train").onclick = () => openTrainChange();
     modal.querySelector("#m-volume").onclick = () => openVolumePanel();
+    modal.querySelector("#m-voice").onclick = () => openVoiceModePanel();
     modal.querySelector("#m-info").onclick = () => openOperationInfo();
 
     modal.querySelector("#m-reset").onclick = () => {
@@ -2889,6 +2933,154 @@ function openStopList() {
     panel.appendChild(wrap);
 }
 
+// 音声方式変更
+function openVoiceModePanel() {
+    const modal = document.getElementById("menuModal");
+    const panel = modal.querySelector(".panel");
+    const kind = "voice-mode";
+
+    // 既に同じサブ画面が開いていれば閉じる
+    const existing = panel.querySelector(
+        `.menu-subpanel[data-kind="${kind}"]`,
+    );
+
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    // 他のサブ画面は閉じる
+    panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+
+    // 念のため未設定の場合は録音音声を初期値とする
+    if (
+        state.config.voiceMode !== "recorded" &&
+        state.config.voiceMode !== "synthetic"
+    ) {
+        state.config.voiceMode = "recorded";
+    }
+
+    const status = el(
+        "div",
+        {
+            class: "row",
+            style: "font-weight:700;",
+        },
+        state.config.voiceMode === "synthetic"
+            ? "現在：合成音声"
+            : "現在：録音音声",
+    );
+
+    const recordedBtn = el(
+        "button",
+        {
+            class:
+                "btn secondary" +
+                (state.config.voiceMode === "recorded"
+                    ? " active-selected"
+                    : ""),
+            type: "button",
+            style: "width:100%;",
+        },
+        "録音音声",
+    );
+
+    const syntheticBtn = el(
+        "button",
+        {
+            class:
+                "btn secondary" +
+                (state.config.voiceMode === "synthetic"
+                    ? " active-selected"
+                    : ""),
+            type: "button",
+            style: "width:100%;",
+        },
+        "合成音声",
+    );
+
+    // ボタン表示を更新
+    function updateVoiceModeDisplay() {
+        const isRecorded =
+            state.config.voiceMode === "recorded";
+
+        recordedBtn.classList.toggle(
+            "active-selected",
+            isRecorded,
+        );
+
+        syntheticBtn.classList.toggle(
+            "active-selected",
+            !isRecorded,
+        );
+
+        status.textContent =
+            isRecorded
+                ? "現在：録音音声"
+                : "現在：合成音声";
+    }
+
+    recordedBtn.onclick = () => {
+        state.config.voiceMode = "recorded";
+        updateVoiceModeDisplay();
+
+        console.log(
+            "[VOICE MODE] recorded",
+        );
+    };
+
+    syntheticBtn.onclick = () => {
+        state.config.voiceMode = "synthetic";
+        updateVoiceModeDisplay();
+
+        console.log(
+            "[VOICE MODE] synthetic",
+        );
+    };
+
+    const wrap = el(
+        "div",
+        {
+            class: "menu-subpanel",
+            "data-kind": kind,
+        },
+        [
+            el("hr", { class: "sep" }),
+
+            el(
+                "h3",
+                {},
+                "音声変更",
+            ),
+
+            status,
+
+            el(
+                "div",
+                {
+                    class: "row",
+                    style: "display:grid;grid-template-columns:1fr 1fr;gap:8px;",
+                },
+                [
+                    recordedBtn,
+                    syntheticBtn,
+                ],
+            ),
+
+            el(
+                "div",
+                {
+                    class: "small",
+                    style: "margin-top:8px;",
+                },
+                "録音音声ではMP3を優先し、音声ファイルがない場合のみ合成音声を使用します。",
+            ),
+        ],
+    );
+
+    panel.appendChild(wrap);
+}
+
 // 音量設定・テスト
 function openVolumePanel() {
     const modal = document.getElementById("menuModal");
@@ -2949,23 +3141,49 @@ function openVolumePanel() {
                 state.config.voiceVolume,
             );
 
+
+        // ======================================
+        // 合成音声モード
+        // ======================================
+        if (state.config.voiceMode === "synthetic") {
+            console.log(
+                "[VOICE TEST] synthetic",
+            );
+
+            await playSyntheticVoiceSegment(
+                text,
+                volume,
+            );
+
+            return;
+        }
+
+
+        // ======================================
+        // 録音音声モード
+        // ======================================
+
         console.log(
             "[VOICE TEST START]",
             {
+                mode: "recorded",
                 text,
                 volume,
             },
         );
 
-        // ★ ユーザーがボタンを押した瞬間に
-        //   AudioContextを確実に有効化する
+
+        // ユーザーがボタンを押した瞬間に
+        // AudioContextを有効化
         const audioReady =
             await primeVoiceAudio();
+
 
         console.log(
             "[VOICE TEST AUDIO CONTEXT]",
             {
                 ready: audioReady,
+
                 state:
                     voiceAudioContext
                         ? voiceAudioContext.state
@@ -2973,21 +3191,22 @@ function openVolumePanel() {
             },
         );
 
-        // ★ 通常のvoicePlaybackQueueは使わない
-        //   テスト音声を直接再生する
+
+        // 通常案内キューを使わず直接再生する
         const recordedResult =
             await playRecordedVoiceSegment(
                 text,
                 volume,
             );
 
+
         console.log(
             "[VOICE TEST RESULT]",
             recordedResult,
         );
 
-        // MP3が存在しない・デコードできない等の場合は
-        // 従来の合成音声を使う
+
+        // 録音音声がなければ合成音声へフォールバック
         if (recordedResult !== "played") {
             console.warn(
                 "[VOICE TEST] MP3を再生できないため合成音声を使用します。",

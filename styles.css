@@ -798,3 +798,31 @@ input[type="text"], select, input[type="number"] {
   margin-top: 8px;
   width: 100%;
 }
+
+/* =========================
+   メニュー：2列表示
+========================= */
+
+/* メニュー直下のボタン一覧だけを2列にする */
+#menuModal > .panel > .list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* 「案内終了」は今までどおり横幅いっぱい */
+#menuModal #m-end {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+/* 「とじる」も今までどおり横幅いっぱい */
+#menuModal #m-close {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+/* それ以外のメニューボタンは各列いっぱいに広げる */
+#menuModal > .panel > .list > .btn {
+  width: 100%;
+}
