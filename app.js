@@ -370,16 +370,412 @@ async function loadData() {
 
 
 // ==== Speech ====
+
+// 録音音声の保存場所
+const VOICE_BASE_PATH = "./data/voice/";
+
+// 読点を含んでいても、1つの音声ファイルとして扱う固定文節
+const VOICE_ATOMIC_PHRASES = new Set([
+    "搭載かばん、確認",
+    "運転停車、ドア扱い注意",
+    "整列、確認",
+    "ホームドア「S」確認",
+    "ホームドア、S、確認",
+    "案内を開始します。",
+    "これは音量テストです。",
+]);
+
+// app.js内の文言と、実際の音声ファイル名が異なる場合の候補
+const VOICE_FILE_ALIASES = {
+    "ホームドア「S」確認": [
+        "ホームドア「S」確認",
+        "ホームドア、S、確認",
+    ],
+
+    // 添付ファイル名が「…」で終わっている場合にも対応
+    "運転停車、ドア扱い注意": [
+        "運転停車、ドア扱い注意",
+        "運転停車、ドア扱い…",
+    ],
+};
+
+// 存在しないファイルへ毎回アクセスしないためのキャッシュ
+const voiceFileAvailabilityCache = new Map();
+
+// 見つからなかった文節をコンソールへ繰り返し表示しないための記録
+const missingVoiceWarningCache = new Set();
+
+// 複数の案内が重ならないよう、順番に再生するキュー
+let voicePlaybackQueue = Promise.resolve();
+
+// 現在再生している録音音声
+let activeVoiceAudio = null;
+
+
+/**
+ * 音量を0.0～1.0へ収める
+ */
+function clampVoiceVolume(value) {
+    const n = Number(value);
+
+    if (!Number.isFinite(n)) {
+        return 1.0;
+    }
+
+    return Math.min(Math.max(n, 0), 1);
+}
+
+
+/**
+ * 文末の句読点を除く
+ *
+ * 例:
+ * 「案内を開始します。」→「案内を開始します」
+ */
+function removeVoiceEndPunctuation(text) {
+    return String(text || "")
+        .trim()
+        .replace(/[。．.!！?？]+$/u, "");
+}
+
+
+/**
+ * 案内文を録音音声の文節単位へ分割する
+ *
+ * 例:
+ * 「次は石神井公園、3番、停車」
+ *  ↓
+ * ["次は", "石神井公園", "3番", "停車"]
+ *
+ * 「停車、8両、奥」
+ *  ↓
+ * ["停車", "8両", "奥"]
+ */
+function splitSpeechIntoVoiceSegments(text) {
+    const original = String(text || "").trim();
+
+    if (!original) {
+        return [];
+    }
+
+    // 固定複合文節は分割しない
+    if (VOICE_ATOMIC_PHRASES.has(original)) {
+        return [original];
+    }
+
+    const withoutEndPunctuation = removeVoiceEndPunctuation(original);
+
+    if (VOICE_ATOMIC_PHRASES.has(withoutEndPunctuation)) {
+        return [withoutEndPunctuation];
+    }
+
+    const commaParts = withoutEndPunctuation
+        .split(/[、，,]/u)
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+    const result = [];
+
+    for (const part of commaParts) {
+        // 「次は石神井公園」のような部分を、
+        // 「次は」と「石神井公園」に分ける
+        if (part.startsWith("次は") && part.length > 2) {
+            result.push("次は");
+
+            const stationName = part.slice(2).trim();
+
+            if (stationName) {
+                result.push(stationName);
+            }
+
+            continue;
+        }
+
+        result.push(part);
+    }
+
+    return result;
+}
+
+
+/**
+ * 1文節に対して試す音声ファイル名の候補を返す
+ */
+function getVoiceFileNameCandidates(segment) {
+    const text = String(segment || "").trim();
+
+    if (!text) {
+        return [];
+    }
+
+    const sourceCandidates =
+        VOICE_FILE_ALIASES[text] &&
+        Array.isArray(VOICE_FILE_ALIASES[text])
+            ? VOICE_FILE_ALIASES[text]
+            : [text];
+
+    const result = [];
+
+    for (const candidate of sourceCandidates) {
+        const exact = String(candidate || "").trim();
+        const withoutPunctuation = removeVoiceEndPunctuation(exact);
+
+        if (exact && !result.includes(exact)) {
+            result.push(exact);
+        }
+
+        if (
+            withoutPunctuation &&
+            !result.includes(withoutPunctuation)
+        ) {
+            result.push(withoutPunctuation);
+        }
+    }
+
+    return result;
+}
+
+
+/**
+ * 日本語を含むファイル名をURLへ変換する
+ */
+function getVoiceFileUrl(fileName) {
+    return (
+        VOICE_BASE_PATH +
+        encodeURIComponent(fileName) +
+        ".wav"
+    );
+}
+
+
+/**
+ * 1つのWAVファイルを再生する
+ *
+ * 戻り値:
+ * ・"played"  再生成功
+ * ・"missing" ファイルなし、または読み込み不可
+ * ・"failed"  自動再生制限などによる再生失敗
+ */
+function playRecordedVoiceFile(url, volume) {
+    return new Promise((resolve) => {
+        const audio = new Audio();
+        let settled = false;
+
+        function finish(status) {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+
+            audio.onended = null;
+            audio.onerror = null;
+
+            if (activeVoiceAudio === audio) {
+                activeVoiceAudio = null;
+            }
+
+            resolve(status);
+        }
+
+        audio.preload = "auto";
+        audio.volume = clampVoiceVolume(volume);
+
+        audio.onended = () => {
+            finish("played");
+        };
+
+        audio.onerror = () => {
+            finish("missing");
+        };
+
+        audio.src = url;
+        activeVoiceAudio = audio;
+
+        try {
+            const playPromise = audio.play();
+
+            if (
+                playPromise &&
+                typeof playPromise.catch === "function"
+            ) {
+                playPromise.catch((error) => {
+                    console.warn(
+                        "録音音声の再生に失敗しました。",
+                        url,
+                        error,
+                    );
+
+                    finish("failed");
+                });
+            }
+        } catch (error) {
+            console.warn(
+                "録音音声の再生に失敗しました。",
+                url,
+                error,
+            );
+
+            finish("failed");
+        }
+    });
+}
+
+
+/**
+ * 文節に対応する録音音声を探して再生する
+ *
+ * 戻り値:
+ * ・"played"
+ * ・"missing"
+ * ・"failed"
+ */
+async function playRecordedVoiceSegment(segment, volume) {
+    const candidates = getVoiceFileNameCandidates(segment);
+
+    let playbackFailed = false;
+
+    for (const fileName of candidates) {
+        const url = getVoiceFileUrl(fileName);
+
+        // 過去に存在しないと判定したファイルは再確認しない
+        if (voiceFileAvailabilityCache.get(url) === false) {
+            continue;
+        }
+
+        const result = await playRecordedVoiceFile(url, volume);
+
+        if (result === "played") {
+            voiceFileAvailabilityCache.set(url, true);
+            return "played";
+        }
+
+        if (result === "missing") {
+            voiceFileAvailabilityCache.set(url, false);
+            continue;
+        }
+
+        // 自動再生制限などで失敗した場合
+        playbackFailed = true;
+        break;
+    }
+
+    return playbackFailed ? "failed" : "missing";
+}
+
+
+/**
+ * 録音音声がない場合に、従来の合成音声を再生する
+ */
+function playSyntheticVoiceSegment(text, volume) {
+    return new Promise((resolve) => {
+        if (
+            typeof SpeechSynthesisUtterance === "undefined" ||
+            !window.speechSynthesis
+        ) {
+            resolve();
+            return;
+        }
+
+        const utter = new SpeechSynthesisUtterance(text);
+        let finished = false;
+
+        function finish() {
+            if (finished) {
+                return;
+            }
+
+            finished = true;
+
+            clearTimeout(safetyTimer);
+
+            utter.onend = null;
+            utter.onerror = null;
+
+            resolve();
+        }
+
+        utter.lang = "ja-JP";
+        utter.volume = clampVoiceVolume(volume);
+
+        utter.onend = finish;
+        utter.onerror = finish;
+
+        // ブラウザ側でonendが発生しなかった場合の安全対策
+        const safetyTimer = setTimeout(finish, 15000);
+
+        try {
+            window.speechSynthesis.resume();
+            window.speechSynthesis.speak(utter);
+        } catch (error) {
+            console.warn(
+                "合成音声の再生に失敗しました。",
+                text,
+                error,
+            );
+
+            finish();
+        }
+    });
+}
+
+
+/**
+ * 1つの案内文を、文節ごとに順番に再生する
+ *
+ * 録音音声あり:
+ *   WAVを再生
+ *
+ * 録音音声なし:
+ *   その文節だけ合成音声で再生
+ */
+async function playSpeechText(text, volume) {
+    const segments = splitSpeechIntoVoiceSegments(text);
+
+    for (const segment of segments) {
+        // キューへ登録された後にミュートされた場合にも対応
+        if (state.runtime.voiceMuted) {
+            return;
+        }
+
+        const recordedResult =
+            await playRecordedVoiceSegment(segment, volume);
+
+        if (recordedResult === "played") {
+            continue;
+        }
+
+        if (
+            recordedResult === "missing" &&
+            !missingVoiceWarningCache.has(segment)
+        ) {
+            missingVoiceWarningCache.add(segment);
+
+            console.info(
+                `録音音声が見つからないため、合成音声を使用します: ${segment}`,
+            );
+        }
+
+        await playSyntheticVoiceSegment(segment, volume);
+    }
+}
+
+
+/**
+ * 従来の発話条件を維持しながら、音声再生キューへ追加する
+ */
 function speakOnce(key, text) {
     const rt = state.runtime;
     const k = String(key || "");
 
-    // ★ 案内開始前は原則しゃべらない
-    //   ただし start_guidance は「開始ボタン押下中の音声初期化」として許可
-    if (!rt.started && k !== "start_guidance") return;
+    // 案内開始前は原則しゃべらない
+    // start_guidanceのみ開始ボタン押下時に許可
+    if (!rt.started && k !== "start_guidance") {
+        return;
+    }
 
-    // ★ 地下モード中は次停車駅表示を消す
-    //   地下モード中は、BAND2には何も表示しない
+    // 地下モード中はBAND2を消し、
+    // 地下用・音量テスト・案内開始以外の音声を止める
     if (rt.undergroundMode) {
         clearNextStopDisplay();
 
@@ -394,11 +790,13 @@ function speakOnce(key, text) {
         }
     }
 
-    if (rt.voiceMuted) return;
+    if (rt.voiceMuted) {
+        return;
+    }
 
     const now = Date.now();
 
-    // ★ 案内開始から10秒間は「start_guidance」以外の音声をミュート
+    // 案内開始から10秒間は、開始音声以外を抑止
     if (
         k !== "start_guidance" &&
         rt.muteUntil &&
@@ -407,38 +805,32 @@ function speakOnce(key, text) {
         return;
     }
 
+    // 同じキーは30秒間再生しない
     const last = rt.lastSpoken[k] || 0;
-    if (now - last < 30000) return; // 30秒抑止
+
+    if (now - last < 30000) {
+        return;
+    }
+
     rt.lastSpoken[k] = now;
 
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "ja-JP";
+    // 案内開始音声だけは従来どおり最小音量
+    const volume =
+        k === "start_guidance"
+            ? 0.01
+            : clampVoiceVolume(state.config.voiceVolume);
 
-    // ★ 音量反映
-    //   start_guidance（案内を開始します。）だけは最小音量で発話
-    let vol;
-    if (k === "start_guidance") {
-        vol = 0.01;
-    } else {
-        vol = state.config.voiceVolume;
-    }
-
-    if (rt.voiceMuted) {
-        vol = 0;
-    }
-
-    utter.volume =
-        typeof vol === "number" ? Math.min(Math.max(vol, 0), 1) : 1.0;
-
-    // ★ 一部ブラウザで停止状態のままになる対策
-    try {
-        speechSynthesis.resume();
-    } catch (e) {
-        console.warn("speechSynthesis.resume failed:", e);
-    }
-
-    speechSynthesis.speak(utter);
-
+    // Promiseキューに追加し、複数案内の重複再生を防止
+    voicePlaybackQueue = voicePlaybackQueue
+        .catch((error) => {
+            console.warn(
+                "直前の音声再生処理でエラーが発生しました。",
+                error,
+            );
+        })
+        .then(() => {
+            return playSpeechText(text, volume);
+        });
 }
 
 // ★ 列車番号と運転日区分から「回送A」「臨時B」などを取得
