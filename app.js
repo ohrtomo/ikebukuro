@@ -399,8 +399,7 @@ const VOICE_FILE_ALIASES = {
     ],
 };
 
-// 存在しないファイルへ毎回アクセスしないためのキャッシュ
-const voiceFileAvailabilityCache = new Map();
+
 
 // 見つからなかった文節をコンソールへ繰り返し表示しないための記録
 const missingVoiceWarningCache = new Set();
@@ -408,8 +407,37 @@ const missingVoiceWarningCache = new Set();
 // 複数の案内が重ならないよう、順番に再生するキュー
 let voicePlaybackQueue = Promise.resolve();
 
-// 現在再生している録音音声
-let activeVoiceAudio = null;
+// ==== 録音音声 Web Audio 再生システム ====
+
+// デコード済みMP3を保存する。
+// 一度読み込んだ音声は、その後ネットワークアクセスせず再利用する。
+const decodedVoiceBufferCache = new Map();
+
+// 404だったファイルの短時間キャッシュ。
+// 一時的な通信エラーはここには保存しない。
+const voiceMissingUntil = new Map();
+
+// Web Audio API
+let voiceAudioContext = null;
+let voiceMasterGainNode = null;
+let voiceLimiterNode = null;
+
+// iPhone等でAudioContextを一度ユーザー操作から有効化したか
+let voiceAudioPrimed = false;
+
+// 現在再生中のBufferSource
+let activeVoiceSource = null;
+
+
+// ===== 音量増幅 =====
+//
+// 1.0 = 元ファイルそのまま
+// 1.5 = 約 +3.5dB
+// 2.0 = 約 +6dB
+//
+// 今回は音量を大きくするため2.0。
+// 後段のコンプレッサーでピークを抑える。
+const VOICE_DIGITAL_BOOST = 2.0;
 
 
 /**
@@ -549,76 +577,448 @@ function getVoiceFileUrl(fileName) {
 
 
 /**
- * 1つのWAVファイルを再生する
- *
- * 戻り値:
- * ・"played"  再生成功
- * ・"missing" ファイルなし、または読み込み不可
- * ・"failed"  自動再生制限などによる再生失敗
+ * AudioContextを作成する
  */
-function playRecordedVoiceFile(url, volume) {
-    return new Promise((resolve) => {
-        const audio = new Audio();
-        let settled = false;
+function getVoiceAudioContext() {
+    if (voiceAudioContext) {
+        return voiceAudioContext;
+    }
 
-        function finish(status) {
-            if (settled) {
+    const AudioContextClass =
+        window.AudioContext ||
+        window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+        console.warn(
+            "Web Audio APIが使用できません。合成音声へフォールバックします。",
+        );
+        return null;
+    }
+
+    try {
+        voiceAudioContext =
+            new AudioContextClass({
+                latencyHint: "interactive",
+            });
+    } catch (e) {
+        // Safari等でオプション指定が使えない場合
+        voiceAudioContext =
+            new AudioContextClass();
+    }
+
+
+    // ===== マスターゲイン =====
+    //
+    // HTML Audioのvolume=1.0を超えて増幅するために使用する。
+    voiceMasterGainNode =
+        voiceAudioContext.createGain();
+
+    voiceMasterGainNode.gain.value =
+        VOICE_DIGITAL_BOOST;
+
+
+    // ===== ピーク抑制 =====
+    //
+    // +6dB程度増幅してもピークで極端に歪まないよう、
+    // DynamicsCompressorをリミッター寄りに設定する。
+    voiceLimiterNode =
+        voiceAudioContext.createDynamicsCompressor();
+
+    voiceLimiterNode.threshold.value = -6;
+    voiceLimiterNode.knee.value = 0;
+    voiceLimiterNode.ratio.value = 20;
+    voiceLimiterNode.attack.value = 0.003;
+    voiceLimiterNode.release.value = 0.15;
+
+
+    voiceMasterGainNode.connect(
+        voiceLimiterNode,
+    );
+
+    voiceLimiterNode.connect(
+        voiceAudioContext.destination,
+    );
+
+    return voiceAudioContext;
+}
+
+
+/**
+ * ユーザー操作中にAudioContextを有効化する。
+ *
+ * iOS / Safari / Chromeの自動再生制限対策。
+ */
+function primeVoiceAudio() {
+    const ctx = getVoiceAudioContext();
+
+    if (!ctx) {
+        return;
+    }
+
+    if (ctx.state === "suspended") {
+        ctx.resume().catch((error) => {
+            console.warn(
+                "AudioContext.resume() failed:",
+                error,
+            );
+        });
+    }
+
+    if (voiceAudioPrimed) {
+        return;
+    }
+
+    voiceAudioPrimed = true;
+
+    try {
+        // ほぼ無音・一瞬のBufferをユーザー操作中に再生し、
+        // AudioContextを再生可能状態にする。
+        const buffer =
+            ctx.createBuffer(
+                1,
+                1,
+                ctx.sampleRate,
+            );
+
+        const source =
+            ctx.createBufferSource();
+
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+
+    } catch (error) {
+        console.warn(
+            "AudioContext prime failed:",
+            error,
+        );
+    }
+}
+
+
+/**
+ * MP3を取得してAudioBufferへ変換する。
+ *
+ * 成功した音声だけ永続キャッシュする。
+ * 通信エラーやデコード失敗を「存在しない」と永久保存しない。
+ */
+async function loadVoiceAudioBuffer(url) {
+    const cached =
+        decodedVoiceBufferCache.get(url);
+
+    if (cached) {
+        try {
+            const buffer = await cached;
+
+            return {
+                status: "ready",
+                buffer,
+            };
+        } catch (e) {
+            decodedVoiceBufferCache.delete(url);
+        }
+    }
+
+
+    // 404だったファイルは60秒だけ再確認しない
+    const missingUntil =
+        voiceMissingUntil.get(url) || 0;
+
+    if (Date.now() < missingUntil) {
+        return {
+            status: "missing",
+            buffer: null,
+        };
+    }
+
+
+    const task = (async () => {
+        const controller =
+            new AbortController();
+
+        // 通信が止まっても音声キュー全体を止めない
+        const timeoutId =
+            setTimeout(() => {
+                controller.abort();
+            }, 5000);
+
+        try {
+            const response =
+                await fetch(
+                    url,
+                    {
+                        cache: "force-cache",
+                        signal: controller.signal,
+                    },
+                );
+
+            clearTimeout(timeoutId);
+
+
+            if (response.status === 404) {
+                voiceMissingUntil.set(
+                    url,
+                    Date.now() + 60000,
+                );
+
+                throw {
+                    voiceMissing: true,
+                    status: 404,
+                };
+            }
+
+
+            if (!response.ok) {
+                throw new Error(
+                    `HTTP ${response.status}`,
+                );
+            }
+
+
+            const arrayBuffer =
+                await response.arrayBuffer();
+
+            const ctx =
+                getVoiceAudioContext();
+
+            if (!ctx) {
+                throw new Error(
+                    "AudioContext unavailable",
+                );
+            }
+
+
+            const decoded =
+                await ctx.decodeAudioData(
+                    arrayBuffer.slice(0),
+                );
+
+            return decoded;
+
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    })();
+
+
+    // 読込中も同じPromiseを共有する
+    decodedVoiceBufferCache.set(
+        url,
+        task,
+    );
+
+
+    try {
+        const buffer = await task;
+
+        return {
+            status: "ready",
+            buffer,
+        };
+
+    } catch (error) {
+        // 失敗したPromiseはキャッシュから除去する。
+        // 次回、再取得できるようにする。
+        decodedVoiceBufferCache.delete(url);
+
+
+        if (
+            error &&
+            error.voiceMissing
+        ) {
+            return {
+                status: "missing",
+                buffer: null,
+            };
+        }
+
+
+        console.warn(
+            "録音音声の取得・デコードに失敗しました。",
+            url,
+            error,
+        );
+
+        return {
+            status: "failed",
+            buffer: null,
+        };
+    }
+}
+
+
+/**
+ * AudioBufferを再生する。
+ *
+ * 再生終了イベントが来ない場合でも、
+ * 音声の長さ＋3秒で必ず処理を終了する。
+ */
+async function playVoiceAudioBuffer(
+    buffer,
+    volume,
+) {
+    const ctx =
+        getVoiceAudioContext();
+
+    if (!ctx) {
+        return "failed";
+    }
+
+
+    try {
+        if (ctx.state === "suspended") {
+            await ctx.resume();
+        }
+    } catch (error) {
+        console.warn(
+            "AudioContext resume failed:",
+            error,
+        );
+
+        return "failed";
+    }
+
+
+    return new Promise((resolve) => {
+        const source =
+            ctx.createBufferSource();
+
+        const segmentGain =
+            ctx.createGain();
+
+
+        source.buffer = buffer;
+
+        // ユーザー設定音量。
+        // 100%なら1.0。
+        segmentGain.gain.value =
+            clampVoiceVolume(volume);
+
+
+        source.connect(segmentGain);
+
+        segmentGain.connect(
+            voiceMasterGainNode,
+        );
+
+
+        let finished = false;
+
+
+        const timeoutMs =
+            Math.max(
+                5000,
+                (buffer.duration + 3) * 1000,
+            );
+
+
+        const safetyTimer =
+            setTimeout(() => {
+                console.warn(
+                    "録音音声の終了イベントが来なかったため、再生を強制終了します。",
+                );
+
+                finish("failed", true);
+
+            }, timeoutMs);
+
+
+        function finish(
+            status,
+            stopSource = false,
+        ) {
+            if (finished) {
                 return;
             }
 
-            settled = true;
+            finished = true;
 
-            audio.onended = null;
-            audio.onerror = null;
+            clearTimeout(safetyTimer);
 
-            if (activeVoiceAudio === audio) {
-                activeVoiceAudio = null;
+
+            source.onended = null;
+
+
+            if (
+                stopSource
+            ) {
+                try {
+                    source.stop();
+                } catch (e) {
+                    // 既に終了済みなら無視
+                }
             }
+
+
+            try {
+                source.disconnect();
+            } catch (e) {}
+
+            try {
+                segmentGain.disconnect();
+            } catch (e) {}
+
+
+            if (
+                activeVoiceSource === source
+            ) {
+                activeVoiceSource = null;
+            }
+
 
             resolve(status);
         }
 
-        audio.preload = "auto";
-        audio.volume = clampVoiceVolume(volume);
 
-        audio.onended = () => {
+        source.onended = () => {
             finish("played");
         };
 
-        audio.onerror = () => {
-            finish("missing");
-        };
 
-        audio.src = url;
-        activeVoiceAudio = audio;
+        activeVoiceSource = source;
+
 
         try {
-            const playPromise = audio.play();
+            source.start(0);
 
-            if (
-                playPromise &&
-                typeof playPromise.catch === "function"
-            ) {
-                playPromise.catch((error) => {
-                    console.warn(
-                        "録音音声の再生に失敗しました。",
-                        url,
-                        error,
-                    );
-
-                    finish("failed");
-                });
-            }
         } catch (error) {
             console.warn(
-                "録音音声の再生に失敗しました。",
-                url,
+                "録音音声を開始できませんでした。",
                 error,
             );
 
-            finish("failed");
+            finish(
+                "failed",
+                false,
+            );
         }
     });
+}
+
+
+/**
+ * 1つの音声ファイルを読み込んで再生する
+ */
+async function playRecordedVoiceFile(
+    url,
+    volume,
+) {
+    const loaded =
+        await loadVoiceAudioBuffer(url);
+
+
+    if (
+        loaded.status !== "ready" ||
+        !loaded.buffer
+    ) {
+        return loaded.status;
+    }
+
+
+    return await playVoiceAudioBuffer(
+        loaded.buffer,
+        volume,
+    );
 }
 
 
@@ -626,41 +1026,57 @@ function playRecordedVoiceFile(url, volume) {
  * 文節に対応する録音音声を探して再生する
  *
  * 戻り値:
- * ・"played"
- * ・"missing"
- * ・"failed"
+ * played
+ * missing
+ * failed
  */
-async function playRecordedVoiceSegment(segment, volume) {
-    const candidates = getVoiceFileNameCandidates(segment);
+async function playRecordedVoiceSegment(
+    segment,
+    volume,
+) {
+    const candidates =
+        getVoiceFileNameCandidates(
+            segment,
+        );
 
-    let playbackFailed = false;
 
-    for (const fileName of candidates) {
-        const url = getVoiceFileUrl(fileName);
+    let hadFailure = false;
 
-        // 過去に存在しないと判定したファイルは再確認しない
-        if (voiceFileAvailabilityCache.get(url) === false) {
-            continue;
-        }
 
-        const result = await playRecordedVoiceFile(url, volume);
+    for (
+        const fileName of candidates
+    ) {
+        const url =
+            getVoiceFileUrl(
+                fileName,
+            );
+
+
+        const result =
+            await playRecordedVoiceFile(
+                url,
+                volume,
+            );
+
 
         if (result === "played") {
-            voiceFileAvailabilityCache.set(url, true);
             return "played";
         }
 
-        if (result === "missing") {
-            voiceFileAvailabilityCache.set(url, false);
+
+        if (result === "failed") {
+            hadFailure = true;
+
+            // 別名候補があれば、
+            // そちらも一応試す。
             continue;
         }
-
-        // 自動再生制限などで失敗した場合
-        playbackFailed = true;
-        break;
     }
 
-    return playbackFailed ? "failed" : "missing";
+
+    return hadFailure
+        ? "failed"
+        : "missing";
 }
 
 
@@ -768,6 +1184,9 @@ function speakOnce(key, text) {
     const rt = state.runtime;
     const k = String(key || "");
 
+    // ★ Web Audio APIをユーザー操作中に有効化する
+    primeVoiceAudio();
+
     // 案内開始前は原則しゃべらない
     // start_guidanceのみ開始ボタン押下時に許可
     if (!rt.started && k !== "start_guidance") {
@@ -814,11 +1233,10 @@ function speakOnce(key, text) {
 
     rt.lastSpoken[k] = now;
 
-    // 案内開始音声だけは従来どおり最小音量
-    const volume =
-        k === "start_guidance"
-            ? 0.01
-            : clampVoiceVolume(state.config.voiceVolume);
+const volume =
+    clampVoiceVolume(
+        state.config.voiceVolume,
+    );
 
     // Promiseキューに追加し、複数案内の重複再生を防止
     voicePlaybackQueue = voicePlaybackQueue
