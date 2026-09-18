@@ -49,61 +49,192 @@ function computeHeadingRad(lat1, lng1, lat2, lng2) {
   return Math.atan2(y, x);
 }
 
-// ★ 追加: station.csv からカーナビ用スポットを読み込む
-//   想定ヘッダ: 種類,名称,緯度,経度,...
-// ★ 追加: station.csv からカーナビ用スポットを読み込む
-//   想定ヘッダ: 種類,名称,緯度,経度,...
-function parseNavSpotsCsv(csvText) {
-  if (!csvText) return [];
+// ==== stationdata.csv 読み込み・変換 ====
+// stationdata.csv から以下を同時に生成する。
+// ・state.datasets.stations     : 旧 stations.json と同じ形
+// ・state.datasets.stationIds   : 旧 stationID.json 相当の駅ID一覧
+// ・state.datasets.stationIdMap : 駅名 → 駅ID の高速検索用Map
+// ・state.datasets.navSpots     : 旧 station.csv 相当の右側ナビ用スポット
 
-  const lines = csvText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"));
+const STATIONDATA_META_COLUMNS = new Set([
+    "種類",
+    "名称",
+    "緯度",
+    "経度",
+    "isStopover",
+    "down8pos",
+    "up8pos",
+    "所属路線1",
+    "所属路線2",
+    "所属路線3",
+    "駅ID",
+]);
 
-  if (!lines.length) return [];
+function splitCsvLine(line) {
+    const cols = [];
+    let cur = "";
+    let inQuotes = false;
 
-  const header = lines[0].split(",");
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        const next = line[i + 1];
 
-  // 通常ケース: ヘッダが UTF-8 できちんと読めている場合
-  let idxKind = header.indexOf("種類");
-  let idxName = header.indexOf("名称");
-  let idxLat  = header.indexOf("緯度");
-  let idxLng  = header.indexOf("経度");
-
-  // ★ フォールバック:
-  //   Shift-JIS などでヘッダが文字化けしている場合にも最低限動くように
-  if (idxKind < 0 || idxName < 0 || idxLat < 0 || idxLng < 0) {
-    if (header.length >= 4) {
-      // 0: 種類, 1: 名称, 2: 緯度, 3: 経度 とみなす
-      idxKind = 0;
-      idxName = 1;
-      idxLat  = 2;
-      idxLng  = 3;
-    } else {
-      console.warn("station.csv: ヘッダ解析に失敗しました:", header);
-      return [];
+        if (ch === '"') {
+            if (inQuotes && next === '"') {
+                cur += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (ch === "," && !inQuotes) {
+            cols.push(cur);
+            cur = "";
+        } else {
+            cur += ch;
+        }
     }
-  }
 
-  const spots = [];
+    cols.push(cur);
+    return cols;
+}
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",");
-    if (!cols.length) continue;
+function parseCsvText(csvText) {
+    if (!csvText) return [];
 
-    const kind = idxKind >= 0 && idxKind < cols.length ? cols[idxKind].trim() : "";
-    const name = idxName >= 0 && idxName < cols.length ? cols[idxName].trim() : "";
-    const lat  = idxLat  >= 0 && idxLat  < cols.length ? parseFloat(cols[idxLat])  : NaN;
-    const lng  = idxLng  >= 0 && idxLng  < cols.length ? parseFloat(cols[idxLng])  : NaN;
+    const lines = String(csvText)
+        .replace(/^\uFEFF/, "")
+        .split(/\r?\n/)
+        .filter((line) => line.trim() && !line.trim().startsWith("#"));
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (!lines.length) return [];
 
-    spots.push({ kind, name, lat, lng });
-  }
+    const header = splitCsvLine(lines[0]).map((h) => h.trim());
+    const rows = [];
 
-  // console.log("navSpots loaded:", spots.length, spots[0]);
-  return spots;
+    for (let i = 1; i < lines.length; i++) {
+        const cols = splitCsvLine(lines[i]);
+        const row = {};
+
+        header.forEach((h, idx) => {
+            row[h] = cols[idx] != null ? String(cols[idx]).trim() : "";
+        });
+
+        rows.push(row);
+    }
+
+    return rows;
+}
+
+function parseBoolCell(value) {
+    const s = String(value ?? "").trim();
+    if (!s) return false;
+
+    return (
+        s === "1" ||
+        s === "true" ||
+        s === "TRUE" ||
+        s === "True" ||
+        s === "○" ||
+        s === "◯" ||
+        s === "〇"
+    );
+}
+
+function parseNullableText(value) {
+    const s = String(value ?? "").trim();
+    if (!s || s.toLowerCase() === "null") return null;
+    return s;
+}
+
+function parseStationDataCsv(csvText) {
+    const rows = parseCsvText(csvText);
+
+    const stations = {};
+    const navSpots = [];
+    const stationIds = {};
+    const stationIdMap = {};
+
+    for (const row of rows) {
+        const kind = row["種類"] || "";
+        const name = row["名称"] || "";
+        if (!name) continue;
+
+        const lat = parseFloat(row["緯度"]);
+        const lng = parseFloat(row["経度"]);
+        const hasLatLng = Number.isFinite(lat) && Number.isFinite(lng);
+
+        // 旧 station.csv 相当：右側ナビ用スポット
+        // 緯度・経度がある行だけ使用する。
+        if (hasLatLng) {
+            navSpots.push({ kind, name, lat, lng });
+        }
+
+        // 旧 stationID.json 相当：駅ID
+        // 所属路線1〜3に同じ駅IDを登録する。
+        const stationId = parseNullableText(row["駅ID"]);
+        if (stationId) {
+            stationIdMap[name] = stationId;
+
+            [row["所属路線1"], row["所属路線2"], row["所属路線3"]]
+                .map((v) => String(v || "").trim())
+                .filter(Boolean)
+                .forEach((lineName) => {
+                    if (!stationIds[lineName]) stationIds[lineName] = [];
+
+                    const exists = stationIds[lineName].some(
+                        (s) => s.stationName === name && s.stationId === stationId,
+                    );
+
+                    if (!exists) {
+                        stationIds[lineName].push({
+                            stationId,
+                            stationName: name,
+                        });
+                    }
+                });
+        }
+
+        // 旧 stations.json 相当：駅座標・停留場・8両位置・停車パターン
+        // 緯度・経度がない行は、駅ID用データとして扱い、stations には入れない。
+        if (!hasLatLng) continue;
+
+        const stopPatterns = {};
+
+        for (const [key, value] of Object.entries(row)) {
+            if (STATIONDATA_META_COLUMNS.has(key)) continue;
+            if (!key) continue;
+
+            stopPatterns[key] = parseBoolCell(value);
+        }
+
+        stations[name] = {
+            lat,
+            lng,
+            isStopover: parseBoolCell(row["isStopover"]),
+            down8pos: parseNullableText(row["down8pos"]),
+            up8pos: parseNullableText(row["up8pos"]),
+            stopPatterns,
+        };
+    }
+
+    return {
+        stations,
+        stationIds,
+        stationIdMap,
+        navSpots,
+    };
+}
+
+async function fetchCsvText(path) {
+    const res = await fetch(path);
+    const buffer = await res.arrayBuffer();
+
+    // Excelで保存した Shift-JIS / CP932 CSV と、UTF-8 CSV の両方に対応する。
+    try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    } catch (e) {
+        return new TextDecoder("shift_jis").decode(buffer);
+    }
 }
 
 
@@ -118,6 +249,7 @@ const state = {
       carIcons: {},
       platforms: null,          // ★ 発着番線データ
       stationIds: null,         // ★ 駅IDマスタ
+      stationIdMap: {},         // ★ 駅名 → 駅ID
       nonPassengerTypes: null,  // ★ 回送/臨時の細分類
       navSpots: [],             // ★ 追加: カーナビ用スポット一覧（station.csv）
     },
@@ -201,39 +333,39 @@ const state = {
 
 // ==== 各種 JSON / CSV ロード ====
 async function loadData() {
-  const [
-    stations,
-    types,
-    dests,
-    ttable,
-    carIcons,
-    platforms,
-    stationIds,
-    nonPassengerTypes,
-    navSpotsCsvText,          // ★ 追加
-  ] = await Promise.all([
-    fetch("./data/stations.json").then((r) => r.json()),
-    fetch("./data/types.json").then((r) => r.json()),
-    fetch("./data/destinations.json").then((r) => r.json()),
-    fetch("./data/train_number_table.json").then((r) => r.json()),
-    fetch("./data/car_icons.json").then((r) => r.json()),
-    fetch("./data/platform.json").then((r) => r.json()),
-    fetch("./data/stationID.json").then((r) => r.json()),
-    fetch("./data/nonpassenger_types.json").then((r) => r.json()),
-    fetch("./data/station.csv").then((r) => r.text()),  // ★ 追加
-  ]);
+    const [
+        stationDataCsvText,
+        types,
+        dests,
+        ttable,
+        carIcons,
+        platforms,
+        nonPassengerTypes,
+    ] = await Promise.all([
+        fetchCsvText("./data/stationdata.csv"),
+        fetch("./data/types.json").then((r) => r.json()),
+        fetch("./data/destinations.json").then((r) => r.json()),
+        fetch("./data/train_number_table.json").then((r) => r.json()),
+        fetch("./data/car_icons.json").then((r) => r.json()),
+        fetch("./data/platform.json").then((r) => r.json()),
+        fetch("./data/nonpassenger_types.json").then((r) => r.json()),
+    ]);
 
-  state.datasets.stations          = stations;
-  state.datasets.types             = types;
-  state.datasets.dests             = dests;
-  state.datasets.trainTable        = ttable;
-  state.datasets.carIcons          = carIcons;
-  state.datasets.platforms         = platforms;
-  state.datasets.stationIds        = stationIds;
-  state.datasets.nonPassengerTypes = nonPassengerTypes;
+    const stationData = parseStationDataCsv(stationDataCsvText);
 
-  // ★ 追加: CSV をパースして navSpots に格納
-  state.datasets.navSpots = parseNavSpotsCsv(navSpotsCsvText);
+    // ★ stationdata.csv から生成
+    state.datasets.stations     = stationData.stations;
+    state.datasets.stationIds   = stationData.stationIds;
+    state.datasets.stationIdMap = stationData.stationIdMap;
+    state.datasets.navSpots     = stationData.navSpots;
+
+    // ★ 従来どおり JSON から読み込むデータ
+    state.datasets.types             = types;
+    state.datasets.dests             = dests;
+    state.datasets.trainTable        = ttable;
+    state.datasets.carIcons          = carIcons;
+    state.datasets.platforms         = platforms;
+    state.datasets.nonPassengerTypes = nonPassengerTypes;
 }
 
 
@@ -2487,27 +2619,35 @@ function stationBelongsToLockedLine(name, lockedLine) {
 }
 
 
-// ★ 駅名から stationId を引く（stationID.json を全走査）
-//    → 駅名は「完全一致」のみで検索する
+// ★ 駅名から stationId を引く
+//    stationdata.csv の「名称」列と完全一致する駅だけ返す
 function getStationIdByName(name) {
-    const data = state.datasets.stationIds;
-    if (!data || !name) return null;
+    if (!name) return null;
 
-    const key = name.trim();
+    const key = String(name).trim();
+    const map = state.datasets.stationIdMap || {};
+
+    if (map[key]) {
+        return map[key];
+    }
+
+    // 念のため、旧 stationID.json 互換形式でも検索できるようにしておく
+    const data = state.datasets.stationIds;
+    if (!data) return null;
 
     for (const groupStations of Object.values(data)) {
         if (!Array.isArray(groupStations)) continue;
+
         for (const s of groupStations) {
             if (!s.stationName) continue;
 
-            const cand = s.stationName.trim();
-
-            // ★ 完全一致のみ
+            const cand = String(s.stationName).trim();
             if (cand === key) {
-                return s.stationId;
+                return s.stationId || null;
             }
         }
     }
+
     return null;
 }
 
@@ -5421,7 +5561,7 @@ function renderNonPassengerExtraStopsScreen() {
     const stations = state.datasets.stations;
     if (!stations) {
         container.appendChild(
-            el("div", { class: "row" }, "stations.json が読み込まれていません。"),
+            el("div", { class: "row" }, "stationdata.csv が読み込まれていません"),
         );
         return;
     }
