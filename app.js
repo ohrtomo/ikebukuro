@@ -439,6 +439,22 @@ let activeVoiceSource = null;
 // 後段のコンプレッサーでピークを抑える。
 const VOICE_DIGITAL_BOOST = 2.0;
 
+// Promiseが永久に待機しないようにする
+function withVoiceTimeout(promise, timeoutMs, message) {
+    return Promise.race([
+        promise,
+
+        new Promise((_, reject) => {
+            setTimeout(() => {
+                reject(
+                    new Error(
+                        message || "音声処理がタイムアウトしました。",
+                    ),
+                );
+            }, timeoutMs);
+        }),
+    ]);
+}
 
 /**
  * 音量を0.0～1.0へ収める
@@ -648,51 +664,71 @@ function getVoiceAudioContext() {
  *
  * iOS / Safari / Chromeの自動再生制限対策。
  */
-function primeVoiceAudio() {
+async function primeVoiceAudio() {
     const ctx = getVoiceAudioContext();
 
     if (!ctx) {
-        return;
+        return false;
     }
 
-    if (ctx.state === "suspended") {
-        ctx.resume().catch((error) => {
+    // suspended / interrupted 等なら再開を試す
+    if (ctx.state !== "running") {
+        try {
+            await withVoiceTimeout(
+                ctx.resume(),
+                2000,
+                "AudioContext.resume() がタイムアウトしました。",
+            );
+        } catch (error) {
             console.warn(
                 "AudioContext.resume() failed:",
                 error,
             );
-        });
+
+            return false;
+        }
     }
 
-    if (voiceAudioPrimed) {
-        return;
+    // 実際にrunningになったことを確認
+    if (ctx.state !== "running") {
+        console.warn(
+            "AudioContext が running になっていません:",
+            ctx.state,
+        );
+
+        return false;
     }
 
-    voiceAudioPrimed = true;
+    // 初回だけ無音Bufferを再生
+    if (!voiceAudioPrimed) {
+        try {
+            const buffer =
+                ctx.createBuffer(
+                    1,
+                    1,
+                    ctx.sampleRate,
+                );
 
-    try {
-        // ほぼ無音・一瞬のBufferをユーザー操作中に再生し、
-        // AudioContextを再生可能状態にする。
-        const buffer =
-            ctx.createBuffer(
-                1,
-                1,
-                ctx.sampleRate,
+            const source =
+                ctx.createBufferSource();
+
+            source.buffer = buffer;
+            source.connect(ctx.destination);
+            source.start(0);
+
+            voiceAudioPrimed = true;
+
+        } catch (error) {
+            console.warn(
+                "AudioContext prime failed:",
+                error,
             );
 
-        const source =
-            ctx.createBufferSource();
-
-        source.buffer = buffer;
-        source.connect(ctx.destination);
-        source.start(0);
-
-    } catch (error) {
-        console.warn(
-            "AudioContext prime failed:",
-            error,
-        );
+            return false;
+        }
     }
+
+    return true;
 }
 
 
@@ -789,9 +825,13 @@ async function loadVoiceAudioBuffer(url) {
 
 
             const decoded =
-                await ctx.decodeAudioData(
-                    arrayBuffer.slice(0),
-                );
+                await withVoiceTimeout(
+                    ctx.decodeAudioData(
+                        arrayBuffer.slice(0),
+                    ),
+                    5000,
+                    `MP3デコードがタイムアウトしました: ${url}`,
+                    );
 
             return decoded;
 
@@ -866,9 +906,23 @@ async function playVoiceAudioBuffer(
 
 
     try {
-        if (ctx.state === "suspended") {
-            await ctx.resume();
+        if (ctx.state !== "running") {
+            await withVoiceTimeout(
+                ctx.resume(),
+                2000,
+                "録音音声再生時のAudioContext.resume()がタイムアウトしました。",
+            );
         }
+
+        if (ctx.state !== "running") {
+            console.warn(
+                "録音音声を再生できません。AudioContext state:",
+                ctx.state,
+            );
+
+            return "failed";
+        }
+
     } catch (error) {
         console.warn(
             "AudioContext resume failed:",
@@ -1118,7 +1172,10 @@ function playSyntheticVoiceSegment(text, volume) {
         utter.onerror = finish;
 
         // ブラウザ側でonendが発生しなかった場合の安全対策
-        const safetyTimer = setTimeout(finish, 15000);
+        const safetyTimer = setTimeout(
+            finish,
+            6000,
+        );
 
         try {
             window.speechSynthesis.resume();
@@ -1189,7 +1246,7 @@ function speakOnce(key, text) {
         k.startsWith("test_volume_");
 
     // ★ Web Audio APIをユーザー操作中に有効化する
-    primeVoiceAudio();
+    void primeVoiceAudio();
 
     // 案内開始前は原則しゃべらない
     // ただし、
@@ -2875,11 +2932,73 @@ function openVolumePanel() {
         state.config.voiceVolume = Math.min(Math.max(v / 100, 0), 1);
     };
 
-    const testBtn = el("button", { class: "btn" }, "テスト音声を再生");
-    testBtn.onclick = () => {
-        // ★ テストは毎回鳴らしたいのでキーをユニークにする
-        const key = "test_volume_" + Date.now();
-        speakOnce(key, "これは音量テストです。");
+    const testBtn = el(
+        "button",
+        {
+            class: "btn",
+            type: "button",
+        },
+        "テスト音声を再生",
+    );
+
+    testBtn.onclick = async () => {
+        const text = "これは音量テストです。";
+
+        const volume =
+            clampVoiceVolume(
+                state.config.voiceVolume,
+            );
+
+        console.log(
+            "[VOICE TEST START]",
+            {
+                text,
+                volume,
+            },
+        );
+
+        // ★ ユーザーがボタンを押した瞬間に
+        //   AudioContextを確実に有効化する
+        const audioReady =
+            await primeVoiceAudio();
+
+        console.log(
+            "[VOICE TEST AUDIO CONTEXT]",
+            {
+                ready: audioReady,
+                state:
+                    voiceAudioContext
+                        ? voiceAudioContext.state
+                        : "none",
+            },
+        );
+
+        // ★ 通常のvoicePlaybackQueueは使わない
+        //   テスト音声を直接再生する
+        const recordedResult =
+            await playRecordedVoiceSegment(
+                text,
+                volume,
+            );
+
+        console.log(
+            "[VOICE TEST RESULT]",
+            recordedResult,
+        );
+
+        // MP3が存在しない・デコードできない等の場合は
+        // 従来の合成音声を使う
+        if (recordedResult !== "played") {
+            console.warn(
+                "[VOICE TEST] MP3を再生できないため合成音声を使用します。",
+                recordedResult,
+            );
+
+            await playSyntheticVoiceSegment(
+                text,
+                volume,
+            );
+        }
     };
 
     const wrap = el(
