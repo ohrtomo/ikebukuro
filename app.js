@@ -1184,12 +1184,23 @@ function speakOnce(key, text) {
     const rt = state.runtime;
     const k = String(key || "");
 
+    // ★ 音量テストかどうか
+    const isVolumeTest =
+        k.startsWith("test_volume_");
+
     // ★ Web Audio APIをユーザー操作中に有効化する
     primeVoiceAudio();
 
     // 案内開始前は原則しゃべらない
-    // start_guidanceのみ開始ボタン押下時に許可
-    if (!rt.started && k !== "start_guidance") {
+    // ただし、
+    // ・案内開始音声
+    // ・音量テスト
+    // は案内開始前でも許可する
+    if (
+        !rt.started &&
+        k !== "start_guidance" &&
+        !isVolumeTest
+    ) {
         return;
     }
 
@@ -1218,6 +1229,7 @@ function speakOnce(key, text) {
     // 案内開始から10秒間は、開始音声以外を抑止
     if (
         k !== "start_guidance" &&
+        !isVolumeTest &&
         rt.muteUntil &&
         now < rt.muteUntil
     ) {
