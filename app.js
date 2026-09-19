@@ -412,6 +412,10 @@ const missingVoiceWarningCache = new Set();
 // 複数の案内が重ならないよう、順番に再生するキュー
 let voicePlaybackQueue = Promise.resolve();
 
+// バックグラウンド移行前の古い音声キューを無効化する世代番号。
+// Promise自体はキャンセルできないため、再生直前・文節間で世代を確認する。
+let voicePlaybackGeneration = 0;
+
 // ==== iPad向け 録音音声 HTMLAudioElement 再生システム ====
 
 // 録音音声はWeb Audio APIを使わず、同じHTMLAudioElementを使い続ける。
@@ -424,6 +428,19 @@ let voiceRearmRequired = false;
 // 現在再生中の録音音声Promiseを即時終了させるための関数。
 let activeRecordedVoiceFinish = null;
 
+// バックグラウンド／Audio Session割り込み中かどうか。
+let voiceLifecycleSuspended = false;
+
+// 復帰時の自動再許可は有限回だけ試し、失敗時は従来ボタンへ退避する。
+const VOICE_AUTO_REARM_DELAYS_MS = [250, 1200];
+const VOICE_REARM_PLAY_TIMEOUT_MS = 5000;
+let voiceAutoRearmTimer = null;
+let voiceAutoRearmSequence = 0;
+let voiceAutoRearmInFlight = false;
+
+// navigator.audioSession の statechange を重複登録しないためのフラグ。
+let voiceAudioSessionListenerAttached = false;
+
 
 /**
  * iPad / SafariのAudio Sessionを音声案内向けに設定する。
@@ -434,8 +451,11 @@ function configureVoiceAudioSession() {
         return;
     }
 
+    const audioSession =
+        navigator.audioSession;
+
     try {
-        navigator.audioSession.type = "transient-solo";
+        audioSession.type = "transient-solo";
 
     } catch (error) {
         console.warn(
@@ -444,10 +464,22 @@ function configureVoiceAudioSession() {
         );
 
         try {
-            navigator.audioSession.type = "playback";
+            audioSession.type = "playback";
         } catch (e) {
             // 非対応なら無視
         }
+    }
+
+    if (
+        !voiceAudioSessionListenerAttached &&
+        typeof audioSession.addEventListener === "function"
+    ) {
+        audioSession.addEventListener(
+            "statechange",
+            handleVoiceAudioSessionStateChange,
+        );
+
+        voiceAudioSessionListenerAttached = true;
     }
 }
 
@@ -485,8 +517,12 @@ function getRecordedVoiceAudio() {
 
 /**
  * 現在再生中の録音音声を停止し、待機中のPromiseも即時終了させる。
+ * resetSource=true の場合は、iPadOSが保持している古いデコーダ状態も破棄する。
  */
-function stopRecordedVoicePlayback(status = "failed") {
+function stopRecordedVoicePlayback(
+    status = "failed",
+    resetSource = false,
+) {
     if (recordedVoiceAudio) {
         try {
             recordedVoiceAudio.pause();
@@ -499,6 +535,45 @@ function stopRecordedVoicePlayback(status = "failed") {
         const finish = activeRecordedVoiceFinish;
         activeRecordedVoiceFinish = null;
         finish(status);
+    }
+
+    if (
+        resetSource &&
+        recordedVoiceAudio
+    ) {
+        try {
+            recordedVoiceAudio.removeAttribute(
+                "src",
+            );
+            recordedVoiceAudio.load();
+        } catch (error) {
+            console.warn(
+                "[VOICE] 音声ソースのリセットに失敗:",
+                error,
+            );
+        }
+    }
+}
+
+
+/**
+ * 既存のPromiseチェーンを切り離し、復帰前の古い案内を再生させない。
+ */
+function invalidateVoicePlaybackQueue() {
+    voicePlaybackGeneration += 1;
+    voicePlaybackQueue = Promise.resolve();
+}
+
+
+/**
+ * 予約済みの自動再開処理を無効化する。
+ */
+function clearAutomaticVoiceRearmSchedule() {
+    voiceAutoRearmSequence += 1;
+
+    if (voiceAutoRearmTimer) {
+        clearTimeout(voiceAutoRearmTimer);
+        voiceAutoRearmTimer = null;
     }
 }
 
@@ -567,12 +642,25 @@ function showVoiceRearmButton() {
 
 
 /**
- * ユーザー操作の直下でiPadの音声再生を再許可する。
+ * iPadの音声再生を再許可する。
+ * 通常はユーザー操作の直下で呼ぶが、復帰時は automatic=true で
+ * 同じpersistent HTMLAudioElementの自動再開も有限回だけ試す。
  * 成功時は確認用に「案内を開始します。」を再生する。
  */
-async function rearmVoiceFromUserGesture() {
+async function rearmVoiceFromUserGesture(
+    options = {},
+) {
+    const automatic =
+        options.automatic === true;
+
+    if (!automatic) {
+        clearAutomaticVoiceRearmSchedule();
+    }
+
     console.log(
-        "[VOICE REARM]",
+        automatic
+            ? "[VOICE AUTO REARM]"
+            : "[VOICE REARM]",
         state.config.voiceMode,
     );
 
@@ -598,7 +686,8 @@ async function rearmVoiceFromUserGesture() {
 
         try {
             stopRecordedVoicePlayback(
-                "failed",
+                "cancelled",
+                true,
             );
 
             audio.src =
@@ -615,24 +704,65 @@ async function rearmVoiceFromUserGesture() {
             audio.load();
 
             // ★ このplay()はユーザーのタップ処理内で実行される
-            await audio.play();
+            let playTimeout = null;
+
+            try {
+                await Promise.race([
+                    Promise.resolve(
+                        audio.play(),
+                    ),
+                    new Promise((_, reject) => {
+                        playTimeout = setTimeout(
+                            () => {
+                                const timeoutError =
+                                    new Error(
+                                        "音声再開がタイムアウトしました。",
+                                    );
+
+                                timeoutError.name =
+                                    "TimeoutError";
+                                reject(timeoutError);
+                            },
+                            VOICE_REARM_PLAY_TIMEOUT_MS,
+                        );
+                    }),
+                ]);
+            } finally {
+                if (playTimeout) {
+                    clearTimeout(playTimeout);
+                }
+            }
 
             voiceRearmRequired = false;
             hideVoiceRearmButton();
 
             console.log(
-                "[VOICE REARM] recorded OK",
+                automatic
+                    ? "[VOICE AUTO REARM] recorded OK"
+                    : "[VOICE REARM] recorded OK",
             );
 
             return true;
 
         } catch (error) {
             console.warn(
-                "[VOICE REARM] recorded failed:",
+                automatic
+                    ? "[VOICE AUTO REARM] recorded failed:"
+                    : "[VOICE REARM] recorded failed:",
                 error,
             );
 
             voiceRearmRequired = true;
+
+            // 遅れて開始した古いplay()が後から鳴り出さないよう停止する。
+            stopRecordedVoicePlayback(
+                "cancelled",
+                true,
+            );
+
+            if (!automatic) {
+                showVoiceRearmButton();
+            }
 
             return false;
         }
@@ -672,24 +802,305 @@ async function rearmVoiceFromUserGesture() {
             hideVoiceRearmButton();
 
             console.log(
-                "[VOICE REARM] synthetic requested",
+                automatic
+                    ? "[VOICE AUTO REARM] synthetic requested"
+                    : "[VOICE REARM] synthetic requested",
             );
 
             return true;
 
         } catch (error) {
             console.warn(
-                "[VOICE REARM] synthetic failed:",
+                automatic
+                    ? "[VOICE AUTO REARM] synthetic failed:"
+                    : "[VOICE REARM] synthetic failed:",
                 error,
             );
 
             voiceRearmRequired = true;
+
+            if (!automatic) {
+                showVoiceRearmButton();
+            }
 
             return false;
         }
     }
 
     return false;
+}
+
+
+/**
+ * バックグラウンド移行・Audio Session割り込み時に、
+ * 再生中音声と古いキューを破棄して復帰準備へ入る。
+ */
+function suspendVoiceForLifecycle(
+    reason,
+) {
+    if (voiceLifecycleSuspended) {
+        return;
+    }
+
+    const guidanceStarted =
+        state.runtime.started;
+
+    console.log(
+        "[VOICE] suspended",
+        reason,
+    );
+
+    voiceLifecycleSuspended = true;
+    clearAutomaticVoiceRearmSchedule();
+    invalidateVoicePlaybackQueue();
+
+    // 古いmedia decoder状態も捨てるが、ユーザー操作で許可済みの
+    // HTMLAudioElement自体は維持する。
+    stopRecordedVoicePlayback(
+        "cancelled",
+        true,
+    );
+
+    if (window.speechSynthesis) {
+        try {
+            window.speechSynthesis.cancel();
+        } catch (error) {
+            // 無視
+        }
+    }
+
+    voiceRearmRequired =
+        guidanceStarted;
+    hideVoiceRearmButton();
+}
+
+
+/**
+ * 復帰時の自動再開を1回実行し、必要なら有限回だけ再試行する。
+ */
+async function runAutomaticVoiceRearmAttempt(
+    sequence,
+    attemptIndex,
+    reason,
+) {
+    voiceAutoRearmTimer = null;
+
+    if (
+        sequence !== voiceAutoRearmSequence ||
+        document.visibilityState !== "visible" ||
+        !state.runtime.started ||
+        state.runtime.voiceMuted ||
+        !voiceRearmRequired
+    ) {
+        return;
+    }
+
+    if (voiceAutoRearmInFlight) {
+        voiceAutoRearmTimer = setTimeout(
+            () => {
+                void runAutomaticVoiceRearmAttempt(
+                    sequence,
+                    attemptIndex,
+                    reason,
+                );
+            },
+            VOICE_AUTO_REARM_DELAYS_MS[0],
+        );
+
+        return;
+    }
+
+    const audioSession =
+        "audioSession" in navigator
+            ? navigator.audioSession
+            : null;
+
+    // OS側の割り込み解除前にplay()を連打しない。
+    if (
+        audioSession &&
+        audioSession.state === "interrupted"
+    ) {
+        const nextIndex =
+            attemptIndex + 1;
+
+        if (
+            nextIndex <
+            VOICE_AUTO_REARM_DELAYS_MS.length
+        ) {
+            voiceAutoRearmTimer = setTimeout(
+                () => {
+                    void runAutomaticVoiceRearmAttempt(
+                        sequence,
+                        nextIndex,
+                        reason,
+                    );
+                },
+                VOICE_AUTO_REARM_DELAYS_MS[nextIndex],
+            );
+        } else {
+            showVoiceRearmButton();
+        }
+
+        return;
+    }
+
+    voiceAutoRearmInFlight = true;
+
+    let success = false;
+
+    try {
+        success =
+            await rearmVoiceFromUserGesture({
+                automatic: true,
+            });
+    } finally {
+        voiceAutoRearmInFlight = false;
+    }
+
+    if (
+        sequence !== voiceAutoRearmSequence ||
+        document.visibilityState !== "visible" ||
+        !state.runtime.started
+    ) {
+        return;
+    }
+
+    if (success) {
+        voiceLifecycleSuspended = false;
+
+        console.log(
+            "[VOICE] automatic resume complete",
+            reason,
+            attemptIndex + 1,
+        );
+
+        return;
+    }
+
+    const nextIndex =
+        attemptIndex + 1;
+
+    if (
+        nextIndex <
+        VOICE_AUTO_REARM_DELAYS_MS.length
+    ) {
+        voiceAutoRearmTimer = setTimeout(
+            () => {
+                void runAutomaticVoiceRearmAttempt(
+                    sequence,
+                    nextIndex,
+                    reason,
+                );
+            },
+            VOICE_AUTO_REARM_DELAYS_MS[nextIndex],
+        );
+
+        return;
+    }
+
+    // Safari / iPadOSが自動play()を拒否した場合だけ、従来の1タップを残す。
+    showVoiceRearmButton();
+}
+
+
+/**
+ * visibility / pageshow / focus / Audio Session復帰を1本化する。
+ */
+function scheduleAutomaticVoiceRearm(
+    reason,
+) {
+    if (
+        document.visibilityState !== "visible" ||
+        !state.runtime.started ||
+        state.runtime.voiceMuted ||
+        !voiceRearmRequired
+    ) {
+        return;
+    }
+
+    // visibilitychange / pageshow / focus が連続しても、同じ復帰処理を
+    // 重ねて開始しない。
+    if (
+        voiceAutoRearmTimer ||
+        voiceAutoRearmInFlight
+    ) {
+        return;
+    }
+
+    clearAutomaticVoiceRearmSchedule();
+
+    const sequence =
+        voiceAutoRearmSequence;
+
+    voiceAutoRearmTimer = setTimeout(
+        () => {
+            void runAutomaticVoiceRearmAttempt(
+                sequence,
+                0,
+                reason,
+            );
+        },
+        VOICE_AUTO_REARM_DELAYS_MS[0],
+    );
+}
+
+
+function handleVoiceForegroundResume(
+    reason,
+) {
+    if (
+        document.visibilityState !== "visible"
+    ) {
+        return;
+    }
+
+    voiceLifecycleSuspended = false;
+
+    if (!state.runtime.started) {
+        return;
+    }
+
+    void requestWakeLock();
+
+    if (state.runtime.voiceMuted) {
+        hideVoiceRearmButton();
+        return;
+    }
+
+    scheduleAutomaticVoiceRearm(
+        reason,
+    );
+}
+
+
+function handleVoiceAudioSessionStateChange() {
+    if (!("audioSession" in navigator)) {
+        return;
+    }
+
+    const sessionState =
+        navigator.audioSession.state;
+
+    console.log(
+        "[VOICE] audio session state",
+        sessionState,
+    );
+
+    if (sessionState === "interrupted") {
+        suspendVoiceForLifecycle(
+            "audio-session",
+        );
+        return;
+    }
+
+    if (
+        !voiceAutoRearmInFlight &&
+        voiceRearmRequired
+    ) {
+        handleVoiceForegroundResume(
+            "audio-session",
+        );
+    }
 }
 
 
@@ -843,7 +1254,7 @@ async function playRecordedVoiceFile(
     if (
         document.visibilityState !== "visible"
     ) {
-        return "failed";
+        return "cancelled";
     }
 
     const audio =
@@ -978,6 +1389,9 @@ async function playRecordedVoiceFile(
             ) {
                 voiceRearmRequired = true;
                 showVoiceRearmButton();
+
+                finish("blocked");
+                return;
             }
 
 
@@ -994,6 +1408,8 @@ async function playRecordedVoiceFile(
  * played
  * missing
  * failed
+ * blocked
+ * cancelled
  */
 async function playRecordedVoiceSegment(
     segment,
@@ -1026,6 +1442,14 @@ async function playRecordedVoiceSegment(
 
         if (result === "played") {
             return "played";
+        }
+
+
+        if (
+            result === "blocked" ||
+            result === "cancelled"
+        ) {
+            return result;
         }
 
 
@@ -1197,10 +1621,16 @@ async function playSyntheticVoiceSegment(text, volume) {
  * 録音音声なし:
  *   その文節だけ合成音声で再生
  */
-async function playSpeechText(text, volume) {
+async function playSpeechText(
+    text,
+    volume,
+    playbackGeneration = voicePlaybackGeneration,
+) {
     // バックグラウンド中の古いキューは即時破棄する。
     if (
-        document.visibilityState !== "visible"
+        document.visibilityState !== "visible" ||
+        playbackGeneration !== voicePlaybackGeneration ||
+        voiceRearmRequired
     ) {
         return;
     }
@@ -1234,7 +1664,11 @@ async function playSpeechText(text, volume) {
 
     for (const segment of segments) {
         // キューへ登録された後にミュートされた場合にも対応
-        if (state.runtime.voiceMuted) {
+        if (
+            state.runtime.voiceMuted ||
+            playbackGeneration !== voicePlaybackGeneration ||
+            voiceRearmRequired
+        ) {
             return;
         }
 
@@ -1244,6 +1678,15 @@ async function playSpeechText(text, volume) {
                 segment,
                 volume,
             );
+
+
+        if (
+            playbackGeneration !== voicePlaybackGeneration ||
+            recordedResult === "blocked" ||
+            recordedResult === "cancelled"
+        ) {
+            return;
+        }
 
 
         if (recordedResult === "played") {
@@ -1266,7 +1709,9 @@ async function playSpeechText(text, volume) {
         // バックグラウンドへ移動した場合は、
         // その案内の残りを再生しない。
         if (
-            document.visibilityState !== "visible"
+            document.visibilityState !== "visible" ||
+            playbackGeneration !== voicePlaybackGeneration ||
+            voiceRearmRequired
         ) {
             return;
         }
@@ -1333,6 +1778,16 @@ function speakOnce(key, text) {
         return;
     }
 
+    // 復帰処理が終わる前に新しい案内を同じAudio要素へ流さない。
+    // 自動再開に失敗した場合は、誤った時点で古い案内を再生せず、
+    // 従来の「音声再開」ボタンで次回以降の案内を復旧する。
+    if (
+        voiceRearmRequired &&
+        !isVolumeTest
+    ) {
+        return;
+    }
+
     const now = Date.now();
 
     // 案内開始から10秒間は、開始音声以外を抑止
@@ -1354,10 +1809,13 @@ function speakOnce(key, text) {
 
     rt.lastSpoken[k] = now;
 
-const volume =
-    clampVoiceVolume(
-        state.config.voiceVolume,
-    );
+    const volume =
+        clampVoiceVolume(
+            state.config.voiceVolume,
+        );
+
+    const playbackGeneration =
+        voicePlaybackGeneration;
 
     // Promiseキューに追加し、複数案内の重複再生を防止
     voicePlaybackQueue = voicePlaybackQueue
@@ -1368,7 +1826,19 @@ const volume =
             );
         })
         .then(() => {
-            return playSpeechText(text, volume);
+            if (
+                playbackGeneration !== voicePlaybackGeneration ||
+                voiceRearmRequired ||
+                document.visibilityState !== "visible"
+            ) {
+                return;
+            }
+
+            return playSpeechText(
+                text,
+                volume,
+                playbackGeneration,
+            );
         });
 }
 
@@ -2610,6 +3080,12 @@ function screenGuidance() {
                 root._btnVoiceMute.classList.add("muted");
             } else {
                 root._btnVoiceMute.classList.remove("muted");
+
+                // 復帰中に利用者がミュート解除した場合、このクリックを
+                // iPadOSの音声再許可ジェスチャーとしても利用する。
+                if (voiceRearmRequired) {
+                    void rearmVoiceFromUserGesture();
+                }
             }
         };
     }
@@ -4693,9 +5169,6 @@ function releaseWakeLock() {
 document.addEventListener(
     "visibilitychange",
     () => {
-        // ======================================
-        // バックグラウンドへ移動
-        // ======================================
         if (
             document.visibilityState !== "visible"
         ) {
@@ -4703,40 +5176,49 @@ document.addEventListener(
                 "[VOICE] background",
             );
 
-            // 現在の録音音声を停止し、待機中Promiseも即時解放する。
-            stopRecordedVoicePlayback(
-                "failed",
+            suspendVoiceForLifecycle(
+                "visibility-hidden",
             );
-
-            // 合成音声も一旦完全停止する。
-            if (window.speechSynthesis) {
-                try {
-                    window.speechSynthesis.cancel();
-                } catch (error) {
-                    // 無視
-                }
-            }
-
-            voiceRearmRequired = true;
 
             return;
         }
 
-
-        // ======================================
-        // フォアグラウンドへ復帰
-        // ======================================
         console.log(
             "[VOICE] foreground",
         );
 
-        if (state.runtime.started) {
-            void requestWakeLock();
+        handleVoiceForegroundResume(
+            "visibility-visible",
+        );
+    },
+);
 
-            // iPadOSではバックグラウンド復帰後の自動再生が
-            // 再許可されない場合があるため、明示的な1タップを求める。
-            showVoiceRearmButton();
-        }
+// iPadOSがページをBack/Forward Cacheから戻した場合や、
+// visibilitychangeが省略された復帰経路も同じ処理へ集約する。
+window.addEventListener(
+    "pagehide",
+    () => {
+        suspendVoiceForLifecycle(
+            "pagehide",
+        );
+    },
+);
+
+window.addEventListener(
+    "pageshow",
+    () => {
+        handleVoiceForegroundResume(
+            "pageshow",
+        );
+    },
+);
+
+window.addEventListener(
+    "focus",
+    () => {
+        handleVoiceForegroundResume(
+            "focus",
+        );
     },
 );
 
@@ -4804,6 +5286,9 @@ function stopGpsWatch() {
 function startGuidance() {
     // ★ runtime のショートカット
     const rt = state.runtime;
+
+    clearAutomaticVoiceRearmSchedule();
+    voiceLifecycleSuspended = false;
 
     // ★ 案内開始時は一時ミュート解除
     rt.voiceMuted = false;
@@ -4914,9 +5399,15 @@ function stopGuidance() {
     releaseWakeLock();
 
     // ★ 音声系も案内終了時に完全停止
-    stopRecordedVoicePlayback("failed");
+    clearAutomaticVoiceRearmSchedule();
+    invalidateVoicePlaybackQueue();
+    stopRecordedVoicePlayback(
+        "cancelled",
+        true,
+    );
     hideVoiceRearmButton();
     voiceRearmRequired = false;
+    voiceLifecycleSuspended = false;
 
     if (window.speechSynthesis) {
         try {
