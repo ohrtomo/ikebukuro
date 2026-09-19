@@ -818,6 +818,181 @@ async function primeVoiceAudio() {
     return true;
 }
 
+// ==========================================
+// バックグラウンド復帰後の音声復旧
+// ==========================================
+
+let voiceRecoveryPromise = null;
+
+function waitVoiceRecovery(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
+
+async function recoverVoiceAudioContext() {
+    // 同時に複数の復旧処理を走らせない
+    if (voiceRecoveryPromise) {
+        return voiceRecoveryPromise;
+    }
+
+
+    voiceRecoveryPromise = (async () => {
+        let ctx =
+            getVoiceAudioContext();
+
+
+        if (!ctx) {
+            return false;
+        }
+
+
+        console.log(
+            "[VOICE RECOVERY START]",
+            ctx.state,
+        );
+
+
+        // ======================================
+        // closedの場合だけ再生成
+        // ======================================
+        if (ctx.state === "closed") {
+            console.warn(
+                "[VOICE] AudioContextがclosedのため再生成します。",
+            );
+
+            voiceAudioContext = null;
+            voiceMasterGainNode = null;
+            voiceLimiterNode = null;
+            voiceAudioPrimed = false;
+
+            ctx =
+                getVoiceAudioContext();
+
+            if (!ctx) {
+                return false;
+            }
+        }
+
+
+        // ======================================
+        // 復帰直後はOS側の音声割り込み解除を待つ
+        // ======================================
+
+        await waitVoiceRecovery(250);
+
+
+        // 最大5回復旧を試す
+        for (let attempt = 1; attempt <= 5; attempt++) {
+            console.log(
+                `[VOICE RECOVERY] attempt ${attempt}`,
+                ctx.state,
+            );
+
+
+            if (ctx.state === "running") {
+                console.log(
+                    "[VOICE RECOVERY] running",
+                );
+
+                return true;
+            }
+
+
+            try {
+                // interrupted / suspended の両方にresumeを試す
+                await Promise.race([
+                    ctx.resume(),
+
+                    waitVoiceRecovery(1000),
+                ]);
+            } catch (error) {
+                console.warn(
+                    "[VOICE RECOVERY] resume失敗",
+                    error,
+                );
+            }
+
+
+            if (ctx.state === "running") {
+                return true;
+            }
+
+
+            // ==================================
+            // WebKit対策
+            //
+            // interruptedのまま戻らない場合、
+            // suspend → resume で音声セッションを
+            // 再接続できる場合がある。
+            // ==================================
+
+            if (
+                ctx.state === "interrupted" ||
+                ctx.state === "suspended"
+            ) {
+                try {
+                    await Promise.race([
+                        ctx.suspend(),
+                        waitVoiceRecovery(500),
+                    ]);
+                } catch (error) {
+                    // 無視
+                }
+
+
+                await waitVoiceRecovery(100);
+
+
+                try {
+                    await Promise.race([
+                        ctx.resume(),
+                        waitVoiceRecovery(1000),
+                    ]);
+                } catch (error) {
+                    // 無視
+                }
+            }
+
+
+            if (ctx.state === "running") {
+                console.log(
+                    "[VOICE RECOVERY] 復旧成功",
+                );
+
+                return true;
+            }
+
+
+            // OS側の割り込み解除を待つ
+            await waitVoiceRecovery(
+                attempt * 250,
+            );
+        }
+
+
+        console.warn(
+            "[VOICE RECOVERY] 自動復旧できませんでした。",
+            ctx.state,
+        );
+
+
+        // ★ ここではContextを捨てない
+        //
+        // 後からOS側の割り込みが解除されれば
+        // 同じContextを再開できる可能性がある。
+        return false;
+    })();
+
+
+    try {
+        return await voiceRecoveryPromise;
+
+    } finally {
+        voiceRecoveryPromise = null;
+    }
+}
 
 /**
  * MP3を取得してAudioBufferへ変換する。
@@ -992,28 +1167,29 @@ async function playVoiceAudioBuffer(
     }
 
 
-    try {
-        if (ctx.state !== "running") {
-            await withVoiceTimeout(
-                ctx.resume(),
-                2000,
-                "録音音声再生時のAudioContext.resume()がタイムアウトしました。",
-            );
-        }
+    // AudioContextが止まっていたら、
+    // 同じContextを使って復旧を試す
+    if (ctx.state !== "running") {
+        const recovered =
+            await recoverVoiceAudioContext();
 
-        if (ctx.state !== "running") {
+
+        if (!recovered) {
             console.warn(
-                "録音音声を再生できません。AudioContext state:",
+                "[VOICE] AudioContext未復旧:",
                 ctx.state,
             );
 
             return "failed";
         }
+    }
 
-    } catch (error) {
+
+    // 復旧後も念のため状態確認
+    if (ctx.state !== "running") {
         console.warn(
-            "AudioContext resume failed:",
-            error,
+            "[VOICE] AudioContextがrunningではありません:",
+            ctx.state,
         );
 
         return "failed";
@@ -1473,8 +1649,13 @@ function speakOnce(key, text) {
         return;
     }
 
-    // ★ Web Audio APIをユーザー操作中に有効化する
-    void primeVoiceAudio();
+    // AudioContextが止まっている場合だけ復旧を試す
+    if (
+        voiceAudioContext &&
+        voiceAudioContext.state !== "running"
+    ) {
+        void recoverVoiceAudioContext();
+    }
 
     // 案内開始前は原則しゃべらない
     // ただし、
@@ -4869,23 +5050,25 @@ function releaseWakeLock() {
 		});
 }
 
-// ★ フォアグラウンド復帰時に、案内中なら再度 Wake Lock を取得
-// ★ スリープ・バックグラウンド復帰対策
+// ★ バックグラウンド・スリープ復帰対策
 document.addEventListener(
     "visibilitychange",
-    async () => {
+    () => {
         // ======================================
-        // 非表示になった
+        // バックグラウンドへ移動
         // ======================================
         if (
             document.visibilityState !== "visible"
         ) {
             console.log(
-                "[VOICE] ページが非表示になりました。",
+                "[VOICE] background",
+                voiceAudioContext
+                    ? voiceAudioContext.state
+                    : "none",
             );
 
 
-            // 現在再生中の録音音声を止める
+            // 現在再生中の録音音声だけ停止
             if (activeVoiceSource) {
                 try {
                     activeVoiceSource.stop();
@@ -4897,7 +5080,7 @@ document.addEventListener(
             }
 
 
-            // 合成音声も一旦完全停止
+            // 合成音声の途中発話も停止
             if (window.speechSynthesis) {
                 try {
                     window.speechSynthesis.cancel();
@@ -4907,74 +5090,72 @@ document.addEventListener(
             }
 
 
+            // ★ AudioContextそのものは閉じない
+            // ★ resetVoiceAudioContext()も呼ばない
+
             return;
         }
 
 
         // ======================================
-        // フォアグラウンド復帰
+        // フォアグラウンドへ復帰
         // ======================================
 
         console.log(
-            "[VOICE] フォアグラウンドへ復帰しました。",
+            "[VOICE] foreground",
+            voiceAudioContext
+                ? voiceAudioContext.state
+                : "none",
         );
 
 
         if (state.runtime.started) {
-            requestWakeLock();
+            void requestWakeLock();
         }
 
 
-        // 古い合成音声キューを完全に削除
+        // 合成音声キューを正常化
         if (window.speechSynthesis) {
             try {
                 window.speechSynthesis.cancel();
                 window.speechSynthesis.resume();
             } catch (error) {
                 console.warn(
-                    "[VOICE] speechSynthesis復旧失敗:",
+                    "[VOICE] speechSynthesis復旧失敗",
                     error,
                 );
             }
         }
 
 
-        // Web Audioを再確認
-        let audioReady =
-            await primeVoiceAudio();
+        // ★ 新しいAudioContextは作らず、
+        //   既存AudioContextの復旧を試す
+        void recoverVoiceAudioContext();
+    },
+);
 
-
-        // 復帰できなければAudioContext自体を作り直す
-        if (!audioReady) {
-            console.warn(
-                "[VOICE] AudioContextが復帰しないため再生成します。",
-            );
-
-
-            await resetVoiceAudioContext();
-
-
-            audioReady =
-                await primeVoiceAudio();
+// ★ アプリ切替から戻った場合の追加復旧
+window.addEventListener(
+    "focus",
+    () => {
+        if (
+            document.visibilityState === "visible"
+        ) {
+            void recoverVoiceAudioContext();
         }
+    },
+);
 
 
-        console.log(
-            "[VOICE RECOVERY]",
-            {
-                audioReady,
-
-                audioContext:
-                    voiceAudioContext
-                        ? voiceAudioContext.state
-                        : "none",
-
-                synthesisPaused:
-                    window.speechSynthesis
-                        ? window.speechSynthesis.paused
-                        : null,
-            },
-        );
+// ★ BFCache / PWA復帰対策
+window.addEventListener(
+    "pageshow",
+    () => {
+        if (
+            document.visibilityState === "visible"
+        ) {
+            void recoverVoiceAudioContext();
+        }
     },
 );
 
@@ -4989,11 +5170,14 @@ document.addEventListener(
         }
 
 
-        // Web Audio復旧
-        void primeVoiceAudio();
+        if (
+            !voiceAudioContext ||
+            voiceAudioContext.state !== "running"
+        ) {
+            void recoverVoiceAudioContext();
+        }
 
 
-        // 合成音声のpause状態解除
         if (
             window.speechSynthesis &&
             window.speechSynthesis.paused
@@ -5001,10 +5185,7 @@ document.addEventListener(
             try {
                 window.speechSynthesis.resume();
             } catch (error) {
-                console.warn(
-                    "[VOICE] speechSynthesis.resume失敗:",
-                    error,
-                );
+                // 無視
             }
         }
     },
