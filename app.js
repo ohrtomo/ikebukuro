@@ -598,11 +598,33 @@ function getVoiceFileUrl(fileName) {
 
 
 /**
- * AudioContextを作成する
+ * AudioContextを作成・取得する
+ *
+ * closedになったContextは再利用せず、
+ * 新しいAudioContextを生成する。
  */
 function getVoiceAudioContext() {
-    if (voiceAudioContext) {
+    // 正常なContextならそのまま使う
+    if (
+        voiceAudioContext &&
+        voiceAudioContext.state !== "closed"
+    ) {
         return voiceAudioContext;
+    }
+
+    // closedになっていた場合は参照を完全に破棄
+    if (
+        voiceAudioContext &&
+        voiceAudioContext.state === "closed"
+    ) {
+        console.warn(
+            "[VOICE] AudioContextがclosedのため再生成します。",
+        );
+
+        voiceAudioContext = null;
+        voiceMasterGainNode = null;
+        voiceLimiterNode = null;
+        voiceAudioPrimed = false;
     }
 
     const AudioContextClass =
@@ -611,8 +633,9 @@ function getVoiceAudioContext() {
 
     if (!AudioContextClass) {
         console.warn(
-            "Web Audio APIが使用できません。合成音声へフォールバックします。",
+            "Web Audio APIが使用できません。",
         );
+
         return null;
     }
 
@@ -621,16 +644,14 @@ function getVoiceAudioContext() {
             new AudioContextClass({
                 latencyHint: "interactive",
             });
-    } catch (e) {
-        // Safari等でオプション指定が使えない場合
+
+    } catch (error) {
         voiceAudioContext =
             new AudioContextClass();
     }
 
 
-    // ===== マスターゲイン =====
-    //
-    // HTML Audioのvolume=1.0を超えて増幅するために使用する。
+    // マスターゲイン
     voiceMasterGainNode =
         voiceAudioContext.createGain();
 
@@ -638,10 +659,7 @@ function getVoiceAudioContext() {
         VOICE_DIGITAL_BOOST;
 
 
-    // ===== ピーク抑制 =====
-    //
-    // +6dB程度増幅してもピークで極端に歪まないよう、
-    // DynamicsCompressorをリミッター寄りに設定する。
+    // リミッター
     voiceLimiterNode =
         voiceAudioContext.createDynamicsCompressor();
 
@@ -660,7 +678,71 @@ function getVoiceAudioContext() {
         voiceAudioContext.destination,
     );
 
+
+    // 状態変化を記録
+    voiceAudioContext.onstatechange = () => {
+        console.log(
+            "[VOICE AudioContext state]",
+            voiceAudioContext
+                ? voiceAudioContext.state
+                : "none",
+        );
+    };
+
+
     return voiceAudioContext;
+}
+
+/**
+ * Web Audio系を完全に作り直す
+ */
+async function resetVoiceAudioContext() {
+    // 現在再生中の録音音声を停止
+    if (activeVoiceSource) {
+        try {
+            activeVoiceSource.stop();
+        } catch (error) {
+            // すでに停止済みなら無視
+        }
+
+        activeVoiceSource = null;
+    }
+
+
+    const oldContext =
+        voiceAudioContext;
+
+
+    // 先に参照を切る
+    voiceAudioContext = null;
+    voiceMasterGainNode = null;
+    voiceLimiterNode = null;
+    voiceAudioPrimed = false;
+
+
+    // 古いContextを可能なら閉じる
+    if (
+        oldContext &&
+        oldContext.state !== "closed"
+    ) {
+        try {
+            await withVoiceTimeout(
+                oldContext.close(),
+                1000,
+                "旧AudioContextのcloseがタイムアウトしました。",
+            );
+        } catch (error) {
+            console.warn(
+                "[VOICE] 旧AudioContextの終了に失敗しました。",
+                error,
+            );
+        }
+    }
+
+
+    console.log(
+        "[VOICE] AudioContextをリセットしました。",
+    );
 }
 
 
@@ -1142,18 +1224,57 @@ async function playRecordedVoiceSegment(
 /**
  * 録音音声がない場合に、従来の合成音声を再生する
  */
-function playSyntheticVoiceSegment(text, volume) {
-    return new Promise((resolve) => {
-        if (
-            typeof SpeechSynthesisUtterance === "undefined" ||
-            !window.speechSynthesis
-        ) {
-            resolve();
-            return;
-        }
+/**
+ * 合成音声を安定して再生する
+ */
+async function playSyntheticVoiceSegment(
+    text,
+    volume,
+) {
+    if (
+        typeof SpeechSynthesisUtterance === "undefined" ||
+        !window.speechSynthesis
+    ) {
+        return;
+    }
 
-        const utter = new SpeechSynthesisUtterance(text);
+
+    const synth =
+        window.speechSynthesis;
+
+
+    // ==========================================
+    // 前回の発話キューを必ずリセット
+    // ==========================================
+    //
+    // スリープ等で内部的に停止したUtteranceが
+    // 残っている場合、それ以降のspeak()も止まるため。
+    try {
+        synth.cancel();
+        synth.resume();
+    } catch (error) {
+        console.warn(
+            "[VOICE] speechSynthesis初期化失敗:",
+            error,
+        );
+    }
+
+
+    // cancel直後のspeakが無視されるブラウザ対策
+    await new Promise((resolve) => {
+        setTimeout(resolve, 80);
+    });
+
+
+    return new Promise((resolve) => {
+        const utter =
+            new SpeechSynthesisUtterance(
+                text,
+            );
+
+
         let finished = false;
+
 
         function finish() {
             if (finished) {
@@ -1170,27 +1291,73 @@ function playSyntheticVoiceSegment(text, volume) {
             resolve();
         }
 
+
         utter.lang = "ja-JP";
-        utter.volume = clampVoiceVolume(volume);
 
-        utter.onend = finish;
-        utter.onerror = finish;
+        utter.volume =
+            clampVoiceVolume(
+                volume,
+            );
 
-        // ブラウザ側でonendが発生しなかった場合の安全対策
-        const safetyTimer = setTimeout(
-            finish,
-            6000,
-        );
+
+        utter.onend = () => {
+            finish();
+        };
+
+
+        utter.onerror = (event) => {
+            console.warn(
+                "[VOICE] 合成音声エラー:",
+                event.error,
+                text,
+            );
+
+            try {
+                synth.cancel();
+            } catch (error) {
+                // 無視
+            }
+
+            finish();
+        };
+
+
+        // ブラウザ側で発話が停止した場合の安全対策
+        const safetyTimer =
+            setTimeout(() => {
+                console.warn(
+                    "[VOICE] 合成音声がタイムアウトしたためリセット:",
+                    text,
+                );
+
+                try {
+                    synth.cancel();
+                    synth.resume();
+                } catch (error) {
+                    // 無視
+                }
+
+                finish();
+
+            }, 6000);
+
 
         try {
-            window.speechSynthesis.resume();
-            window.speechSynthesis.speak(utter);
+            synth.resume();
+            synth.speak(utter);
+
         } catch (error) {
             console.warn(
                 "合成音声の再生に失敗しました。",
                 text,
                 error,
             );
+
+            try {
+                synth.cancel();
+            } catch (e) {
+                // 無視
+            }
 
             finish();
         }
@@ -1286,6 +1453,25 @@ function speakOnce(key, text) {
     // ★ 音量テストかどうか
     const isVolumeTest =
         k.startsWith("test_volume_");
+
+    // ★ バックグラウンド・画面消灯中は
+    //   新しい案内を音声キューへ投入しない
+    //
+    //   スリープ中に音声処理が詰まるのを防ぐ。
+    if (
+        document.visibilityState !== "visible" &&
+        !isVolumeTest
+    ) {
+        console.log(
+            "[VOICE SKIP] hidden:",
+            {
+                key: k,
+                text,
+            },
+        );
+
+        return;
+    }
 
     // ★ Web Audio APIをユーザー操作中に有効化する
     void primeVoiceAudio();
@@ -4684,11 +4870,148 @@ function releaseWakeLock() {
 }
 
 // ★ フォアグラウンド復帰時に、案内中なら再度 Wake Lock を取得
-document.addEventListener("visibilitychange", () => {
-	if (document.visibilityState === "visible" && state.runtime.started) {
-		requestWakeLock();
-	}
-});
+// ★ スリープ・バックグラウンド復帰対策
+document.addEventListener(
+    "visibilitychange",
+    async () => {
+        // ======================================
+        // 非表示になった
+        // ======================================
+        if (
+            document.visibilityState !== "visible"
+        ) {
+            console.log(
+                "[VOICE] ページが非表示になりました。",
+            );
+
+
+            // 現在再生中の録音音声を止める
+            if (activeVoiceSource) {
+                try {
+                    activeVoiceSource.stop();
+                } catch (error) {
+                    // 無視
+                }
+
+                activeVoiceSource = null;
+            }
+
+
+            // 合成音声も一旦完全停止
+            if (window.speechSynthesis) {
+                try {
+                    window.speechSynthesis.cancel();
+                } catch (error) {
+                    // 無視
+                }
+            }
+
+
+            return;
+        }
+
+
+        // ======================================
+        // フォアグラウンド復帰
+        // ======================================
+
+        console.log(
+            "[VOICE] フォアグラウンドへ復帰しました。",
+        );
+
+
+        if (state.runtime.started) {
+            requestWakeLock();
+        }
+
+
+        // 古い合成音声キューを完全に削除
+        if (window.speechSynthesis) {
+            try {
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.resume();
+            } catch (error) {
+                console.warn(
+                    "[VOICE] speechSynthesis復旧失敗:",
+                    error,
+                );
+            }
+        }
+
+
+        // Web Audioを再確認
+        let audioReady =
+            await primeVoiceAudio();
+
+
+        // 復帰できなければAudioContext自体を作り直す
+        if (!audioReady) {
+            console.warn(
+                "[VOICE] AudioContextが復帰しないため再生成します。",
+            );
+
+
+            await resetVoiceAudioContext();
+
+
+            audioReady =
+                await primeVoiceAudio();
+        }
+
+
+        console.log(
+            "[VOICE RECOVERY]",
+            {
+                audioReady,
+
+                audioContext:
+                    voiceAudioContext
+                        ? voiceAudioContext.state
+                        : "none",
+
+                synthesisPaused:
+                    window.speechSynthesis
+                        ? window.speechSynthesis.paused
+                        : null,
+            },
+        );
+    },
+);
+
+// ★ スリープ復帰後、最初のユーザー操作でも音声を復旧する
+document.addEventListener(
+    "pointerdown",
+    () => {
+        if (
+            document.visibilityState !== "visible"
+        ) {
+            return;
+        }
+
+
+        // Web Audio復旧
+        void primeVoiceAudio();
+
+
+        // 合成音声のpause状態解除
+        if (
+            window.speechSynthesis &&
+            window.speechSynthesis.paused
+        ) {
+            try {
+                window.speechSynthesis.resume();
+            } catch (error) {
+                console.warn(
+                    "[VOICE] speechSynthesis.resume失敗:",
+                    error,
+                );
+            }
+        }
+    },
+    {
+        passive: true,
+    },
+);
 
 let clockTimer = null;
 let delayTimer = null;   // ★ 遅延更新用
