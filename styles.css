@@ -44,6 +44,43 @@ input[type="text"], select, input[type="number"] {
 .btn.warn { background: #c92a2a; }
 .btn:active { opacity: .85; }
 
+.btn.voice-cache-waiting {
+  opacity: .55;
+  cursor: wait;
+}
+
+#screen-start .btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.voice-cache-status {
+  min-height: 1.5em;
+  margin: 14px 12px 8px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.voice-cache-checking,
+.voice-cache-downloading {
+  color: #ffd43b;
+}
+
+.voice-cache-ready {
+  color: #69db7c;
+}
+
+.voice-cache-failed,
+.voice-cache-unsupported {
+  color: #ff8787;
+}
+
+.voice-cache-retry {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 0 12px 12px;
+}
+
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;

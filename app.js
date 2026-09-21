@@ -1,15 +1,3 @@
-// ==== Utility: Haversine distance (meters) ====
-function haversine(lat1, lon1, lat2, lon2) {
-	const R = 6371000;
-	const toRad = (x) => (x * Math.PI) / 180;
-	const dLat = toRad(lat2 - lat1);
-	const dLon = toRad(lon2 - lon1);
-	const a =
-		Math.sin(dLat / 2) ** 2 +
-		Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-	return 2 * R * Math.asin(Math.sqrt(a));
-}
-
 // 角度 → ラジアン
 function toRad(deg) {
   return (deg * Math.PI) / 180;
@@ -408,6 +396,357 @@ const VOICE_FILE_ALIASES = {
 
 // 見つからなかった文節をコンソールへ繰り返し表示しないための記録
 const missingVoiceWarningCache = new Set();
+
+// 文節切替前に先読みしたMP3のリソースヒントを、有限個だけ保持する。
+// 録音音声の再生には引き続きHTMLAudioElementを1個だけ使用する。
+const VOICE_PRELOAD_CACHE_LIMIT = 12;
+const voicePreloadLinks = new Map();
+
+// ==== 録音音声の永続キャッシュ状態 ====
+//
+// Service Worker は data/voice 配下だけを管理する。
+// 列車情報API・GPS・通常データの通信には介入しない。
+const VOICE_CACHE_SYNC_MESSAGE = "VOICE_CACHE_SYNC";
+const VOICE_CACHE_STATUS_MESSAGE = "VOICE_CACHE_STATUS";
+const VOICE_CACHE_VERSION_QUERY = "voiceVersion";
+// Service Worker 自体の起動待機と、全MP3の保存待機は性質が異なる。
+// 後者は低速回線でも全件保存を待つため、より長い有限時間を使う。
+const VOICE_SERVICE_WORKER_READY_TIMEOUT_MS = 30000;
+const VOICE_CACHE_PREPARE_TIMEOUT_MS = 5 * 60 * 1000;
+
+let voiceCacheState = {
+    phase: "checking",
+    version: "",
+    completed: 0,
+    total: 0,
+    error: "",
+};
+
+let voiceCacheInitializationPromise = null;
+
+
+function isVoiceCacheReady() {
+    return (
+        voiceCacheState.phase === "ready" &&
+        !!voiceCacheState.version
+    );
+}
+
+
+function getVoiceCacheStatusText() {
+    const completed = Number(voiceCacheState.completed) || 0;
+    const total = Number(voiceCacheState.total) || 0;
+
+    if (voiceCacheState.phase === "ready") {
+        return total > 0
+            ? `録音音声 準備完了（${total} / ${total}）`
+            : "録音音声 準備完了";
+    }
+
+    if (voiceCacheState.phase === "downloading") {
+        return total > 0
+            ? `録音音声を準備中… ${completed} / ${total}`
+            : "録音音声を準備中…";
+    }
+
+    if (voiceCacheState.phase === "failed") {
+        return "録音音声の準備に失敗しました。通信状態を確認して再試行してください。";
+    }
+
+    if (voiceCacheState.phase === "unsupported") {
+        return "この端末では録音音声の事前準備を利用できません。";
+    }
+
+    return "録音音声を確認しています…";
+}
+
+
+function updateVoiceCacheStartControls() {
+    const root = document.getElementById("screen-start");
+    if (!root) return;
+
+    const ready = isVoiceCacheReady();
+    const isPreparing =
+        voiceCacheState.phase === "checking" ||
+        voiceCacheState.phase === "downloading";
+
+    if (root._btnBegin) {
+        root._btnBegin.disabled = !ready;
+        root._btnBegin.classList.toggle("voice-cache-waiting", isPreparing);
+    }
+
+    if (root._btnUnderground) {
+        root._btnUnderground.disabled = !ready;
+        root._btnUnderground.classList.toggle("voice-cache-waiting", isPreparing);
+    }
+
+    if (root._voiceCacheStatus) {
+        root._voiceCacheStatus.textContent = getVoiceCacheStatusText();
+        root._voiceCacheStatus.className =
+            `voice-cache-status voice-cache-${voiceCacheState.phase}`;
+    }
+
+    if (root._btnVoiceCacheRetry) {
+        root._btnVoiceCacheRetry.style.display =
+            voiceCacheState.phase === "failed"
+                ? "block"
+                : "none";
+    }
+}
+
+
+function setVoiceCacheState(nextState) {
+    voiceCacheState = {
+        ...voiceCacheState,
+        ...nextState,
+    };
+
+    updateVoiceCacheStartControls();
+}
+
+
+function applyVoiceCacheStatus(status) {
+    if (
+        !status ||
+        status.type !== VOICE_CACHE_STATUS_MESSAGE
+    ) {
+        return;
+    }
+
+    setVoiceCacheState({
+        phase: status.phase || "checking",
+        version: String(status.version || ""),
+        completed: Number(status.completed) || 0,
+        total: Number(status.total) || 0,
+        error: String(status.error || ""),
+    });
+}
+
+
+function requestVoiceCacheSynchronization(worker) {
+    if (
+        !worker ||
+        typeof MessageChannel === "undefined"
+    ) {
+        return Promise.reject(
+            new Error("音声キャッシュ通信用のService Workerが利用できません。"),
+        );
+    }
+
+    return new Promise((resolve, reject) => {
+        const channel = new MessageChannel();
+
+        const finish = (callback, value) => {
+            clearTimeout(timer);
+            channel.port1.onmessage = null;
+
+            if (typeof channel.port1.close === "function") {
+                channel.port1.close();
+            }
+
+            callback(value);
+        };
+
+        const timer = setTimeout(() => {
+            finish(
+                reject,
+                new Error("録音音声の準備がタイムアウトしました。"),
+            );
+        }, VOICE_CACHE_PREPARE_TIMEOUT_MS);
+
+        channel.port1.onmessage = (event) => {
+            const status = event.data;
+
+            applyVoiceCacheStatus(status);
+
+            if (!status || status.type !== VOICE_CACHE_STATUS_MESSAGE) {
+                return;
+            }
+
+            if (status.phase === "ready") {
+                finish(resolve, status);
+                return;
+            }
+
+            if (status.phase === "failed") {
+                finish(
+                    reject,
+                    new Error(
+                        status.error ||
+                        "録音音声の準備に失敗しました。",
+                    ),
+                );
+            }
+        };
+
+        try {
+            worker.postMessage(
+                { type: VOICE_CACHE_SYNC_MESSAGE },
+                [channel.port2],
+            );
+        } catch (error) {
+            finish(reject, error);
+        }
+    });
+}
+
+
+async function requestVoiceStoragePersistence() {
+    if (
+        !navigator.storage ||
+        typeof navigator.storage.persist !== "function"
+    ) {
+        return;
+    }
+
+    try {
+        await navigator.storage.persist();
+    } catch (error) {
+        // 保存領域の永続化はベストエフォート。音声キャッシュの
+        // 完全性確認・再取得の仕組みは、この結果に依存しない。
+        console.info(
+            "[VOICE CACHE] 永続ストレージ要求を完了できませんでした。",
+            error,
+        );
+    }
+}
+
+
+function waitForVoiceServiceWorkerReady() {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(
+                new Error("Service Worker の準備がタイムアウトしました。"),
+            );
+        }, VOICE_SERVICE_WORKER_READY_TIMEOUT_MS);
+
+        navigator.serviceWorker.ready.then(
+            (registration) => {
+                clearTimeout(timer);
+                resolve(registration);
+            },
+            (error) => {
+                clearTimeout(timer);
+                reject(error);
+            },
+        );
+    });
+}
+
+
+function waitForVoiceServiceWorkerController() {
+    if (navigator.serviceWorker.controller) {
+        return Promise.resolve(navigator.serviceWorker.controller);
+    }
+
+    if (typeof navigator.serviceWorker.addEventListener !== "function") {
+        return Promise.reject(
+            new Error("Service Worker の制御状態を確認できません。"),
+        );
+    }
+
+    return new Promise((resolve, reject) => {
+        const finish = (callback, value) => {
+            clearTimeout(timer);
+            navigator.serviceWorker.removeEventListener(
+                "controllerchange",
+                onControllerChange,
+            );
+            callback(value);
+        };
+
+        const onControllerChange = () => {
+            const controller = navigator.serviceWorker.controller;
+
+            if (controller) {
+                finish(resolve, controller);
+            }
+        };
+
+        const timer = setTimeout(() => {
+            finish(
+                reject,
+                new Error("Service Worker がこの画面を制御できませんでした。"),
+            );
+        }, VOICE_SERVICE_WORKER_READY_TIMEOUT_MS);
+
+        navigator.serviceWorker.addEventListener(
+            "controllerchange",
+            onControllerChange,
+        );
+        onControllerChange();
+    });
+}
+
+
+async function initializeVoiceCache() {
+    if (voiceCacheInitializationPromise) {
+        return voiceCacheInitializationPromise;
+    }
+
+    voiceCacheInitializationPromise = (async () => {
+        setVoiceCacheState({
+            phase: "checking",
+            version: "",
+            completed: 0,
+            total: 0,
+            error: "",
+        });
+
+        if (
+            !window.isSecureContext ||
+            !("serviceWorker" in navigator)
+        ) {
+            setVoiceCacheState({
+                phase: "unsupported",
+                error: "Service Worker を利用できません。",
+            });
+            return false;
+        }
+
+        try {
+            await navigator.serviceWorker.register(
+                "./sw.js",
+                {
+                    scope: "./",
+                    updateViaCache: "none",
+                },
+            );
+
+            await waitForVoiceServiceWorkerReady();
+
+            // 音声をキャッシュから返せるService Workerが、この画面を
+            // 実際に制御していることを確認してから開始を許可する。
+            const worker =
+                await waitForVoiceServiceWorkerController();
+
+            const status =
+                await requestVoiceCacheSynchronization(worker);
+
+            await requestVoiceStoragePersistence();
+
+            return status.phase === "ready";
+        } catch (error) {
+            console.error(
+                "[VOICE CACHE] 録音音声の準備に失敗しました。",
+                error,
+            );
+
+            setVoiceCacheState({
+                phase: "failed",
+                error: error && error.message
+                    ? error.message
+                    : "録音音声の準備に失敗しました。",
+            });
+
+            return false;
+        } finally {
+            voiceCacheInitializationPromise = null;
+        }
+    })();
+
+    return voiceCacheInitializationPromise;
+}
 
 // 複数の案内が重ならないよう、順番に再生するキュー
 let voicePlaybackQueue = Promise.resolve();
@@ -1232,11 +1571,92 @@ function getVoiceFileNameCandidates(segment) {
  * 日本語を含むファイル名をURLへ変換する
  */
 function getVoiceFileUrl(fileName) {
-    return (
+    const url = (
         VOICE_BASE_PATH +
         encodeURIComponent(fileName) +
         ".mp3"
     );
+
+    // 準備完了済みの録音音声は、音声キャッシュの版をURLにも付与する。
+    // 更新後に旧版のHTTPキャッシュと混在せず、Service Workerの完全保存済み
+    // キャッシュだけを確実に参照する。
+    if (!isVoiceCacheReady()) {
+        return url;
+    }
+
+    return (
+        `${url}?${VOICE_CACHE_VERSION_QUERY}=` +
+        encodeURIComponent(voiceCacheState.version)
+    );
+}
+
+
+/**
+ * 続く文節の録音音声を標準のリソースヒントで先読みする。
+ *
+ * HTMLAudioElementを増やさず、同じ1要素の次回src切替時に
+ * キャッシュ済みのデータを使えるようにする。非対応ブラウザでは
+ * ヒントが無視されるだけで、通常の再生処理には影響しない。
+ */
+function preloadRecordedVoiceUrl(url) {
+    if (
+        !url ||
+        voicePreloadLinks.has(url) ||
+        !document.head ||
+        typeof document.createElement !== "function"
+    ) {
+        return;
+    }
+
+    try {
+        const link = document.createElement("link");
+
+        link.rel = "preload";
+        link.as = "audio";
+        link.type = "audio/mpeg";
+        link.href = url;
+
+        document.head.appendChild(link);
+        voicePreloadLinks.set(url, link);
+
+        while (
+            voicePreloadLinks.size >
+            VOICE_PRELOAD_CACHE_LIMIT
+        ) {
+            const oldestUrl =
+                voicePreloadLinks.keys().next().value;
+            const oldestLink =
+                voicePreloadLinks.get(oldestUrl);
+
+            voicePreloadLinks.delete(oldestUrl);
+
+            if (
+                oldestLink &&
+                typeof oldestLink.remove === "function"
+            ) {
+                oldestLink.remove();
+            }
+        }
+    } catch (error) {
+        // preloadは再生の補助なので、失敗しても案内を妨げない。
+    }
+}
+
+
+function preloadRecordedVoiceSegments(segments) {
+    for (const segment of segments) {
+        const candidates =
+            getVoiceFileNameCandidates(segment);
+        const fileName = candidates[0];
+
+        if (!fileName) {
+            continue;
+        }
+
+        preloadRecordedVoiceUrl(
+            getVoiceFileUrl(fileName),
+        );
+    }
 }
 
 
@@ -1307,7 +1727,10 @@ async function playRecordedVoiceFile(
                 volume,
             );
         audio.currentTime = 0;
-        audio.load();
+
+        // srcの差し替え自体が新しいメディアの読み込みを開始する。
+        // 文節ごとにload()でデコーダを初期化し直さず、再生間隔の
+        // ばらつきと余分な待ち時間を抑える。
 
 
         audio.onplaying = () => {
@@ -1660,6 +2083,10 @@ async function playSpeechText(
 
     const segments =
         splitSpeechIntoVoiceSegments(text);
+
+    // 現在文節と後続文節を先読みして、文節終了後のsrc切替を短縮する。
+    // 実再生は従来どおり、persistentなHTMLAudioElement 1個だけで行う。
+    preloadRecordedVoiceSegments(segments);
 
 
     for (const segment of segments) {
@@ -2720,6 +3147,27 @@ function screenStart() {
     const btnBegin = el("button", { class: "btn", id: "btn-begin" }, "開始");
     const btnCancel = el("button", { class: "btn secondary", id: "btn-cancel" }, "中止");
 
+    const voiceCacheStatus = el(
+        "div",
+        {
+            class: "voice-cache-status voice-cache-checking",
+            id: "voiceCacheStatus",
+            "aria-live": "polite",
+        },
+        "録音音声を確認しています…",
+    );
+
+    const btnVoiceCacheRetry = el(
+        "button",
+        {
+            class: "btn secondary voice-cache-retry",
+            id: "btn-voice-cache-retry",
+            type: "button",
+            style: "display:none;",
+        },
+        "音声データを再試行",
+    );
+
     // ★ 下り列車専用「地下起動」ボタン（赤）
     const btnUnderground = el(
         "button",
@@ -2740,11 +3188,19 @@ function screenStart() {
     // ★ 開始画面にも GPS 状態表示欄を追加
     const gpsNotes = el("div", { class: "notes", id: "gpsStatusStart" }, "");
 
-    root.append(center, gpsNotes);
+    root.append(
+        center,
+        voiceCacheStatus,
+        btnVoiceCacheRetry,
+        gpsNotes,
+    );
 
     // screen-start 用の参照
     root._gpsStatus = gpsNotes;
+    root._btnBegin = btnBegin;
     root._btnUnderground = btnUnderground;
+    root._voiceCacheStatus = voiceCacheStatus;
+    root._btnVoiceCacheRetry = btnVoiceCacheRetry;
 
     // ★ 設定された方向に応じて「地下起動」ボタンの表示/非表示を切り替えるヘルパー
     root._updateUndergroundButtonVisibility = () => {
@@ -2756,9 +3212,20 @@ function screenStart() {
 
     // 初期状態反映
     root._updateUndergroundButtonVisibility();
+    updateVoiceCacheStartControls();
 
     root.onclick = (e) => {
+        if (e.target.id === "btn-voice-cache-retry") {
+            void initializeVoiceCache();
+            return;
+        }
+
         if (e.target.id === "btn-begin") {
+            if (!isVoiceCacheReady()) {
+                updateVoiceCacheStartControls();
+                return;
+            }
+
             // ★ iPadのユーザー操作中に音声セッションを初期化・再許可する
             configureVoiceAudioSession();
             getRecordedVoiceAudio();
@@ -2779,6 +3246,11 @@ function screenStart() {
             document.getElementById("screen-settings").classList.add("active");
 
         } else if (e.target.id === "btn-underground-start") {
+            if (!isVoiceCacheReady()) {
+                updateVoiceCacheStartControls();
+                return;
+            }
+
             // ★ iPadのユーザー操作中に音声セッションを初期化・再許可する
             configureVoiceAudioSession();
             getRecordedVoiceAudio();
@@ -4000,23 +4472,6 @@ function openTrainChange() {
 
 // ==== 停車パターン（ダイヤ上の基本停車駅） ====
 
-function baseIsStop(stationName) {
-    // まずダイヤ上の停車かどうか
-    let base = baseIsStopRaw(stationName);
-
-    // 回送・試運転・臨時など非客扱い列車で、
-    // 追加画面で選ばれた駅は「通常停車扱い」にする
-    if (isNonPassenger(state.config.type)) {
-        const extra = state.runtime.nonPassengerExtraStops;
-        if (extra && extra.has(stationName)) {
-            base = true;
-        }
-    }
-    return base;
-}
-
-// ==== 停車パターン（ダイヤ上の基本停車駅） ====
-
 function baseIsStopRawForType(stationName, type) {
     const info = state.datasets.stations[stationName];
     if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
@@ -4049,15 +4504,8 @@ function baseIsStop(stationName) {
     return base;
 }
 
-function baseIsStopRaw(stationName) {
-    const info = state.datasets.stations[stationName];
-    if (!info || !info.stopPatterns) return true; // 情報がなければ停車扱いにしておく
-    const sp = info.stopPatterns;
-    return !!sp[state.config.type]; // 例: "快速急行" など
-}
-
 // ==== 停車駅/通過駅リスト生成（ダイヤ基準） ====
-function buildPassStationList() {
+function buildPassStationList(options = {}) {
     const stations = state.datasets.stations;
     const pass = [];
 
@@ -4074,8 +4522,55 @@ function buildPassStationList() {
     state.runtime.passStations = new Set(pass);
 
     // ★ 直前と同一列車番号の場合のみ、
-    //   前回の臨時停車・通過／着発線変更を復元する
-    restoreTrainScopedManualSettingsIfSameTrainNo();
+    //   前回の臨時停車・通過／着発線変更を復元する。
+    // ただし、途中駅で種別変更する場合は変更後種別の基本パターンを
+    // 優先するため、呼出側が明示的に復元を止められるようにする。
+    if (
+        options.restoreTrainScopedManualSettings !== false
+    ) {
+        restoreTrainScopedManualSettingsIfSameTrainNo();
+    }
+}
+
+
+/**
+ * 現在の基本停車パターンとの差分だけを、手動停車・通過として取り出す。
+ *
+ * passStationsには基本パターンと手動変更が同居しているため、途中駅で
+ * 種別を変える直前に差分化しておくことで、新種別の基本パターンを
+ * 再構築した後にも手動操作だけを引き継げる。
+ */
+function captureManualStopOverrides() {
+    const overrides = new Map();
+    const stations = state.datasets.stations || {};
+    const passStations =
+        state.runtime.passStations || new Set();
+
+    for (const stationName of Object.keys(stations)) {
+        const baseStop = baseIsStop(stationName);
+        const currentStop = !passStations.has(stationName);
+
+        if (baseStop !== currentStop) {
+            overrides.set(stationName, currentStop);
+        }
+    }
+
+    return overrides;
+}
+
+
+function applyManualStopOverrides(overrides) {
+    if (!(overrides instanceof Map)) {
+        return;
+    }
+
+    for (const [stationName, shouldStop] of overrides) {
+        if (shouldStop) {
+            state.runtime.passStations.delete(stationName);
+        } else {
+            state.runtime.passStations.add(stationName);
+        }
+    }
 }
 
 // ==== 路線ごとの駅順（物理順） ====
@@ -6583,6 +7078,11 @@ function applyMidTrainChange() {
     const cfg2 = state.config.second || {};
     if (!state.config.endChange || !cfg2.trainNo) return;
 
+    // 変更前種別の基本パターンとの差分だけを手動操作として保存する。
+    // 同一列車番号でも、前半種別の通過駅一覧そのものは引き継がない。
+    const manualStopOverrides =
+        captureManualStopOverrides();
+
     // 列車情報を後半列車に上書き
     state.config.trainNo = cfg2.trainNo || state.config.trainNo;
     state.config.type    = cfg2.type    || state.config.type;
@@ -6594,8 +7094,14 @@ function applyMidTrainChange() {
         state.runtime.nonPassengerExtraStopsSecond || []
     );
 
-    // 種別が変わるので停車パターンを再構築
-    buildPassStationList();
+    // 種別が変わるので停車パターンを再構築する。
+    // この場面では、同一列番用の旧スナップショットで上書きしない。
+    buildPassStationList({
+        restoreTrainScopedManualSettings: false,
+    });
+
+    // 基本パターンは変更後種別を使い、手動で変えた停車・通過だけ戻す。
+    applyManualStopOverrides(manualStopOverrides);
 
     state.runtime.midChangePending        = false;
     state.runtime.midChangeApplied        = true;
@@ -7335,6 +7841,7 @@ function renderNonPassengerExtraStopsScreen() {
 window.addEventListener("load", async () => {
 	await loadData();
 	init();
+	void initializeVoiceCache();
 });
 
 
