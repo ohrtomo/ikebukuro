@@ -176,16 +176,20 @@ iPad 実機確認が必要な事項を、PC 上の静的解析だけで「動作
 
 - 録音音声を停止
 - 待機中 Promise を解放
+- 古い音声キューを世代番号で無効化
+- `HTMLAudioElement` 自体は維持し、古い `src` / デコーダ状態だけを破棄
 - `speechSynthesis.cancel()`
 - 再許可が必要な状態を記録
 
 フォアグラウンド復帰時:
 
 - 案内中なら Wake Lock を再取得
-- 「音声再開」ボタンを表示
-- ユーザーの 1 タップで音声セッションを再許可
+- 同じ persistent `HTMLAudioElement` で音声セッションの自動再開を有限回だけ試す
+- `visibilitychange` に加え `pageshow` / `focus` / Audio Session の復帰も監視
+- 自動再開が OS の autoplay 制限で拒否された場合だけ「音声再開」ボタンを表示
 
-iPadOS の autoplay 制限を無視して自動再生を強行する設計へ戻さない。
+iPadOS の autoplay 制限を無視して `play()` / `resume()` を無限反復しない。
+自動再開はベストエフォートとし、1タップのフォールバックを削除しない。
 
 ### Audio Session
 使用可能なら:

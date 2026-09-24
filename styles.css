@@ -646,6 +646,21 @@ input[type="text"], select, input[type="number"] {
   font-weight: 700;
 }
 
+.gps-status-group {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.guide-segment-indicator {
+  color: #fff;
+  font-size: clamp(12px, 3.8vw, 18px);
+  font-weight: 700;
+}
+
 /* =========================
    Band7（空白エリア）
 ========================= */

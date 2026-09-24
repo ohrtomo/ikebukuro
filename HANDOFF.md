@@ -1513,28 +1513,34 @@ playback
 
 `visibilitychange` で hidden:
 
-- `stopRecordedVoicePlayback("failed")`
+- 古い音声キューの世代を無効化
+- `stopRecordedVoicePlayback("cancelled", true)`
 - `speechSynthesis.cancel()`
 - `voiceRearmRequired = true`
 
 古い音声案内をバックグラウンド中に継続しない。
+`HTMLAudioElement` 自体は維持し、古い `src` とデコーダ状態だけを破棄する。
 
 ## foreground
 
 案内中:
 
 - Wake Lock 再取得
-- `音声再開` ボタン表示
+- 250ms 後に persistent `HTMLAudioElement` で自動再開を試行
+- 失敗時は 1200ms 後にもう 1 回だけ再試行
+- `pageshow` / `focus` / `navigator.audioSession.statechange` からの復帰も同じ処理へ集約
+- 2 回とも OS に拒否された場合のみ `音声再開` ボタン表示
 
 ## 音声再開
 
-ユーザーのタップ直下で:
+自動再開またはユーザーのタップ直下で:
 
 録音モード:
 
 - Audio Session 設定
+- 古い音声ソースのリセット
 - `案内を開始します。` MP3 を play
-- 成功したらボタン削除
+- 成功したら自動復帰完了、またはボタン削除
 
 合成モード:
 
@@ -1542,9 +1548,8 @@ playback
 - `案内を開始します。` を発話
 - 成功扱い後ボタン削除
 
-これは iPadOS autoplay 制限対策として意図的。
-
-自動復帰に戻さない。
+自動再開はベストエフォートであり、iPadOS の autoplay 制限を回避できるとは限らない。
+`play()` / `resume()` の無限反復は行わず、拒否時の1タップフォールバックを維持する。
 
 ---
 
@@ -1749,7 +1754,8 @@ HTMLAudioElement 方式へ変更済みだが、実機で継続確認が必要。
 - Safari タブ移動
 - 画面スリープ
 - 長時間スリープ
-- 復帰 → 音声再開
+- 復帰 → 自動音声再開
+- 自動再開拒否時 → 音声再開ボタン
 - 録音モード
 - 合成モード
 - 音量テスト
@@ -1825,7 +1831,7 @@ Codex は以下を現行として扱う。
 | 所沢文言 | 列車無線切り替え | 列車無線チャンネル切り替え |
 | 列情確認 | 変更駅到着20秒後 | 15秒 |
 | 録音再生 | HTMLAudioElement | Web Audio |
-| iPad復帰 | 音声再開1タップ | AudioContext自動resume |
+| iPad復帰 | HTMLAudioElementで有限回の自動再開、拒否時のみ1タップ | AudioContext自動resume |
 | 200m停止案内 | 距離のみ | 速度条件ありの旧案 |
 
 古いバックアップのコメントを根拠に戻さない。
@@ -1956,7 +1962,8 @@ Codex は以下を現行として扱う。
 - [ ] 1分バックグラウンド
 - [ ] スリープ
 - [ ] 復帰
-- [ ] 音声再開ボタン
+- [ ] 自動音声再開
+- [ ] 自動再開拒否時のみ音声再開ボタン
 - [ ] 再開確認音
 - [ ] 再開後の次案内
 - [ ] Wake Lock再取得

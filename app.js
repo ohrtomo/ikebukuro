@@ -56,6 +56,7 @@ const STATIONDATA_META_COLUMNS = new Set([
     "所属路線2",
     "所属路線3",
     "駅ID",
+    "案内区間",
 ]);
 
 function splitCsvLine(line) {
@@ -134,6 +135,21 @@ function parseNullableText(value) {
     return s;
 }
 
+// 案内区間は stationdata.csv の 1 セルに "池袋1|池袋2" のように記載する。
+// 分岐駅・分岐地点だけ複数区間を持ち、通常の駅・踏切・橋梁等は 1 区間を持つ。
+function parseGuideSegmentIds(value) {
+    const seen = new Set();
+
+    return String(value ?? "")
+        .split("|")
+        .map((segmentId) => segmentId.trim())
+        .filter((segmentId) => {
+            if (!segmentId || seen.has(segmentId)) return false;
+            seen.add(segmentId);
+            return true;
+        });
+}
+
 function parseStationDataCsv(csvText) {
     const rows = parseCsvText(csvText);
 
@@ -150,11 +166,12 @@ function parseStationDataCsv(csvText) {
         const lat = parseFloat(row["緯度"]);
         const lng = parseFloat(row["経度"]);
         const hasLatLng = Number.isFinite(lat) && Number.isFinite(lng);
+        const guideSegmentIds = parseGuideSegmentIds(row["案内区間"]);
 
         // 旧 station.csv 相当：右側ナビ用スポット
         // 緯度・経度がある行だけ使用する。
         if (hasLatLng) {
-            navSpots.push({ kind, name, lat, lng });
+            navSpots.push({ kind, name, lat, lng, guideSegmentIds });
         }
 
         // 旧 stationID.json 相当：駅ID
@@ -201,6 +218,7 @@ function parseStationDataCsv(csvText) {
             isStopover: parseBoolCell(row["isStopover"]),
             down8pos: parseNullableText(row["down8pos"]),
             up8pos: parseNullableText(row["up8pos"]),
+            guideSegmentIds,
             stopPatterns,
         };
     }
@@ -283,6 +301,15 @@ const state = {
         routeLocked: false,
         routeLine: null,
 
+        // 案内用の物理区間。営業路線名や遅延 API の lineId とは分離する。
+        guidePlan: [],
+        guideTerminalName: null,
+        activeGuideSegmentId: null,
+        guideSegmentCandidateId: null,
+        guideSegmentBeforeUnderground: null,
+        guideMidChangeRouteApplied: false,
+        guidePlanErrorShown: false,
+
         muteUntil: 0,
         lastDepartStation: null,
         lastDepartPrevDist: null,
@@ -316,7 +343,6 @@ const state = {
         undergroundMode: false,               // 地下モード中かどうか
         undergroundLastToStationName: null,   // trains API の最新 toStationName
         undergroundSource: null,              // "downButton" / "autoUp" / "menu" など任意
-        autoUndergroundReady: false,   // ★ 上り(練馬→有楽町線) 自動地下切替待機
         lastGpsUpdate: 0,              // ★ GPS更新時刻（色判定用）
         speedOutlierStreak: 0,   // ★ 追加：外れ値が連続した回数
         headingRad: null,   // ★ 追加: 進行方向（北=0, 時計回り, ラジアン）
@@ -3226,6 +3252,12 @@ function screenStart() {
                 return;
             }
 
+            const guideRouteError = getGuideRouteValidationError();
+            if (guideRouteError) {
+                alert(guideRouteError);
+                return;
+            }
+
             // ★ iPadのユーザー操作中に音声セッションを初期化・再許可する
             configureVoiceAudioSession();
             getRecordedVoiceAudio();
@@ -3248,6 +3280,12 @@ function screenStart() {
         } else if (e.target.id === "btn-underground-start") {
             if (!isVoiceCacheReady()) {
                 updateVoiceCacheStartControls();
+                return;
+            }
+
+            const guideRouteError = getGuideRouteValidationError();
+            if (guideRouteError) {
+                alert(guideRouteError);
                 return;
             }
 
@@ -3420,10 +3458,21 @@ function screenGuidance() {
     ]);
 
     // --- Band6: 時計・遅延・GPS 状態 ---
+    const gpsStatus = el("div", { class: "gps-indicator", id: "gpsStatus" }, "GPS");
+    const guideSegmentStatus = el(
+        "div",
+        { class: "guide-segment-indicator", id: "guideSegmentStatus", style: "display:none;" },
+        "",
+    );
+    const gpsStatusGroup = el("div", { class: "gps-status-group" }, [
+        gpsStatus,
+        guideSegmentStatus,
+    ]);
+
     const band6 = el("div", { class: "band band6" }, [
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
         el("div", { class: "clock", id: "delayInfo" }, ""),
-        el("div", { class: "gps-indicator", id: "gpsStatus" }, "GPS"),
+        gpsStatusGroup,
     ]);
 
     // --- Band7: 空白エリア ---
@@ -3469,6 +3518,7 @@ function screenGuidance() {
     // ★ 各要素への参照
     root._band1       = band1;
     root._gpsStatus   = band6.querySelector("#gpsStatus");   // GPS は band6
+    root._guideSegmentStatus = band6.querySelector("#guideSegmentStatus");
     root._speechText  = band2.querySelector("#speechText");
     root._badgeType   = band1.querySelector("#badgeType");
 
@@ -3568,66 +3618,13 @@ function screenGuidance() {
 
 
 
-// ★ 自動地下待機中の GPS 点滅（黄/灰）
-let gpsBlinkTimer = null;
-let gpsBlinkOn = false;
-
-function applyGpsBlinkColor() {
-    const color = gpsBlinkOn ? "yellow" : "gray";
-
-    const g = document.getElementById("screen-guidance");
-    const s = document.getElementById("screen-start");
-
-    if (g && g._gpsStatus) {
-        g._gpsStatus.textContent = "GPS";
-        g._gpsStatus.style.color = color;
-    }
-    if (s && s._gpsStatus) {
-        s._gpsStatus.textContent = "GPS";
-        s._gpsStatus.style.color = color;
-    }
-}
-
-
-function startGpsBlink() {
-    if (gpsBlinkTimer) return;
-    gpsBlinkOn = false;
-    applyGpsBlinkColor();
-    gpsBlinkTimer = setInterval(() => {
-        gpsBlinkOn = !gpsBlinkOn;
-        applyGpsBlinkColor();
-    }, 500);
-}
-
-function stopGpsBlink() {
-    if (gpsBlinkTimer) {
-        clearInterval(gpsBlinkTimer);
-        gpsBlinkTimer = null;
-    }
-    gpsBlinkOn = false;
-}
-
-
 function setGpsStatus(text) {
     const g = document.getElementById("screen-guidance");
     const s = document.getElementById("screen-start");
     const rt = state.runtime;
 
-    // ★ 地下待機（上り・小竹向原行き・練馬到着後に立つ autoUndergroundReady）だけ点滅
-    const isUndergroundWaiting =
-        !rt.undergroundMode &&
-        rt.autoUndergroundReady &&
-        state.config.direction === "上り" &&
-        state.config.dest === "小竹向原";
-
-    // 点滅タイマー制御
-    if (rt.undergroundMode) {
-        stopGpsBlink();
-    } else if (isUndergroundWaiting) {
-        startGpsBlink();
-    } else {
-        stopGpsBlink();
-    }
+    // GPS の色・文言とは別に、右側へ現在の案内区間略称を表示する。
+    updateGuideSegmentStatus();
 
     const displayText = text || "";
 
@@ -3642,12 +3639,6 @@ function setGpsStatus(text) {
             s._gpsStatus.textContent = displayText || "GPS";
             s._gpsStatus.style.color = "yellow";
         }
-        return;
-    }
-
-    // ===== 地下待機中：点滅ロジックに委譲 =====
-    if (isUndergroundWaiting) {
-        applyGpsBlinkColor(); // 初回反映の保険
         return;
     }
 
@@ -4637,6 +4628,582 @@ const SAYAMA_LINE_ORDER = [
 	"西武球場前",
 ];
 
+// ==== 案内区間（営業路線名とは別の、乗務支援用の物理区間） ====
+//
+// stations は「下り方向」の順に並べる。
+// CSV の「案内区間」には id をそのまま記載し、分岐駅だけ "|" 区切りで複数記載する。
+const GUIDE_SEGMENTS = Object.freeze([
+    {
+        id: "池袋1",
+        shortName: "池1",
+        stations: ["池袋", "椎名町", "東長崎", "江古田", "桜台", "練馬"],
+    },
+    {
+        id: "池袋2",
+        shortName: "池2",
+        stations: [
+            "練馬", "中村橋", "富士見台", "練馬高野台", "石神井公園", "大泉学園",
+            "保谷", "ひばりヶ丘", "東久留米", "清瀬", "秋津", "所沢",
+        ],
+    },
+    {
+        id: "池袋3",
+        shortName: "池3",
+        stations: ["所沢", "西所沢"],
+    },
+    {
+        id: "池袋4",
+        shortName: "池4",
+        stations: [
+            "西所沢", "小手指", "狭山ヶ丘", "武蔵藤沢", "稲荷山公園", "入間市",
+            "仏子", "元加治", "飯能",
+        ],
+    },
+    {
+        id: "池袋5",
+        shortName: "池5",
+        stations: ["飯能", "東飯能", "武蔵丘", "高麗", "武蔵横手", "東吾野", "吾野"],
+    },
+    {
+        id: "秩父1",
+        shortName: "秩1",
+        stations: ["吾野", "西吾野", "正丸", "正丸トンネル", "芦ヶ久保", "横瀬"],
+    },
+    {
+        id: "秩父2",
+        shortName: "秩2",
+        stations: ["横瀬", "西武秩父"],
+    },
+    {
+        id: "有楽",
+        shortName: "有楽",
+        stations: ["小竹向原", "新桜台", "練馬"],
+    },
+    {
+        id: "豊島",
+        shortName: "豊島",
+        stations: ["練馬", "豊島園"],
+    },
+    {
+        id: "狭山",
+        shortName: "狭山",
+        stations: ["西所沢", "下山口", "西武球場前"],
+    },
+]);
+
+const GUIDE_SEGMENT_BY_ID = new Map(
+    GUIDE_SEGMENTS.map((segment) => [segment.id, segment]),
+);
+
+const GUIDE_SEGMENT_IDS_BY_STATION = (() => {
+    const result = new Map();
+
+    for (const segment of GUIDE_SEGMENTS) {
+        for (const stationName of segment.stations) {
+            const ids = result.get(stationName) || [];
+            ids.push(segment.id);
+            result.set(stationName, ids);
+        }
+    }
+
+    return result;
+})();
+
+const GUIDE_UNDERGROUND_SEGMENT_ID = "有楽";
+
+// 現段階では新宿線の区間データがないため、案内経路だけは所沢で終了させる。
+// 表示上の行先「新宿線直通」は変更しない。
+const GUIDE_DESTINATION_TERMINAL_ALIASES = Object.freeze({
+    "新宿線直通": "所沢",
+});
+
+function getGuideSegment(segmentId) {
+    return GUIDE_SEGMENT_BY_ID.get(String(segmentId || "").trim()) || null;
+}
+
+function getGuideSegmentIdsForStation(stationName) {
+    const name = String(stationName || "").trim();
+    if (!name) return [];
+
+    const stationInfo = state.datasets.stations && state.datasets.stations[name];
+    const fromCsv = stationInfo && Array.isArray(stationInfo.guideSegmentIds)
+        ? stationInfo.guideSegmentIds.filter((id) => GUIDE_SEGMENT_BY_ID.has(id))
+        : [];
+
+    if (fromCsv.length) return fromCsv;
+    return Array.from(GUIDE_SEGMENT_IDS_BY_STATION.get(name) || []);
+}
+
+function getGuideSegmentIdsForSpot(spot) {
+    if (!spot) return [];
+
+    const fromCsv = Array.isArray(spot.guideSegmentIds)
+        ? spot.guideSegmentIds.filter((id) => GUIDE_SEGMENT_BY_ID.has(id))
+        : [];
+
+    if (fromCsv.length) return fromCsv;
+    return spot.kind === "駅" ? getGuideSegmentIdsForStation(spot.name) : [];
+}
+
+function getGuideTerminalNameForDestination(dest) {
+    const destination = String(dest || "").trim();
+    if (!destination) return null;
+
+    const registeredDestinations = state.datasets.dests;
+    if (
+        Array.isArray(registeredDestinations) &&
+        registeredDestinations.length > 0 &&
+        !registeredDestinations.includes(destination)
+    ) {
+        return null;
+    }
+
+    const terminalName =
+        GUIDE_DESTINATION_TERMINAL_ALIASES[destination] || destination;
+
+    return GUIDE_SEGMENT_IDS_BY_STATION.has(terminalName)
+        ? terminalName
+        : null;
+}
+
+function getGuideRouteValidationError() {
+    const firstDestination = String(state.config.dest || "").trim();
+    if (!getGuideTerminalNameForDestination(firstDestination)) {
+        return `行先「${firstDestination || "未設定"}」の案内経路が登録されていないため、案内を開始できません。`;
+    }
+
+    const second = state.config.second || {};
+    const hasMidChange =
+        state.config.endChange &&
+        String(second.trainNo || "").trim() &&
+        String(second.changeStation || "").trim();
+
+    if (hasMidChange && !getGuideTerminalNameForDestination(second.dest)) {
+        const secondDestination = String(second.dest || "").trim();
+        return `途中駅列情変更後の行先「${secondDestination || "未設定"}」の案内経路が登録されていないため、案内を開始できません。`;
+    }
+
+    return null;
+}
+
+function getGuideSegmentStartStation(segment, direction) {
+    if (!segment || !segment.stations.length) return null;
+    return direction === "下り"
+        ? segment.stations[0]
+        : segment.stations[segment.stations.length - 1];
+}
+
+function getGuideSegmentEndStation(segment, direction) {
+    if (!segment || !segment.stations.length) return null;
+    return direction === "下り"
+        ? segment.stations[segment.stations.length - 1]
+        : segment.stations[0];
+}
+
+function canDepartGuideSegmentFromStation(segmentId, stationName, direction) {
+    const segment = getGuideSegment(segmentId);
+    return getGuideSegmentStartStation(segment, direction) === stationName;
+}
+
+function canReachGuideTerminalOnSegment(segment, terminalName, direction, startStationName) {
+    if (!segment || !terminalName) return false;
+
+    const terminalIndex = segment.stations.indexOf(terminalName);
+    if (terminalIndex === -1) return false;
+
+    const startIndex = segment.stations.indexOf(startStationName);
+    if (startIndex === -1) return true;
+
+    return direction === "下り"
+        ? terminalIndex >= startIndex
+        : terminalIndex <= startIndex;
+}
+
+function getGuideSegmentsStartingAt(stationName, direction) {
+    return GUIDE_SEGMENTS.filter(
+        (segment) => getGuideSegmentStartStation(segment, direction) === stationName,
+    );
+}
+
+function buildGuidePlanFromStartSegment(startSegmentId, destination, direction, startStationName) {
+    const startSegment = getGuideSegment(startSegmentId);
+    const terminalName = getGuideTerminalNameForDestination(destination);
+    if (!startSegment || !terminalName) return null;
+
+    if (
+        canReachGuideTerminalOnSegment(
+            startSegment,
+            terminalName,
+            direction,
+            startStationName,
+        )
+    ) {
+        return {
+            segmentIds: [startSegment.id],
+            terminalName,
+        };
+    }
+
+    const queue = [{
+        nodeName: getGuideSegmentEndStation(startSegment, direction),
+        segmentIds: [startSegment.id],
+    }];
+
+    while (queue.length) {
+        const current = queue.shift();
+        if (!current || !current.nodeName) continue;
+
+        for (const nextSegment of getGuideSegmentsStartingAt(current.nodeName, direction)) {
+            if (current.segmentIds.includes(nextSegment.id)) continue;
+
+            const nextSegmentIds = [...current.segmentIds, nextSegment.id];
+            if (canReachGuideTerminalOnSegment(nextSegment, terminalName, direction, null)) {
+                return {
+                    segmentIds: nextSegmentIds,
+                    terminalName,
+                };
+            }
+
+            queue.push({
+                nodeName: getGuideSegmentEndStation(nextSegment, direction),
+                segmentIds: nextSegmentIds,
+            });
+        }
+    }
+
+    return null;
+}
+
+function buildGuidePlanFromStartSpot(spot, destination, direction) {
+    if (!spot) return null;
+
+    let candidateSegmentIds = getGuideSegmentIdsForSpot(spot);
+    if (!candidateSegmentIds.length) return null;
+
+    // 分岐駅では、進行方向へ出発できる区間だけを開始候補にする。
+    if (spot.kind === "駅" && candidateSegmentIds.length > 1) {
+        candidateSegmentIds = candidateSegmentIds.filter((segmentId) =>
+            canDepartGuideSegmentFromStation(segmentId, spot.name, direction),
+        );
+    }
+
+    let best = null;
+
+    for (const segmentId of candidateSegmentIds) {
+        const plan = buildGuidePlanFromStartSegment(
+            segmentId,
+            destination,
+            direction,
+            spot.kind === "駅" ? spot.name : null,
+        );
+        if (!plan) continue;
+
+        if (!best || plan.segmentIds.length < best.segmentIds.length) {
+            best = plan;
+        }
+    }
+
+    return best;
+}
+
+function buildGuidePlanFromStation(stationName, destination, direction) {
+    const name = String(stationName || "").trim();
+    if (!name) return null;
+
+    return buildGuidePlanFromStartSpot({
+        kind: "駅",
+        name,
+        guideSegmentIds: getGuideSegmentIdsForStation(name),
+    }, destination, direction);
+}
+
+function updateGuideSegmentStatus() {
+    const root = document.getElementById("screen-guidance");
+    if (!root || !root._guideSegmentStatus) return;
+
+    const rt = state.runtime;
+    const segmentId = rt.undergroundMode
+        ? GUIDE_UNDERGROUND_SEGMENT_ID
+        : rt.activeGuideSegmentId;
+    const segment = getGuideSegment(segmentId);
+
+    root._guideSegmentStatus.textContent = segment ? segment.shortName : "";
+    root._guideSegmentStatus.style.display = segment ? "inline" : "none";
+}
+
+function clearGuidePlan() {
+    const rt = state.runtime;
+    rt.guidePlan = [];
+    rt.guideTerminalName = null;
+    rt.activeGuideSegmentId = null;
+    rt.guideSegmentCandidateId = null;
+    rt.guidePlanErrorShown = false;
+    updateGuideSegmentStatus();
+}
+
+function applyGuidePlan(plan, activeGuideSegmentId) {
+    if (!plan || !Array.isArray(plan.segmentIds) || !plan.segmentIds.length) {
+        return false;
+    }
+
+    const rt = state.runtime;
+    rt.guidePlan = [...plan.segmentIds];
+    rt.guideTerminalName = plan.terminalName || null;
+    rt.activeGuideSegmentId = activeGuideSegmentId || plan.segmentIds[0];
+    rt.guideSegmentCandidateId = rt.activeGuideSegmentId;
+    rt.guidePlanErrorShown = false;
+    updateGuideSegmentStatus();
+    return true;
+}
+
+function findNearestGuideStartSpot(lat, lng) {
+    const spots = state.datasets.navSpots || [];
+    let best = null;
+
+    for (const spot of spots) {
+        if (!spot || !Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
+
+        const guideSegmentIds = getGuideSegmentIdsForSpot(spot);
+        if (!guideSegmentIds.length) continue;
+
+        const distance = haversine(lat, lng, spot.lat, spot.lng);
+        if (!best || distance < best.distance) {
+            best = { ...spot, guideSegmentIds, distance };
+        }
+    }
+
+    return best;
+}
+
+function initializeGuidePlanFromPosition(lat, lng) {
+    const rt = state.runtime;
+    const spot = findNearestGuideStartSpot(lat, lng);
+    const plan = spot
+        ? buildGuidePlanFromStartSpot(spot, state.config.dest, state.config.direction)
+        : null;
+
+    if (applyGuidePlan(plan)) return true;
+
+    if (!rt.guidePlanErrorShown) {
+        rt.guidePlanErrorShown = true;
+        console.warn("案内区間を現在地から確定できませんでした。地点リセットで再判定できます。", {
+            destination: state.config.dest,
+            direction: state.config.direction,
+            spot,
+        });
+    }
+
+    return false;
+}
+
+function recalculateGuidePlanFromStation(stationName, destination) {
+    const plan = buildGuidePlanFromStation(
+        stationName,
+        destination,
+        state.config.direction,
+    );
+
+    return applyGuidePlan(plan);
+}
+
+// 途中駅で列情変更する列車は、種別・列番などの既存切替タイミングとは分けて、
+// 変更駅の200m圏内に入った時点でだけ後半行先の案内経路へ切り替える。
+function maybeRecalculateGuidePlanAtMidChangeStation(ns) {
+    const rt = state.runtime;
+    const second = state.config.second || {};
+    const changeStation = String(second.changeStation || "").trim();
+    const nextDestination = String(second.dest || "").trim();
+    const hasMidChange =
+        state.config.endChange &&
+        String(second.trainNo || "").trim() &&
+        changeStation;
+
+    if (
+        !hasMidChange ||
+        rt.guideMidChangeRouteApplied ||
+        !ns ||
+        ns.name !== changeStation ||
+        !Number.isFinite(ns.distance) ||
+        ns.distance > 200
+    ) {
+        return false;
+    }
+
+    const routeUpdated = recalculateGuidePlanFromStation(
+        changeStation,
+        nextDestination,
+    );
+
+    if (!routeUpdated) {
+        console.warn("途中駅列情変更後の案内経路を確定できませんでした。", {
+            changeStation,
+            destination: nextDestination,
+        });
+    } else if (
+        rt.prevStationName === changeStation &&
+        Number.isFinite(rt.prevStationDistance) &&
+        rt.prevStationDistance <= 200
+    ) {
+        // 地下解除直後などで、既に変更駅を現在駅として確定している場合も、
+        // 次停車駅は新しい案内経路から取り直す。
+        rt.lastStopStation = findNextStopStationName(changeStation) || null;
+    }
+
+    // 同じGPS座標で繰り返し再計算・警告しない。
+    rt.guideMidChangeRouteApplied = true;
+    return routeUpdated;
+}
+
+function getGuidePlanStationOrder() {
+    const rt = state.runtime;
+    const direction = state.config.direction;
+    const orderedStations = [];
+
+    for (const segmentId of rt.guidePlan || []) {
+        const segment = getGuideSegment(segmentId);
+        if (!segment) continue;
+
+        const stations = direction === "下り"
+            ? segment.stations
+            : [...segment.stations].reverse();
+
+        for (const stationName of stations) {
+            if (orderedStations[orderedStations.length - 1] === stationName) continue;
+            orderedStations.push(stationName);
+        }
+    }
+
+    const terminalIndex = orderedStations.indexOf(rt.guideTerminalName);
+    return terminalIndex >= 0
+        ? orderedStations.slice(0, terminalIndex + 1)
+        : orderedStations;
+}
+
+function findNextStopOnGuidePlan(fromName) {
+    const order = getGuidePlanStationOrder();
+    if (!order.length) return { handled: false, value: null };
+
+    const fromIndex = order.indexOf(fromName);
+    if (fromIndex === -1) return { handled: false, value: null };
+
+    for (let i = fromIndex + 1; i < order.length; i++) {
+        const stationName = order[i];
+        if (!state.runtime.passStations.has(stationName)) {
+            return { handled: true, value: stationName };
+        }
+    }
+
+    return { handled: true, value: null };
+}
+
+function findBestGuideSegmentAtPosition(lat, lng, segmentIds) {
+    let best = null;
+
+    for (const segmentId of segmentIds || []) {
+        const segment = getGuideSegment(segmentId);
+        if (!segment) continue;
+
+        const pair = computeBestAdjacentPairOnLine(lat, lng, segment.stations);
+        if (!pair) continue;
+
+        if (!best || pair.score < best.score) {
+            best = {
+                segmentId,
+                ...pair,
+            };
+        }
+    }
+
+    return best;
+}
+
+function getGuideSharedBoundaryStation(firstSegmentId, secondSegmentId) {
+    const first = getGuideSegment(firstSegmentId);
+    const second = getGuideSegment(secondSegmentId);
+    if (!first || !second) return null;
+
+    return first.stations.find((stationName) => second.stations.includes(stationName)) || null;
+}
+
+function updateActiveGuideSegmentFromPosition(lat, lng) {
+    const rt = state.runtime;
+    const plan = rt.guidePlan || [];
+    if (!plan.length || rt.undergroundMode) return rt.activeGuideSegmentId;
+
+    const activeIndex = plan.indexOf(rt.activeGuideSegmentId);
+
+    // 次区間との共通境界駅に200m以内まで進んだ時点でだけ、正式な現在区間を進める。
+    // 分岐駅上では二つの区間の線分スコアが同点になり得るため、GPS座標だけの比較に任せない。
+    if (activeIndex >= 0 && activeIndex + 1 < plan.length) {
+        const activeSegment = getGuideSegment(plan[activeIndex]);
+        const nextSegment = getGuideSegment(plan[activeIndex + 1]);
+        const boundaryStation = getGuideSegmentEndStation(
+            activeSegment,
+            state.config.direction,
+        );
+        const boundaryInfo = boundaryStation && state.datasets.stations
+            ? state.datasets.stations[boundaryStation]
+            : null;
+
+        if (
+            boundaryInfo &&
+            getGuideSegmentStartStation(nextSegment, state.config.direction) === boundaryStation &&
+            haversine(lat, lng, boundaryInfo.lat, boundaryInfo.lng) <= 200
+        ) {
+            rt.activeGuideSegmentId = nextSegment.id;
+            rt.guideSegmentCandidateId = nextSegment.id;
+            updateGuideSegmentStatus();
+            return rt.activeGuideSegmentId;
+        }
+    }
+
+    const candidateIds = activeIndex >= 0
+        ? plan.slice(activeIndex, activeIndex + 2)
+        : plan;
+    const candidate = findBestGuideSegmentAtPosition(lat, lng, candidateIds);
+    if (!candidate) return rt.activeGuideSegmentId;
+
+    rt.guideSegmentCandidateId = candidate.segmentId;
+
+    if (!rt.activeGuideSegmentId) {
+        rt.activeGuideSegmentId = candidate.segmentId;
+        updateGuideSegmentStatus();
+        return rt.activeGuideSegmentId;
+    }
+
+    if (candidate.segmentId === rt.activeGuideSegmentId) {
+        return rt.activeGuideSegmentId;
+    }
+
+    const candidateIndex = plan.indexOf(candidate.segmentId);
+    if (candidateIndex !== activeIndex + 1) {
+        return rt.activeGuideSegmentId;
+    }
+
+    // 一つ先の区間へ GPS が飛んだだけでは確定しない。共通境界駅の 200m 圏内でだけ進める。
+    const boundaryStation = getGuideSharedBoundaryStation(
+        rt.activeGuideSegmentId,
+        candidate.segmentId,
+    );
+    const boundaryInfo = boundaryStation && state.datasets.stations
+        ? state.datasets.stations[boundaryStation]
+        : null;
+
+    if (!boundaryInfo) return rt.activeGuideSegmentId;
+
+    const distanceToBoundary = haversine(lat, lng, boundaryInfo.lat, boundaryInfo.lng);
+    if (distanceToBoundary <= 200) {
+        rt.activeGuideSegmentId = candidate.segmentId;
+        updateGuideSegmentStatus();
+    }
+
+    return rt.activeGuideSegmentId;
+}
+
+function guidePlanIncludesSegment(segmentId) {
+    return (state.runtime.guidePlan || []).includes(segmentId);
+}
+
 // ==== 行先カテゴリ判定 ====
 
 // 有楽町線へ進む行先
@@ -5249,9 +5816,19 @@ async function fetchAndShowNextDeparture(nextStationName) {
 // 地下モード開始（方向に応じて初期処理を分ける）
 function enterUndergroundMode(source) {
     const rt = state.runtime;
+
+    if (!rt.undergroundMode) {
+        rt.guideSegmentBeforeUnderground = rt.activeGuideSegmentId || null;
+    }
+
     rt.undergroundMode = true;
     rt.undergroundSource = source || null;
     rt.undergroundLastToStationName = null;
+
+    // 地下モードは案内区間として常に「有楽」（練馬〜小竹向原）を表示する。
+    rt.activeGuideSegmentId = GUIDE_UNDERGROUND_SEGMENT_ID;
+    rt.guideSegmentCandidateId = GUIDE_UNDERGROUND_SEGMENT_ID;
+    updateGuideSegmentStatus();
 
     // ★ 地下モード中はBAND2の次停車駅表示を消す
     clearNextStopDisplay();
@@ -5287,6 +5864,8 @@ function exitUndergroundMode(newRouteLine, opts) {
     rt.undergroundMode = false;
     rt.undergroundSource = null;
     rt.undergroundLastToStationName = null;
+    rt.guideSegmentBeforeUnderground = null;
+    updateGuideSegmentStatus();
 
     if (newRouteLine) {
         rt.routeLine = newRouteLine;      // 例: "main"
@@ -5306,7 +5885,16 @@ function exitUndergroundMode(newRouteLine, opts) {
     // ★ ここから追加：地下解除時は「地点リセット」と同様の処理を行う
     //   案内中のみ実施（started=false のときは触らない）
     if (rt.started) {
-        startStartupLocationDetection();
+        let preserveGuidePlan = false;
+
+        if (opts.recalculateGuidePlan && opts.forceStationName) {
+            preserveGuidePlan = recalculateGuidePlanFromStation(
+                opts.forceStationName,
+                state.config.dest,
+            );
+        }
+
+        startStartupLocationDetection({ preserveGuidePlan });
 
         // ★ 練馬接近など「特定駅にいるものとして」確定させたい場合
         if (opts.forceStationName) {
@@ -5489,6 +6077,13 @@ function findNextOnLine(line, fromName, direction) {
 // ・state.config.dest = 行先
 // をもとに、本線／支線の分岐を考慮して次の停車駅を返す
 function findNextStopStationName(fromName) {
+	// 新しい案内区間の経路が確定している場合は、それを最優先する。
+	// 終端を越えて旧来の路線配列へ進まないよう、終端到達時も handled=true を返す。
+	const guideResult = findNextStopOnGuidePlan(fromName);
+	if (guideResult.handled) {
+		return guideResult.value;
+	}
+
 	const dir = state.config.direction;   // "上り" or "下り"
 	const dest = state.config.dest;
 
@@ -5779,6 +6374,12 @@ function stopGpsWatch() {
 
 
 function startGuidance() {
+    const guideRouteError = getGuideRouteValidationError();
+    if (guideRouteError) {
+        alert(guideRouteError);
+        return false;
+    }
+
     // ★ runtime のショートカット
     const rt = state.runtime;
 
@@ -5792,18 +6393,34 @@ function startGuidance() {
         g._btnVoiceMute.classList.remove("muted");
     }
 
-    // ★ 自動地下切替フラグ初期化
-    rt.autoUndergroundReady = false;    
-
     // ★ ルート情報・フラグを初期化
     rt.started = true;
     rt.routeLocked = false;
     rt.routeLine = null;
+    rt.guideSegmentBeforeUnderground = null;
+    rt.guideMidChangeRouteApplied = false;
+    clearGuidePlan();
+
+    let preserveGuidePlanForStartup = false;
 
     // 地下モード中は有楽町線として固定
     if (rt.undergroundMode) {
         rt.routeLocked = true;
         rt.routeLine = "yuraku";
+
+        // 下りの地下起動では、小竹向原を仮想的な開始地点として経路を確定する。
+        if (rt.undergroundSource === "downButton") {
+            const undergroundPlan = buildGuidePlanFromStation(
+                "小竹向原",
+                state.config.dest,
+                state.config.direction,
+            );
+            preserveGuidePlanForStartup = applyGuidePlan(
+                undergroundPlan,
+                GUIDE_UNDERGROUND_SEGMENT_ID,
+            );
+        }
+
         setGpsStatus("地下モード");
     }
 
@@ -5838,7 +6455,7 @@ function startGuidance() {
     // （2本目用の nonPassengerExtraStopsSecond は midChange で適用）    
 
     // ★ 起動モード開始（現在地から「現在駅＋次駅」を判定する）
-    startStartupLocationDetection();
+    startStartupLocationDetection({ preserveGuidePlan: preserveGuidePlanForStartup });
 
     // ★ UI の残りもリセット（遅延表示・次発時刻・音声表示・GPS表示）
     if (g) {
@@ -5878,6 +6495,8 @@ function startGuidance() {
 
     // ★ 遅延情報の定期取得を開始
     startDelayWatch();
+
+    return true;
 }
 
 
@@ -5938,8 +6557,6 @@ function stopGuidance() {
     //   ただし lastTrainScopedManualSettings は残す
     resetTrainScopedManualSettings();
 
-    // ★ GPS点滅停止
-    stopGpsBlink();
 }
 
 function renderGuidance() {
@@ -5980,17 +6597,26 @@ function nearestStation(lat, lng) {
 	let best = null,
 		bestD = 1e12;
 
-	// ★ 確定済みルート
+	// ★ 案内経路が確定した後は、その経路に含まれる区間の駅だけを候補にする。
+	// routeLine は遅延 API 等の旧処理がまだ使用しているため、この段階では併存させる。
+	const guidePlan = state.runtime.guidePlan || [];
+	const useGuidePlan = guidePlan.length > 0;
+
+	// ★ 旧 route lock（案内経路未確定時の互換用）
 	const lockedLine = state.runtime.routeLine;
 
 	for (const [name, info] of Object.entries(state.datasets.stations)) {
  	   if (info.lat == null || info.lng == null) continue;
 
- 	   // ★ ルート確定済みなら、そのルートに属さない駅は基本除外
- 	   //    ただし、練馬・西所沢・小竹向原などの「共通駅」は許可する
- 	   if (!stationBelongsToLockedLine(name, lockedLine)) {
- 	       continue;
- 	   }
+	   if (useGuidePlan) {
+	       const stationSegmentIds = getGuideSegmentIdsForStation(name);
+	       if (!stationSegmentIds.some((segmentId) => guidePlan.includes(segmentId))) {
+	           continue;
+	       }
+	   } else if (!stationBelongsToLockedLine(name, lockedLine)) {
+	       // 案内経路が未確定の間だけ、従来の route lock を使用する。
+	       continue;
+	   }
 
  	   const d = haversine(lat, lng, info.lat, info.lng);
  	   if (d < bestD) {
@@ -6082,6 +6708,23 @@ function computeBestAdjacentPairOnLine(lat, lng, order) {
 // 現在の「前駅⇒次駅」を決定（停車/通過は不問）
 function computeCurrentSegmentPair(lat, lng) {
     const rt = state.runtime;
+
+    // 0) 新しい案内区間が確定している場合は、現在区間を最優先する。
+    const activeGuideSegment = getGuideSegment(rt.activeGuideSegmentId);
+    if (activeGuideSegment) {
+        const activeGuidePair = computeBestAdjacentPairOnLine(
+            lat,
+            lng,
+            activeGuideSegment.stations,
+        );
+
+        if (activeGuidePair && activeGuidePair.minDist <= 1500) {
+            const down = state.config.direction === "下り";
+            return down
+                ? { prev: activeGuidePair.a, next: activeGuidePair.b }
+                : { prev: activeGuidePair.b, next: activeGuidePair.a };
+        }
+    }
 
     // 1) ルートが確定しているなら、まずそれを優先
     if (rt.routeLine) {
@@ -6534,19 +7177,6 @@ async function fetchAndUpdateDelay() {
         }
     }
 
-    // ★ 上り・小竹向原行き：練馬停車後、trains API の toStationName が新桜台になったら地下モードへ
-    if (
-        !state.runtime.undergroundMode &&
-        state.runtime.autoUndergroundReady &&
-        state.config.direction === "上り" &&
-        state.config.dest === "小竹向原" &&
-        currentToStationName &&
-        (currentToStationName === "新桜台" || currentToStationName === "小竹向原")
-    ) {
-        enterUndergroundMode("autoUp");
-        state.runtime.autoUndergroundReady = false;
-    }
-
     // ★ 地下モード時：toStationName を使って現在位置相当を処理
     if (state.runtime.undergroundMode && currentToStationName) {
         handleUndergroundToStationName(currentToStationName);
@@ -6604,8 +7234,15 @@ function maybeShowDepartureForNearbyStopStation(ns, isStop) {
 }
 
 // ★ 起動判定モードを開始（地点リセット共通）
-function startStartupLocationDetection() {
+function startStartupLocationDetection(opts) {
+    opts = opts || {};
     const rt = state.runtime;
+
+    // 通常の案内開始・地点リセットでは、その時点の座標を新しい開始地点として使う。
+    // 下り地下起動だけは小竹向原から事前確定した案内経路を維持する。
+    if (!opts.preserveGuidePlan) {
+        clearGuidePlan();
+    }
 
     rt.startupMode = true;
     rt.startupFixed = false;
@@ -6950,25 +7587,60 @@ function onPos(pos) {
     // ★ 本当の GPS 時刻で表示
     updateNotes(latitude, longitude, gpsTime);
 
-    // ★ 最寄り駅判定（ルートロック付き）
+    // ★ 案内開始・地点リセット直後は、最寄り駅／踏切等のスポットを開始地点として経路を確定する。
+    if (rt.started && !rt.undergroundMode && !(rt.guidePlan || []).length) {
+        initializeGuidePlanFromPosition(latitude, longitude);
+    }
+
+    // ★ 確定した経路の現区間は、現在区間と一つ先だけを候補にして更新する。
+    //    一つ先へ飛んだ GPS だけで恒久的に進めないため、戻り不能な誤判定を防ぐ。
+    if (rt.started && !rt.undergroundMode) {
+        updateActiveGuideSegmentFromPosition(latitude, longitude);
+    }
+
+    // ★ 最寄り駅判定（案内経路確定後はその経路に含まれる駅だけを候補にする）
     const ns = nearestStation(latitude, longitude);
+
+    // ★ 途中駅列情変更の後半経路は、変更駅の200m圏内に入った時点でだけ確定する。
+    //    音声案内・停車パターンの既存切替ロジックには依存させない。
+    if (!rt.undergroundMode) {
+        maybeRecalculateGuidePlanAtMidChangeStation(ns);
+    }
+
+    // ★ 有楽区間を通る上り列車は、練馬の200m圏内への進入で地下モードへ移行する。
+    if (
+        !rt.undergroundMode &&
+        state.config.direction === "上り" &&
+        guidePlanIncludesSegment(GUIDE_UNDERGROUND_SEGMENT_ID) &&
+        ns &&
+        ns.name === "練馬" &&
+        ns.distance <= 200
+    ) {
+        enterUndergroundMode("autoUp");
+    }
+
+    // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ戻す。
+    //    強制地下は従来どおり無条件で使えるため、手動起動時もこの復帰条件は維持する。
+    if (
+        rt.undergroundMode &&
+        state.config.direction === "下り" &&
+        ns &&
+        ns.name === "練馬" &&
+        ns.distance <= 200
+    ) {
+        exitUndergroundMode("main", { forceStationName: "練馬", recalculateGuidePlan: true });
+    }
+
+    // 地下解除と同じGPS更新で変更駅にいる場合も、ここで後半経路へ切り替える。
+    if (!rt.undergroundMode) {
+        maybeRecalculateGuidePlanAtMidChangeStation(ns);
+    }
 
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
     updateSegmentDisplay(ns, latitude, longitude);
 
     // ★ 追加: カーナビ（右側 BAND2）のスポット表示
     updateNavSpotsOnBand2(latitude, longitude);
-
-    // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ（池袋線本線）
-    if (
-        rt.undergroundMode &&
-        state.config.direction === "下り" &&
-        ns &&
-        ns.name === "練馬" &&
-        ns.distance <= 210
-    ) {
-        exitUndergroundMode("main", { forceStationName: "練馬" });
-    }
 
     // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行
     handleStartupPosition(ns);
@@ -7024,6 +7696,23 @@ const STRAIN_HOME_S_STATIONS = new Set([
 
 // ★ 途中駅列情変更：どの駅の「190m通過」で切り替えるかを決める
 function computeMidChangeTriggerStation(fromName, targetName, direction) {
+    // 案内経路が確定済みなら、営業路線配列ではなく実際の経路順で判定する。
+    const guideOrder = getGuidePlanStationOrder();
+    if (guideOrder.length) {
+        const guideFromIndex = guideOrder.indexOf(fromName);
+        const guideTargetIndex = guideOrder.indexOf(targetName);
+
+        if (guideFromIndex !== -1 && guideTargetIndex > guideFromIndex) {
+            for (let i = guideTargetIndex - 1; i > guideFromIndex; i--) {
+                const stationName = guideOrder[i];
+                const isStop = !state.runtime.passStations.has(stationName);
+                if (!isStop) return stationName;
+            }
+
+            return fromName;
+        }
+    }
+
     const lineId = getLineForStation(fromName);
     let line = null;
 
@@ -7493,15 +8182,6 @@ function maybeSpeak(ns) {
             );
         }
         
-        // ★ 上り・小竹向原行き：練馬に停車したら「発車後に自動地下切替」待機を立てる
-        if (
-            state.config.direction === "上り" &&
-            state.config.dest === "小竹向原" &&
-            ns.name === "練馬"
-        ) {
-            state.runtime.autoUndergroundReady = true;
-        }
-
         // ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
         if (isNonP) {
             speakOnce("door200_" + key, "ドア扱い注意");
