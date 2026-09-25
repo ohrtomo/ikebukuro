@@ -641,17 +641,11 @@ input[type="text"], select, input[type="number"] {
 }
 
 
-.gps-indicator {
-  font-size: clamp(12px, 3.8vw, 18px);
-  font-weight: 700;
-}
-
-.gps-status-group {
+.guide-status-indicator {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   white-space: nowrap;
 }
 
@@ -785,9 +779,61 @@ input[type="text"], select, input[type="number"] {
   border-radius: 4px;
 }
 
-/* 今は駅だけだが、種類ごとの拡張用フック */
+/* 駅は踏切より上に重ねて、駅名を優先して読めるようにする。 */
 .nav-spot--station {
-  /* 必要ならここに影などを追加 */
+  z-index: 2;
+}
+
+/* 踏切は線路の白／黒の1区画と同じ14pxの太さで描く。 */
+.nav-spot--crossing {
+  z-index: 1;
+  width: 18px;
+  height: 14px;
+  min-width: 18px;
+  min-height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #ffeb3b;
+  color: transparent;
+  writing-mode: horizontal-tb;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+/* iPadでタップしやすい当たり判定だけを上下へ広げ、見た目の太さは14pxに保つ。 */
+.nav-spot--crossing::before {
+  content: "";
+  position: absolute;
+  inset: -8px 0;
+}
+
+.nav-spot--crossing:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* 踏切の線をタップした時だけ、一時的に名称を横書きで表示する。 */
+.nav-spot-popup {
+  position: absolute;
+  left: calc(50% + 16px);
+  transform: translateY(-50%);
+  z-index: 3;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid #ffeb3b;
+  border-radius: 4px;
+  background: #111;
+  color: #ffeb3b;
+  font-size: clamp(0.8rem, 2vh, 1rem);
+  font-weight: 700;
+  line-height: 1.2;
+  writing-mode: horizontal-tb;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* =========================

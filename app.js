@@ -57,6 +57,7 @@ const STATIONDATA_META_COLUMNS = new Set([
     "所属路線3",
     "駅ID",
     "案内区間",
+    "案内しない",
 ]);
 
 function splitCsvLine(line) {
@@ -167,11 +168,14 @@ function parseStationDataCsv(csvText) {
         const lng = parseFloat(row["経度"]);
         const hasLatLng = Number.isFinite(lat) && Number.isFinite(lng);
         const guideSegmentIds = parseGuideSegmentIds(row["案内区間"]);
+        // 「案内しない」は右側ナビ・音声案内だけを止める設定。
+        // 座標と案内区間は、経路判定の基準点として引き続き利用する。
+        const guidanceDisabled = parseBoolCell(row["案内しない"]);
 
         // 旧 station.csv 相当：右側ナビ用スポット
         // 緯度・経度がある行だけ使用する。
         if (hasLatLng) {
-            navSpots.push({ kind, name, lat, lng, guideSegmentIds });
+            navSpots.push({ kind, name, lat, lng, guideSegmentIds, guidanceDisabled });
         }
 
         // 旧 stationID.json 相当：駅ID
@@ -199,9 +203,10 @@ function parseStationDataCsv(csvText) {
                 });
         }
 
-        // 旧 stations.json 相当：駅座標・停留場・8両位置・停車パターン
-        // 緯度・経度がない行は、駅ID用データとして扱い、stations には入れない。
-        if (!hasLatLng) continue;
+        // 旧 stations.json 相当：駅座標・停留場・8両位置・停車パターン。
+        // 踏切などのスポットは navSpots と案内開始時の区間判定だけに使用し、
+        // 駅判定・停車パターン・音声案内の対象へは混在させない。
+        if (!hasLatLng || kind !== "駅") continue;
 
         const stopPatterns = {};
 
@@ -219,6 +224,7 @@ function parseStationDataCsv(csvText) {
             down8pos: parseNullableText(row["down8pos"]),
             up8pos: parseNullableText(row["up8pos"]),
             guideSegmentIds,
+            guidanceDisabled,
             stopPatterns,
         };
     }
@@ -343,6 +349,8 @@ const state = {
         undergroundMode: false,               // 地下モード中かどうか
         undergroundLastToStationName: null,   // trains API の最新 toStationName
         undergroundSource: null,              // "downButton" / "autoUp" / "menu" など任意
+        // 上りで練馬200m圏内に入った後、遅延情報 API の行先駅を待つ状態。
+        autoUndergroundReady: false,
         lastGpsUpdate: 0,              // ★ GPS更新時刻（色判定用）
         speedOutlierStreak: 0,   // ★ 追加：外れ値が連続した回数
         headingRad: null,   // ★ 追加: 進行方向（北=0, 時計回り, ラジアン）
@@ -3457,22 +3465,20 @@ function screenGuidance() {
         el("button", { class: "btn secondary", id: "btnVoiceMute" }, "音声停止"),
     ]);
 
-    // --- Band6: 時計・遅延・GPS 状態 ---
-    const gpsStatus = el("div", { class: "gps-indicator", id: "gpsStatus" }, "GPS");
+    // --- Band6: 時計・遅延・案内区間（文字色で GPS 状態を表す） ---
     const guideSegmentStatus = el(
         "div",
         { class: "guide-segment-indicator", id: "guideSegmentStatus", style: "display:none;" },
         "",
     );
-    const gpsStatusGroup = el("div", { class: "gps-status-group" }, [
-        gpsStatus,
+    const guideStatusIndicator = el("div", { class: "guide-status-indicator" }, [
         guideSegmentStatus,
     ]);
 
     const band6 = el("div", { class: "band band6" }, [
         el("div", { class: "clock", id: "clock" }, "00:00:00"),
         el("div", { class: "clock", id: "delayInfo" }, ""),
-        gpsStatusGroup,
+        guideStatusIndicator,
     ]);
 
     // --- Band7: 空白エリア ---
@@ -3517,7 +3523,6 @@ function screenGuidance() {
 
     // ★ 各要素への参照
     root._band1       = band1;
-    root._gpsStatus   = band6.querySelector("#gpsStatus");   // GPS は band6
     root._guideSegmentStatus = band6.querySelector("#guideSegmentStatus");
     root._speechText  = band2.querySelector("#speechText");
     root._badgeType   = band1.querySelector("#badgeType");
@@ -3618,44 +3623,87 @@ function screenGuidance() {
 
 
 
-function setGpsStatus(text) {
+function setGpsIndicatorColor(color) {
     const g = document.getElementById("screen-guidance");
+    const s = document.getElementById("screen-start");
+
+    // 案内画面は案内区間の略称だけを表示し、その文字色で GPS 状態を表す。
+    if (g && g._guideSegmentStatus) {
+        g._guideSegmentStatus.style.color = color;
+    }
+    if (s && s._gpsStatus) {
+        s._gpsStatus.style.color = color;
+    }
+}
+
+function isAutomaticUndergroundWaitPending() {
+    const rt = state.runtime;
+    return (
+        !rt.undergroundMode &&
+        rt.autoUndergroundReady &&
+        state.config.direction === "上り" &&
+        guidePlanIncludesSegment(GUIDE_UNDERGROUND_SEGMENT_ID)
+    );
+}
+
+function startGpsBlink() {
+    if (gpsBlinkTimer) return;
+
+    gpsBlinkOn = true;
+    setGpsIndicatorColor("yellow");
+
+    gpsBlinkTimer = setInterval(() => {
+        gpsBlinkOn = !gpsBlinkOn;
+        setGpsIndicatorColor(gpsBlinkOn ? "yellow" : "gray");
+    }, 500);
+}
+
+function stopGpsBlink() {
+    if (gpsBlinkTimer) {
+        clearInterval(gpsBlinkTimer);
+        gpsBlinkTimer = null;
+    }
+    gpsBlinkOn = false;
+}
+
+function setGpsStatus(text) {
     const s = document.getElementById("screen-start");
     const rt = state.runtime;
 
-    // GPS の色・文言とは別に、右側へ現在の案内区間略称を表示する。
+    // 案内画面の文字列は常に現在の案内区間略称だけにする。
     updateGuideSegmentStatus();
 
     const displayText = text || "";
 
     // ===== 地下モード中：黄色固定 =====
     if (rt.undergroundMode) {
-        if (g && g._gpsStatus) {
-            g._gpsStatus.textContent = "GPS";
-            g._gpsStatus.style.color = "yellow";
-        }
+        stopGpsBlink();
+        setGpsIndicatorColor("yellow");
         if (s && s._gpsStatus) {
             // 開始画面側はメッセージ（「地下モード」など）をそのまま表示
             s._gpsStatus.textContent = displayText || "GPS";
-            s._gpsStatus.style.color = "yellow";
         }
         return;
     }
 
+    // ===== 上り地下待機中：従来どおり黄色／灰色で点滅 =====
+    if (isAutomaticUndergroundWaitPending()) {
+        if (s && s._gpsStatus) {
+            s._gpsStatus.textContent = displayText || "GPS";
+        }
+        startGpsBlink();
+        return;
+    }
+
     // ===== 通常表示 =====
-    // 案内画面：ラベル「GPS」だけを出し、色で状態を表現
-    // 開始画面：従来通りメッセージを表示
     const now = Date.now();
     const ageSec = rt.lastGpsUpdate ? (now - rt.lastGpsUpdate) / 1000 : 999;
     const color = ageSec <= 3 ? "lime" : "red";
 
-    if (g && g._gpsStatus) {
-        g._gpsStatus.textContent = "GPS";
-        g._gpsStatus.style.color = color;
-    }
+    stopGpsBlink();
+    setGpsIndicatorColor(color);
     if (s && s._gpsStatus) {
         s._gpsStatus.textContent = displayText || "GPS";
-        s._gpsStatus.style.color = color;
     }
 }
 
@@ -4953,6 +5001,8 @@ function applyGuidePlan(plan, activeGuideSegmentId) {
     rt.guideSegmentCandidateId = rt.activeGuideSegmentId;
     rt.guidePlanErrorShown = false;
     updateGuideSegmentStatus();
+    // 区間略称が初めて表示される時点でも、直近の GPS 状態の色を反映する。
+    setGpsStatus("");
     return true;
 }
 
@@ -5079,6 +5129,12 @@ function getGuidePlanStationOrder() {
         : orderedStations;
 }
 
+function isGuidanceDisabledStation(stationName) {
+    const name = String(stationName || "").trim();
+    const stations = state.datasets.stations || {};
+    return !!(name && stations[name] && stations[name].guidanceDisabled);
+}
+
 function findNextStopOnGuidePlan(fromName) {
     const order = getGuidePlanStationOrder();
     if (!order.length) return { handled: false, value: null };
@@ -5088,7 +5144,10 @@ function findNextStopOnGuidePlan(fromName) {
 
     for (let i = fromIndex + 1; i < order.length; i++) {
         const stationName = order[i];
-        if (!state.runtime.passStations.has(stationName)) {
+        if (
+            !isGuidanceDisabledStation(stationName) &&
+            !state.runtime.passStations.has(stationName)
+        ) {
             return { handled: true, value: stationName };
         }
     }
@@ -5817,6 +5876,9 @@ async function fetchAndShowNextDeparture(nextStationName) {
 function enterUndergroundMode(source) {
     const rt = state.runtime;
 
+    rt.autoUndergroundReady = false;
+    stopGpsBlink();
+
     if (!rt.undergroundMode) {
         rt.guideSegmentBeforeUnderground = rt.activeGuideSegmentId || null;
     }
@@ -5861,6 +5923,8 @@ function exitUndergroundMode(newRouteLine, opts) {
 
     opts = opts || {};
 
+    rt.autoUndergroundReady = false;
+    stopGpsBlink();
     rt.undergroundMode = false;
     rt.undergroundSource = null;
     rt.undergroundLastToStationName = null;
@@ -5905,6 +5969,26 @@ function exitUndergroundMode(newRouteLine, opts) {
             rt.startupFixed = true;
         }
     }
+}
+
+
+// 上りは練馬200m圏内で地下待機に入り、trains API の行先駅が地下側へ進んだ時だけ移行する。
+function maybeEnterUndergroundModeFromDelayApi(toName) {
+    const rt = state.runtime;
+    const nextStationName = String(toName || "").trim();
+
+    if (
+        rt.undergroundMode ||
+        !rt.autoUndergroundReady ||
+        state.config.direction !== "上り" ||
+        !guidePlanIncludesSegment(GUIDE_UNDERGROUND_SEGMENT_ID) ||
+        !["新桜台", "小竹向原"].includes(nextStationName)
+    ) {
+        return false;
+    }
+
+    enterUndergroundMode("autoUp");
+    return true;
 }
 
 
@@ -6063,10 +6147,11 @@ function findNextOnLine(line, fromName, direction) {
 			}
 		}
 
-		// 実際に停車する駅だけ対象（passStations に入っていない＝停車駅）
-		if (!state.runtime.passStations.has(n)) {
-			return n;
-		}
+        // 実際に停車する駅だけ対象（passStations に入っていない＝停車駅）。
+        // 「案内しない」設定の駅は音声案内の対象から外す。
+        if (!isGuidanceDisabledStation(n) && !state.runtime.passStations.has(n)) {
+            return n;
+        }
 	}
 	return null;
 }
@@ -6314,6 +6399,8 @@ window.addEventListener(
 
 let clockTimer = null;
 let delayTimer = null;   // ★ 遅延更新用
+let gpsBlinkTimer = null;
+let gpsBlinkOn = false;
 // ★ watchPosition 用
 let gpsWatchId = null;
 
@@ -6398,6 +6485,8 @@ function startGuidance() {
     rt.routeLocked = false;
     rt.routeLine = null;
     rt.guideSegmentBeforeUnderground = null;
+    rt.autoUndergroundReady = false;
+    stopGpsBlink();
     rt.guideMidChangeRouteApplied = false;
     clearGuidePlan();
 
@@ -6460,7 +6549,6 @@ function startGuidance() {
     // ★ UI の残りもリセット（遅延表示・次発時刻・音声表示・GPS表示）
     if (g) {
         clearNextStopDisplay();
-        if (g._gpsStatus)  g._gpsStatus.textContent  = "GPS";
         if (g._delayInfo) {
             g._delayInfo.textContent = "";
             g._delayInfo.style.visibility = "hidden";
@@ -6510,6 +6598,8 @@ function stopGuidance() {
     // ★ 案内終了：状態リセット＆画面消灯許可
     rt.started = false;
     rt.voiceMuted = false;
+    rt.autoUndergroundReady = false;
+    stopGpsBlink();
     releaseWakeLock();
 
     // ★ 音声系も案内終了時に完全停止
@@ -6910,21 +7000,24 @@ function updateSegmentDisplay(ns, lat, lng) {
             segInfo.style.visibility = "hidden";
         }
     } else {
+        const nextName = isGuidanceDisabledStation(seg.next) ? "" : (seg.next || "");
+        const prevName = isGuidanceDisabledStation(seg.prev) ? "" : (seg.prev || "");
+
         // B = next（向かっている駅）を上に表示
         if (segNextEl) {
-            segNextEl.textContent = seg.next || "";
-            segNextEl.style.display = seg.next ? "block" : "none";
+            segNextEl.textContent = nextName;
+            segNextEl.style.display = nextName ? "block" : "none";
         }
         // A = prev（遠ざかる駅）を下に表示
         if (segPrevEl) {
-            segPrevEl.textContent = seg.prev || "";
-            segPrevEl.style.display = seg.prev ? "block" : "none";
+            segPrevEl.textContent = prevName;
+            segPrevEl.style.display = prevName ? "block" : "none";
         }
 
         // 旧 BAND3 テキストは裏で保持しておく（画面には出さない）
         if (segInfo) {
-            if (seg.prev && seg.next) {
-                segInfo.textContent = `${seg.prev}⇒${seg.next}`;
+            if (prevName && nextName) {
+                segInfo.textContent = `${prevName}⇒${nextName}`;
             } else {
                 segInfo.textContent = "";
             }
@@ -6937,6 +7030,40 @@ function updateSegmentDisplay(ns, lat, lng) {
         currentBox.textContent = "";
         currentBox.classList.remove("is-visible");
     }
+}
+
+function isCrossingOnActiveGuideSegment(spot) {
+  if (!spot || spot.kind !== "踏切") return false;
+
+  const activeSegmentId = state.runtime.activeGuideSegmentId;
+  return (
+    !!activeSegmentId &&
+    getGuideSegmentIdsForSpot(spot).includes(activeSegmentId)
+  );
+}
+
+function showNavSpotNamePopup(trackEl, spotName, topPercent) {
+  if (!trackEl || !spotName) return;
+
+  if (trackEl._navSpotPopupTimer) {
+    clearTimeout(trackEl._navSpotPopupTimer);
+    trackEl._navSpotPopupTimer = null;
+  }
+
+  const existing = trackEl.querySelector(".nav-spot-popup");
+  if (existing) existing.remove();
+
+  const popup = document.createElement("div");
+  popup.className = "nav-spot-popup";
+  popup.textContent = spotName;
+  popup.style.top = `${topPercent}%`;
+  popup.setAttribute("role", "status");
+  trackEl.appendChild(popup);
+
+  trackEl._navSpotPopupTimer = setTimeout(() => {
+    if (popup.parentNode) popup.remove();
+    trackEl._navSpotPopupTimer = null;
+  }, 2500);
 }
 
 // ★ カーナビ: 右側 BAND2 の線路上にスポットを配置する
@@ -7035,16 +7162,24 @@ function updateNavSpotsOnBand2(latitude, longitude) {
 
   for (const spot of spots) {
     if (!spot) continue;
+    if (spot.guidanceDisabled) continue;
 
-    // 現段階では種類は「駅」のみを想定（CSV が増えたらここで種別分岐）
-    if (spot.kind && spot.kind !== "駅") continue;
+    const isStation = spot.kind === "駅";
+    const isCrossing = spot.kind === "踏切";
+    if (!isStation && !isCrossing) continue;
+
+    // 踏切は、列車が現在いる案内区間に属するものだけを描画する。
+    // 駅の既存表示条件は変更しない。
+    if (isCrossing && !isCrossingOnActiveGuideSegment(spot)) {
+      continue;
+    }
 
     const name = spot.name;
     if (!name) continue;
 
     // ルートロック済みなら、現在のルートに属さない駅は除外
     // （分岐駅での分岐判定を利用）
-    if (useRouteFilter && !stationBelongsToLockedLine(name, lockedLine)) {
+    if (isStation && useRouteFilter && !stationBelongsToLockedLine(name, lockedLine)) {
       continue;
     }
 
@@ -7068,15 +7203,21 @@ function updateNavSpotsOnBand2(latitude, longitude) {
       name,
       dist,
       sign,
+      isCrossing,
     });
   }
 
   if (!markers.length) return;
 
-  // なるべく近いスポットから描画
+  // なるべく近いスポットから描画するが、踏切が密集しても駅の表示を先に確保する。
   markers.sort((a, b) => a.dist - b.dist);
   const maxSpots = 12;
-  const useMarkers = markers.slice(0, maxSpots);
+  const stationMarkers = markers.filter((marker) => !marker.isCrossing);
+  const crossingMarkers = markers.filter((marker) => marker.isCrossing);
+  const useMarkers = [
+    ...stationMarkers.slice(0, maxSpots),
+    ...crossingMarkers.slice(0, Math.max(0, maxSpots - stationMarkers.length)),
+  ].sort((a, b) => a.dist - b.dist);
 
   for (const m of useMarkers) {
     const ratio = Math.min(m.dist, maxRange) / maxRange; // 0〜1
@@ -7085,9 +7226,21 @@ function updateNavSpotsOnBand2(latitude, longitude) {
     const topPercent = 50 - m.sign * ratio * 50;
     const clampedTop = Math.max(0, Math.min(100, topPercent));
 
-    const el = document.createElement("div");
-    el.className = "nav-spot nav-spot--station";
-    el.textContent = m.name;
+    const el = document.createElement(m.isCrossing ? "button" : "div");
+    el.className = m.isCrossing
+      ? "nav-spot nav-spot--crossing"
+      : "nav-spot nav-spot--station";
+
+    if (m.isCrossing) {
+      el.setAttribute("type", "button");
+      el.setAttribute("aria-label", `踏切 ${m.name}`);
+      el.addEventListener("click", () => {
+        showNavSpotNamePopup(trackEl, m.name, clampedTop);
+      });
+    } else {
+      el.textContent = m.name;
+    }
+
     el.style.top = `${clampedTop}%`;
 
     trackEl.appendChild(el);
@@ -7177,6 +7330,11 @@ async function fetchAndUpdateDelay() {
         }
     }
 
+    // ★ 上り地下待機時：遅延情報 API の行先駅が地下側へ進んだ時だけ地下モードへ移行
+    if (currentToStationName) {
+        maybeEnterUndergroundModeFromDelayApi(currentToStationName);
+    }
+
     // ★ 地下モード時：toStationName を使って現在位置相当を処理
     if (state.runtime.undergroundMode && currentToStationName) {
         handleUndergroundToStationName(currentToStationName);
@@ -7237,6 +7395,10 @@ function maybeShowDepartureForNearbyStopStation(ns, isStop) {
 function startStartupLocationDetection(opts) {
     opts = opts || {};
     const rt = state.runtime;
+
+    // 通常開始・地点リセット・地下解除では、以前の地下待機状態を持ち越さない。
+    rt.autoUndergroundReady = false;
+    stopGpsBlink();
 
     // 通常の案内開始・地点リセットでは、その時点の座標を新しい開始地点として使う。
     // 下り地下起動だけは小竹向原から事前確定した案内経路を維持する。
@@ -7598,25 +7760,34 @@ function onPos(pos) {
         updateActiveGuideSegmentFromPosition(latitude, longitude);
     }
 
-    // ★ 最寄り駅判定（案内経路確定後はその経路に含まれる駅だけを候補にする）
-    const ns = nearestStation(latitude, longitude);
+    // ★ 最寄り地点判定（案内経路確定後はその経路に含まれる駅だけを候補にする）
+    //    「案内しない」地点も経路・地下移行等の物理判定には使い続ける。
+    const physicalNs = nearestStation(latitude, longitude);
+    //    ただし、音声案内だけは「案内しない」設定の地点を対象にしない。
+    const guidanceNs = physicalNs && !physicalNs.guidanceDisabled
+        ? physicalNs
+        : null;
 
     // ★ 途中駅列情変更の後半経路は、変更駅の200m圏内に入った時点でだけ確定する。
     //    音声案内・停車パターンの既存切替ロジックには依存させない。
     if (!rt.undergroundMode) {
-        maybeRecalculateGuidePlanAtMidChangeStation(ns);
+        maybeRecalculateGuidePlanAtMidChangeStation(physicalNs);
     }
 
-    // ★ 有楽区間を通る上り列車は、練馬の200m圏内への進入で地下モードへ移行する。
+    // ★ 有楽区間を通る上り列車は、練馬の200m圏内への進入で地下待機に入る。
+    //    実際の地下モード移行は、遅延情報 API の toStationName で地下側を確認してから行う。
     if (
         !rt.undergroundMode &&
         state.config.direction === "上り" &&
         guidePlanIncludesSegment(GUIDE_UNDERGROUND_SEGMENT_ID) &&
-        ns &&
-        ns.name === "練馬" &&
-        ns.distance <= 200
+        physicalNs &&
+        physicalNs.name === "練馬" &&
+        physicalNs.distance <= 200
     ) {
-        enterUndergroundMode("autoUp");
+        if (!rt.autoUndergroundReady) {
+            rt.autoUndergroundReady = true;
+            setGpsStatus("地下待機");
+        }
     }
 
     // ★ 下りの地下モード中に、練馬200m以内に入ったら自動で地上モードへ戻す。
@@ -7624,33 +7795,33 @@ function onPos(pos) {
     if (
         rt.undergroundMode &&
         state.config.direction === "下り" &&
-        ns &&
-        ns.name === "練馬" &&
-        ns.distance <= 200
+        physicalNs &&
+        physicalNs.name === "練馬" &&
+        physicalNs.distance <= 200
     ) {
         exitUndergroundMode("main", { forceStationName: "練馬", recalculateGuidePlan: true });
     }
 
     // 地下解除と同じGPS更新で変更駅にいる場合も、ここで後半経路へ切り替える。
     if (!rt.undergroundMode) {
-        maybeRecalculateGuidePlanAtMidChangeStation(ns);
+        maybeRecalculateGuidePlanAtMidChangeStation(physicalNs);
     }
 
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
-    updateSegmentDisplay(ns, latitude, longitude);
+    updateSegmentDisplay(physicalNs, latitude, longitude);
 
     // ★ 追加: カーナビ（右側 BAND2）のスポット表示
     updateNavSpotsOnBand2(latitude, longitude);
 
     // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行
-    handleStartupPosition(ns);
+    handleStartupPosition(physicalNs);
 
-    // ★ 駅案内ロジック
-    maybeSpeak(ns);
+    // ★ 駅案内ロジック（「案内しない」設定の地点は音声対象から外す）
+    maybeSpeak(guidanceNs);
 
     // ★ 車両アイコン（停車駅通過中のみ非表示）
     let show = true;
-    if (ns && rt.passStations.has(ns.name) && ns.distance <= 500) {
+    if (physicalNs && rt.passStations.has(physicalNs.name) && physicalNs.distance <= 500) {
         show = false;
     }
 
