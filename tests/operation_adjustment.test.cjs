@@ -138,6 +138,171 @@ function testPreviewUsesChangedTypeAndForcesDestinationStop() {
     );
 }
 
+function testDirectEditKeepsCurrentStopsAndEffectivePlatforms() {
+    const context = createHarness();
+    configureSayamaStations(context);
+
+    vm.runInContext(
+        `
+            state.config.trainNo = "1001";
+            state.config.type = "急行";
+            state.config.dest = "西武球場前";
+            state.config.direction = "下り";
+            state.config.dayType = "平日";
+            state.config.endChange = false;
+            state.datasets.platforms = {
+                "平日": {
+                    "西所沢": {
+                        "1": [1001],
+                        "2": [2001],
+                    },
+                    "下山口": {
+                        "1": [1001],
+                        "2": [2001],
+                    },
+                },
+            };
+            state.runtime.passStations = new Set([
+                "西所沢",
+                "西武球場前",
+            ]);
+            state.runtime.manualPlatforms = { "西所沢": "2" };
+            state.runtime.prevStationName = "";
+
+            directPreview = buildDirectOperationAdjustmentPreview({
+                trainNo: "1001",
+                type: "急行",
+                dest: "西武球場前",
+                changeStation: "",
+            });
+
+            applyGuidePlan({
+                segmentIds: ["狭山"],
+                terminalName: "西武球場前",
+            });
+            directBaseline = buildProjectedOperationBaseline();
+            reflectedPreview = buildOperationAdjustmentPreview({
+                trainNo: "1001",
+                type: "急行",
+                dest: "西武球場前",
+                changeStation: "西所沢",
+            }, directBaseline.stops);
+        `,
+        context,
+    );
+
+    assert.equal(vm.runInContext("directPreview.error", context), null);
+    assert.deepEqual(
+        readJson(context, `({
+            nishiTokorozawa: directPreview.stops["西所沢"],
+            shimoyamaguchi: directPreview.stops["下山口"],
+            seibuKyujomae: directPreview.stops["西武球場前"],
+            nishiPlatform: directPreview.platforms["西所沢"],
+            shimoPlatform: directPreview.platforms["下山口"],
+            changeStation: directPreview.input.changeStation,
+            terminalName: directPreview.terminalName,
+            directEdit: directPreview.directEdit,
+        })`),
+        {
+            nishiTokorozawa: false,
+            shimoyamaguchi: true,
+            seibuKyujomae: false,
+            nishiPlatform: "2",
+            shimoPlatform: "1",
+            changeStation: "",
+            terminalName: null,
+            directEdit: true,
+        },
+        "変更駅なしの直接編集では、案内経路に依存せず全駅の現在状態と実効番線を維持する。",
+    );
+    assert.equal(
+        vm.runInContext('reflectedPreview.stops["下山口"]', context),
+        false,
+        "従来の反映は、同じ入力でも種別の基本停車パターンを一括入力する。",
+    );
+}
+
+function testDirectEditAppliesImmediatelyAndKeepsScheduledChange() {
+    const context = createHarness();
+    configureSayamaStations(context);
+
+    vm.runInContext(
+        `
+            state.config.trainNo = "1001";
+            state.config.type = "各停";
+            state.config.dest = "飯能";
+            state.config.direction = "下り";
+            state.config.endChange = true;
+            state.config.second = {
+                trainNo: "2001",
+                type: "急行",
+                dest: "西武球場前",
+                cars: 10,
+                changeStation: "西所沢",
+                source: "settings",
+                operationPlan: null,
+            };
+            state.runtime.midChangePending = true;
+            state.runtime.midChangeApplied = false;
+            state.runtime.nonPassengerExtraStops = new Set(["西所沢"]);
+            state.runtime.operationBaselineStops = { "西所沢": true };
+            state.runtime.operationChangeActive = true;
+
+            directApplied = applyDirectOperationAdjustment({
+                passStations: ["下山口"],
+                manualPlatforms: { "西所沢": "2" },
+                nonPassengerExtraStops: ["下山口"],
+            });
+        `,
+        context,
+    );
+
+    assert.equal(vm.runInContext("directApplied", context), true);
+    assert.deepEqual(
+        readJson(context, `({
+            trainNo: state.config.trainNo,
+            type: state.config.type,
+            dest: state.config.dest,
+            endChange: state.config.endChange,
+            second: state.config.second,
+            midChangePending: state.runtime.midChangePending,
+            midChangeApplied: state.runtime.midChangeApplied,
+            passStations: Array.from(state.runtime.passStations),
+            manualPlatforms: state.runtime.manualPlatforms,
+            platformChanges: Array.from(state.runtime.platformChanges),
+            nonPassengerExtraStops: Array.from(
+                state.runtime.nonPassengerExtraStops,
+            ),
+            operationBaselineStops: state.runtime.operationBaselineStops,
+            operationChangeActive: state.runtime.operationChangeActive,
+        })`),
+        {
+            trainNo: "1001",
+            type: "各停",
+            dest: "飯能",
+            endChange: true,
+            second: {
+                trainNo: "2001",
+                type: "急行",
+                dest: "西武球場前",
+                cars: 10,
+                changeStation: "西所沢",
+                source: "settings",
+                operationPlan: null,
+            },
+            midChangePending: true,
+            midChangeApplied: false,
+            passStations: ["下山口"],
+            manualPlatforms: { "西所沢": "2" },
+            platformChanges: ["西所沢"],
+            nonPassengerExtraStops: ["西所沢"],
+            operationBaselineStops: { "西所沢": true },
+            operationChangeActive: true,
+        },
+        "即時変更は停車・番線だけを書き換え、列情と既存予約を維持する。",
+    );
+}
+
 function testExistingScheduledChangeIsUsedForComparisonBaseline() {
     const context = createHarness();
     configureSayamaStations(context);
@@ -401,7 +566,28 @@ function testMenuLabelsAndTwoButtonActionRow() {
         /el\("option",\s*\{\s*value:\s*""\s*\},\s*"変更駅を選択"\)/s,
     );
     assert.match(appSource, /"運転整理を設定"/);
+    assert.match(appSource, /setButton\.textContent\s*=\s*"決定"/);
     assert.match(appSource, /"取消"/);
+    assert.match(
+        appSource,
+        /changeStationSelect\.addEventListener\("change",\s*handleOperationInputChange\)/,
+        "変更駅の選択変更を予約編集モードの判定へ反映する。",
+    );
+    assert.match(
+        appSource,
+        /isTrainInfoUnchanged\(input\)\s*&&\s*!input\.changeStation/s,
+        "列情が同じで変更駅が空欄の場合だけ即時編集モードにする。",
+    );
+    assert.match(
+        appSource,
+        /if \(previewState\.directEdit\) \{[\s\S]*?applyDirectOperationAdjustment\(editedPlan\)/,
+        "反映なしの直接編集は途中駅変更予約を作らず、現在状態へ即時適用する。",
+    );
+    assert.match(
+        appSource,
+        /panel\.appendChild\(wrap\);\s*prepareDirectOperationPreview\(\);/s,
+        "運転整理を開いた直後から停車駅・番線を編集可能にする。",
+    );
     assert.match(
         appSource,
         /cancelButton\.onclick\s*=\s*\(\)\s*=>\s*\{\s*previewState\s*=\s*null;\s*wrap\.remove\(\);/s,
@@ -415,6 +601,8 @@ function testMenuLabelsAndTwoButtonActionRow() {
 }
 
 testPreviewUsesChangedTypeAndForcesDestinationStop();
+testDirectEditKeepsCurrentStopsAndEffectivePlatforms();
+testDirectEditAppliesImmediatelyAndKeepsScheduledChange();
 testExistingScheduledChangeIsUsedForComparisonBaseline();
 testStationsOutsideOldRouteStartAsNotPlannedStops();
 testOperationPlanAppliesAtomicallyAndKeepsOldPlanForWords();

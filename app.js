@@ -4366,6 +4366,56 @@ function buildOperationAdjustmentPreview(input, baselineStops) {
     };
 }
 
+// 列番・種別・行先を変えず、停車駅または番線だけを即時変更する場合の編集内容。
+// 従来の「臨時停車・通過」と同じく変更駅や案内経路を必要とせず、全駅の
+// 現在の停車状態と実効番線をそのまま編集開始値にする。
+function buildDirectOperationAdjustmentPreview(input) {
+    const trainNo = String(input && input.trainNo || "").trim();
+    const type = normalizeTypeName(input && input.type || "");
+    const dest = String(input && input.dest || "").trim();
+    const routeStations = getOperationStationNames();
+    const stops = createStopPlanFromPassStations(
+        state.runtime.passStations,
+    );
+    const platforms = {};
+
+    routeStations.forEach((stationName) => {
+        platforms[stationName] = getEffectivePlatformForStation(stationName);
+    });
+
+    return {
+        error: null,
+        input: {
+            trainNo,
+            type,
+            dest,
+            changeStation: "",
+        },
+        plan: null,
+        routeStations,
+        stops,
+        terminalName: null,
+        platforms,
+        directEdit: true,
+    };
+}
+
+// 列情変更を予約せず、現在の停車・通過と番線だけを即時に置き換える。
+// 既存の途中駅列情変更予約や列番・種別・行先には触れない。
+function applyDirectOperationAdjustment(editedPlan) {
+    if (!editedPlan || !Array.isArray(editedPlan.passStations)) {
+        return false;
+    }
+
+    const manualPlatforms = { ...(editedPlan.manualPlatforms || {}) };
+    state.runtime.passStations = new Set(editedPlan.passStations);
+    state.runtime.manualPlatforms = manualPlatforms;
+    state.runtime.platformChanges = new Set(
+        Object.keys(manualPlatforms),
+    );
+    return true;
+}
+
 function openOperationAdjustment() {
     const modal = document.getElementById("menuModal");
     const panel = modal && modal.querySelector(".panel");
@@ -4384,8 +4434,9 @@ function openOperationAdjustment() {
     panel.querySelectorAll(".menu-subpanel").forEach((item) => item.remove());
 
     const names = getOperationStationNames();
-    const initialBaseline = buildProjectedOperationBaseline();
-    const initialStops = initialBaseline.stops;
+    const initialStops = createStopPlanFromPassStations(
+        state.runtime.passStations,
+    );
     const platforms = state.datasets.platforms || null;
     const dayType = state.config.dayType || "平日";
     const dayData = platforms && platforms[dayType] ? platforms[dayType] : null;
@@ -4458,8 +4509,7 @@ function openOperationAdjustment() {
     const previewStatus = el(
         "div",
         { class: "small operation-preview-status", role: "status" },
-        initialBaseline.error ||
-            "変更内容と変更駅を入力し、「反映」を押してください。",
+        "列情を変えない場合は、変更駅を選ばず、そのまま停車駅・番線を編集して「決定」を押してください。",
     );
 
     const controls = el("div", { class: "operation-controls" }, [
@@ -4545,7 +4595,7 @@ function openOperationAdjustment() {
         const scopeText = el(
             "span",
             { class: "small operation-station-scope" },
-            "反映待ち",
+            "即時変更",
         );
         block.append(row, scopeText);
         box.appendChild(block);
@@ -4571,7 +4621,11 @@ function openOperationAdjustment() {
         });
     }
 
-    function setStationRowsEnabled(routeStations, terminalName) {
+    function setStationRowsEnabled(
+        routeStations,
+        terminalName,
+        activeScopeLabel = "変更対象",
+    ) {
         const routeSet = new Set(routeStations || []);
 
         box.querySelectorAll(".operation-station-block").forEach((block) => {
@@ -4594,24 +4648,27 @@ function openOperationAdjustment() {
                 } else if (stationName === terminalName) {
                     scopeText.textContent = "行先（停車）";
                 } else {
-                    scopeText.textContent = "変更対象";
+                    scopeText.textContent = activeScopeLabel;
                 }
             }
         });
     }
 
-    function disableStationRows(message) {
+    function disableStationRows(message, scopeLabel = "反映待ち") {
         setStationRowsEnabled([], null);
         box.querySelectorAll(".operation-station-scope").forEach((scopeText) => {
-            scopeText.textContent = "反映待ち";
+            scopeText.textContent = scopeLabel;
         });
         if (message) previewStatus.textContent = message;
     }
 
-    function invalidatePreview() {
-        if (!previewState) return;
+    function invalidatePreview(
+        message = "入力内容が変わりました。再度「反映」を押してください。",
+        scopeLabel = "反映待ち",
+    ) {
         previewState = null;
-        disableStationRows("入力内容が変わりました。再度「反映」を押してください。");
+        setButton.textContent = "運転整理を設定";
+        disableStationRows(message, scopeLabel);
     }
 
     function applyPreviewToRows(preview) {
@@ -4626,21 +4683,33 @@ function openOperationAdjustment() {
 
             if (!routeSet.has(stationName)) return;
 
-            const basePlatform = getPlatformForStationForTrain(
-                stationName,
-                preview.input.trainNo,
-            );
+            const hasPreviewPlatform =
+                preview.platforms &&
+                Object.prototype.hasOwnProperty.call(
+                    preview.platforms,
+                    stationName,
+                );
+            const selectedPlatform = hasPreviewPlatform
+                ? preview.platforms[stationName]
+                : getPlatformForStationForTrain(
+                    stationName,
+                    preview.input.trainNo,
+                );
             block.querySelectorAll("button[data-plat]").forEach((button) => {
                 button.classList.toggle(
                     "active-selected",
-                    !!basePlatform &&
+                    !!selectedPlatform &&
                         String(button.getAttribute("data-plat")) ===
-                            String(basePlatform),
+                            String(selectedPlatform),
                 );
             });
         });
 
-        setStationRowsEnabled(preview.routeStations, preview.terminalName);
+        setStationRowsEnabled(
+            preview.routeStations,
+            preview.terminalName,
+            preview.directEdit ? "即時変更" : "変更対象",
+        );
     }
 
     function getSelectedPlatform(block) {
@@ -4736,10 +4805,69 @@ function openOperationAdjustment() {
         return false;
     }
 
-    trainNoInput.addEventListener("input", invalidatePreview);
-    typeSelect.addEventListener("change", invalidatePreview);
-    destSelect.addEventListener("change", invalidatePreview);
-    changeStationSelect.addEventListener("change", invalidatePreview);
+    function isTrainInfoUnchanged(input) {
+        return (
+            String(state.config.trainNo || "").trim() === input.trainNo &&
+            normalizeTypeName(state.config.type) === input.type &&
+            String(state.config.dest || "").trim() === input.dest
+        );
+    }
+
+    function prepareDirectOperationPreview() {
+        const input = readInput();
+        if (!isTrainInfoUnchanged(input)) {
+            invalidatePreview(
+                "列車番号・種別・行先を変更した場合は、変更駅を選択して「反映」を押してください。",
+            );
+            return false;
+        }
+
+        if (input.changeStation) {
+            invalidatePreview(
+                "変更駅で変更する場合は、「反映」を押して予約内容を確認してください。",
+            );
+            return false;
+        }
+
+        const preview = buildDirectOperationAdjustmentPreview(input);
+        if (preview.error) {
+            invalidatePreview(preview.error, "編集不可");
+            return false;
+        }
+
+        preview.baselineStops = { ...preview.stops };
+        preview.inputSignature = getInputSignature(preview.input);
+        preview.stateSignature = getOperationAdjustmentStateSignature();
+        previewState = preview;
+        applyPreviewToRows(preview);
+        setButton.textContent = "決定";
+        previewStatus.textContent =
+            "全駅の現在の停車駅・番線を直接変更できます。「決定」で直ちに反映します。";
+        return true;
+    }
+
+    function handleOperationInputChange() {
+        const input = readInput();
+        if (isTrainInfoUnchanged(input) && !input.changeStation) {
+            prepareDirectOperationPreview();
+            return;
+        }
+
+        if (input.changeStation) {
+            invalidatePreview(
+                "変更駅で変更する場合は、「反映」を押して予約内容を確認してください。",
+            );
+        } else {
+            invalidatePreview(
+                "列車番号・種別・行先を変更した場合は、変更駅を選択して「反映」を押してください。",
+            );
+        }
+    }
+
+    trainNoInput.addEventListener("input", handleOperationInputChange);
+    typeSelect.addEventListener("change", handleOperationInputChange);
+    destSelect.addEventListener("change", handleOperationInputChange);
+    changeStationSelect.addEventListener("change", handleOperationInputChange);
 
     searchButton.onclick = () => {
         const result = parseTrainNo(trainNoInput.value.trim());
@@ -4750,7 +4878,7 @@ function openOperationAdjustment() {
 
         typeSelect.value = normalizeTypeName(result.type);
         destSelect.value = result.dest;
-        invalidatePreview();
+        handleOperationInputChange();
 
         if (result.direction !== state.config.direction) {
             alert("検索した列車番号は、現在の案内方向と一致していません。");
@@ -4776,6 +4904,7 @@ function openOperationAdjustment() {
         preview.stateSignature = getOperationAdjustmentStateSignature();
         previewState = preview;
         applyPreviewToRows(preview);
+        setButton.textContent = "運転整理を設定";
         previewStatus.textContent =
             `${preview.input.changeStation}から${preview.input.dest}までの停車駅・番線を反映しました。`;
     };
@@ -4794,10 +4923,26 @@ function openOperationAdjustment() {
     setButton.onclick = () => {
         const currentInput = readInput();
         if (
+            !previewState &&
+            isTrainInfoUnchanged(currentInput) &&
+            !currentInput.changeStation
+        ) {
+            prepareDirectOperationPreview();
+        }
+        if (
             !previewState ||
             previewState.inputSignature !== getInputSignature(currentInput)
         ) {
-            alert("変更内容を確認するため、先に「反映」を押してください。");
+            if (
+                isTrainInfoUnchanged(currentInput) &&
+                !currentInput.changeStation
+            ) {
+                alert("停車駅・番線の編集内容を確認して、もう一度「決定」を押してください。");
+            } else if (!currentInput.changeStation) {
+                alert("列情を変更する場合は、変更駅を選択してください。");
+            } else {
+                alert("変更内容を確認するため、先に「反映」を押してください。");
+            }
             return;
         }
 
@@ -4805,11 +4950,30 @@ function openOperationAdjustment() {
             previewState.stateSignature !==
             getOperationAdjustmentStateSignature()
         ) {
+            const wasDirectEdit = !!previewState.directEdit;
             previewState = null;
-            disableStationRows(
-                "案内状態が更新されました。内容を確認して再度「反映」を押してください。",
-            );
-            alert("編集中に案内状態が更新されました。再度「反映」を押してください。");
+            if (wasDirectEdit) {
+                wrap.remove();
+                alert("編集中に案内状態が更新されたため、変更内容は反映せず編集画面を閉じました。運転整理を開き直してください。");
+            } else {
+                disableStationRows(
+                    "案内状態が更新されました。内容を確認して再度「反映」を押してください。",
+                );
+                alert("編集中に案内状態が更新されました。再度「反映」を押してください。");
+            }
+            return;
+        }
+
+        const editedPlan = collectEditedPlan(previewState);
+        if (previewState.directEdit) {
+            if (!applyDirectOperationAdjustment(editedPlan)) {
+                alert("停車駅・番線を反映できませんでした。");
+                return;
+            }
+
+            renderGuidance();
+            wrap.remove();
+            modal.classList.remove("active");
             return;
         }
 
@@ -4831,7 +4995,6 @@ function openOperationAdjustment() {
             return;
         }
 
-        const editedPlan = collectEditedPlan(previewState);
         if (!hasAdjustmentChanges(previewState, editedPlan)) {
             alert("列車情報、停車駅、番線に変更がありません。");
             return;
@@ -4885,7 +5048,7 @@ function openOperationAdjustment() {
 
     wrap.append(controls, box, actionRow);
     panel.appendChild(wrap);
-    disableStationRows();
+    prepareDirectOperationPreview();
 }
 
 // 音声方式変更
