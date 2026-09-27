@@ -81,6 +81,98 @@ input[type="text"], select, input[type="number"] {
   margin: 0 12px 12px;
 }
 
+/* =========================
+   案内開始前：未登録列番の基準番線設定
+========================= */
+.initial-platform-screen.active {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.initial-platform-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  gap: 8px;
+}
+
+.initial-platform-description {
+  color: #ddd;
+  line-height: 1.45;
+}
+
+.initial-platform-progress {
+  min-height: 1.4em;
+  color: #ffd43b;
+  font-weight: 700;
+}
+
+.initial-platform-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 4px 10px;
+}
+
+.initial-platform-row {
+  display: grid;
+  grid-template-columns: minmax(6.5em, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid #444;
+}
+
+.initial-platform-row:last-child {
+  border-bottom: 0;
+}
+
+.initial-platform-station-name {
+  font-weight: 700;
+}
+
+.initial-platform-choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px 12px;
+}
+
+.initial-platform-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 6px 2px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.initial-platform-choice input[type="radio"] {
+  width: 22px;
+  height: 22px;
+  accent-color: #2c7be5;
+}
+
+.initial-platform-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.initial-platform-actions .btn {
+  width: 100%;
+}
+
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -97,6 +189,38 @@ input[type="text"], select, input[type="number"] {
 
 .endchange-row {
   margin-top: 32px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+
+.endchange-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: #fff;
+}
+
+.endchange-option input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  accent-color: #2c7be5;
+}
+
+.endchange-option input[type="checkbox"]:disabled {
+  opacity: .7;
+}
+
+.tokorozawa-kotesashi-deadhead-summary {
+  margin: -4px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid #555;
+  border-radius: 8px;
+  background: #1a1a1a;
+  color: #ffd43b;
+  line-height: 1.45;
 }
 
 .screen.guidance.active {
@@ -194,11 +318,13 @@ input[type="text"], select, input[type="number"] {
   justify-content: center;
   padding: 0;    /* ★ 追加 */
   margin: 0;     /* ★ 追加 */
+  isolation: isolate;
 }
 
 /* 縦の線路（中央バンドいっぱいの高さ） */
 #screen-guidance .nav-track {
   position: relative;
+  z-index: 2;
   width: 18px;
   height: 100%;
 
@@ -221,7 +347,7 @@ input[type="text"], select, input[type="number"] {
 /* 赤い丸（列車位置）は中央バンドの中央を基準に */
 #screen-guidance .nav-train {
   position: absolute;
-  z-index: 2;
+  z-index: 4;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
@@ -739,6 +865,12 @@ input[type="text"], select, input[type="number"] {
    カーナビ（右側 BAND2）のスポット
 ========================= */
 
+.nav-spot-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 /* nav-track がまだ position: relative でなければ付けておく */
 .nav-track {
   position: relative;
@@ -748,7 +880,7 @@ input[type="text"], select, input[type="number"] {
   position: absolute;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 2;               /* 線路より上, 赤丸(nav-train)よりは下 */
+  z-index: 3;
   box-sizing: border-box;
 
   background: #ffeb3b;
@@ -781,15 +913,15 @@ input[type="text"], select, input[type="number"] {
 
 /* 駅は踏切より上に重ねて、駅名を優先して読めるようにする。 */
 .nav-spot--station {
-  z-index: 2;
+  z-index: 3;
 }
 
-/* 踏切は線路の白／黒の1区画と同じ14pxの太さで描く。 */
+/* 踏切は右側エリア全幅を使い、高さは線路の白／黒の1区画と同じ14pxにする。 */
 .nav-spot--crossing {
   z-index: 1;
-  width: 18px;
+  width: 100%;
   height: 14px;
-  min-width: 18px;
+  min-width: 100%;
   min-height: 14px;
   padding: 0;
   border: 0;
@@ -802,6 +934,7 @@ input[type="text"], select, input[type="number"] {
   cursor: pointer;
   pointer-events: auto;
   touch-action: manipulation;
+  overflow: visible;
 }
 
 /* iPadでタップしやすい当たり判定だけを上下へ広げ、見た目の太さは14pxに保つ。 */
@@ -816,24 +949,27 @@ input[type="text"], select, input[type="number"] {
   outline-offset: 2px;
 }
 
-/* 踏切の線をタップした時だけ、一時的に名称を横書きで表示する。 */
-.nav-spot-popup {
-  position: absolute;
-  left: calc(50% + 16px);
-  transform: translateY(-50%);
-  z-index: 3;
-  box-sizing: border-box;
-  padding: 4px 6px;
-  border: 1px solid #ffeb3b;
-  border-radius: 4px;
-  background: #111;
-  color: #ffeb3b;
-  font-size: clamp(0.8rem, 2vh, 1rem);
+/* 踏切名は、長い名称でも欠けない中央メッセージとして表示する。 */
+.nav-spot-message-modal {
+  z-index: 1100;
+}
+
+.nav-spot-message-panel {
+  width: min(520px, 92vw);
+  display: grid;
+  gap: 16px;
+}
+
+.nav-spot-message-text {
+  overflow-wrap: anywhere;
+  text-align: center;
+  font-size: clamp(1rem, 4vw, 1.35rem);
   font-weight: 700;
-  line-height: 1.2;
-  writing-mode: horizontal-tb;
-  white-space: nowrap;
-  pointer-events: none;
+  line-height: 1.45;
+}
+
+.nav-spot-message-close {
+  width: 100%;
 }
 
 /* =========================
@@ -922,5 +1058,131 @@ input[type="text"], select, input[type="number"] {
 
 /* それ以外のメニューボタンは各列いっぱいに広げる */
 #menuModal > .panel > .list > .btn {
+  width: 100%;
+}
+
+/* =========================
+   メニュー：運転整理
+========================= */
+.operation-adjustment-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.operation-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.operation-train-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.operation-train-row > div,
+.operation-select-grid > div {
+  min-width: 0;
+}
+
+.operation-train-row label,
+.operation-select-grid label,
+.operation-change-station-row label,
+.operation-station-label {
+  margin-bottom: 4px;
+}
+
+.operation-select-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operation-change-station-row {
+  min-width: 0;
+}
+
+.operation-reflect-button {
+  width: 100%;
+}
+
+.operation-preview-status {
+  min-height: 1.4em;
+  color: #ddd;
+}
+
+.operation-station-list {
+  max-height: 36vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+.operation-station-block {
+  padding: 6px 0;
+  border-bottom: 1px solid #444;
+}
+
+.operation-station-block:last-child {
+  border-bottom: 0;
+}
+
+.operation-station-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 4px;
+  row-gap: 4px;
+  margin-bottom: 0;
+}
+
+.operation-station-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 7.5em;
+  color: #fff;
+}
+
+.operation-platform-button {
+  min-height: 34px;
+  margin-left: 4px;
+  padding: 4px 8px;
+}
+
+.operation-station-scope {
+  display: block;
+  min-height: 1.2em;
+  margin-top: 2px;
+  text-align: right;
+}
+
+.operation-route-excluded {
+  opacity: .48;
+}
+
+.operation-station-block button:disabled,
+.operation-station-block input:disabled {
+  cursor: not-allowed;
+}
+
+.operation-action-row {
+  position: sticky;
+  bottom: -16px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 0 0;
+  background: #1a1a1a;
+}
+
+.operation-action-row .btn {
   width: 100%;
 }

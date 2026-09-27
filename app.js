@@ -279,6 +279,8 @@ const state = {
             cars: 10,
             trainNo: "",
             changeStation: "",   // ★ 追加：変更となる駅
+            source: "settings",
+            operationPlan: null,
         },
 
         // 音声方式
@@ -298,8 +300,6 @@ const state = {
         speedKmh: 0,
         passStations: new Set(),
         platformChanges: new Set(),
-        manualTrainNo: null,
-        manualTrainChangeAt: null,
         lastStopDistance: null,
         prevStationName: null,
         prevStationDistance: null,
@@ -326,6 +326,14 @@ const state = {
         //   GPS揺れで一度離れた駅の発車時刻に戻るのを防ぐ
         departureLeftStation: null,
         manualPlatforms: {},
+
+        // platform.json に現在列番の登録が1件もない場合、案内開始前に
+        // 利用者が選択した番線を、この運用中の「基準番線」として保持する。
+        // manualPlatforms（着発線変更）とは分離し、基準番線そのものは
+        // 着発線変更として案内しない。
+        initialPlatformPlan: null,
+        pendingGuidanceStartMode: null,
+
         startupMode: false,         // 起動モード中かどうか
         startupFixed: false,        // 起動モードで一度「現在駅」を確定したか
         startupCandidate: null,     // 起動判定中の候補駅名
@@ -343,8 +351,15 @@ const state = {
         midChangePending: false,          // まだこれから途中駅で列情変更を行う
         midChangeApplied: false,          // 途中駅列情変更を論理的に適用済み（以降は後の列車）
         midChangeArrivalHandled: false,   // 変更駅到着時のUI更新を済ませたか
-        midChangeConfirmTimer: null,      // 15秒後の「列情確認」タイマー
+        midChangeConfirmTimer: null,      // 20秒後の「列情確認」タイマー
         midChangeTriggerStation: null,    // ★ どの駅の190m通過で列情を切り替えるか
+        midChangeAppliedReason: null,     // 予約／200m補完／途中起動のどれで適用したか
+        midChangeRouteLastWarningAt: 0,   // 後半経路の再計算失敗警告を間引く
+
+        // 案内中に設定した「運転整理」の停車比較基準。
+        // 変更前予定と変更後実績の差を、臨時停車／臨時通過として案内する。
+        operationBaselineStops: null,
+        operationChangeActive: false,
 
         undergroundMode: false,               // 地下モード中かどうか
         undergroundLastToStationName: null,   // trains API の最新 toStationName
@@ -2570,6 +2585,71 @@ function restoreTrainScopedManualSettingsIfSameTrainNo() {
     return true;
 }
 
+const TOKOROZAWA_KOTESASHI_DEADHEAD_SOURCE =
+    "tokorozawa-kotesashi-deadhead";
+const TOKOROZAWA_KOTESASHI_DEADHEAD_STOPS = Object.freeze([
+    "所沢",
+    "小手指",
+]);
+
+function buildTokorozawaKotesashiDeadheadPreset(input) {
+    const trainNo = String(input && input.trainNo || "").trim();
+    const direction = String(input && input.direction || "").trim();
+    const requestedType = normalizeTypeName(input && input.type || "");
+    const requestedDestination = String(input && input.dest || "").trim();
+    const cars = input && input.cars;
+
+    if (!trainNo || !requestedType || !requestedDestination || !cars) {
+        return null;
+    }
+
+    const requestedTrain = {
+        trainNo,
+        type: requestedType,
+        dest: requestedDestination,
+        cars,
+    };
+    const deadheadTrain = {
+        trainNo,
+        type: "回送",
+        cars,
+    };
+
+    if (direction === "下り") {
+        return {
+            first: requestedTrain,
+            second: {
+                ...deadheadTrain,
+                dest: "小手指",
+                changeStation: "所沢",
+                source: TOKOROZAWA_KOTESASHI_DEADHEAD_SOURCE,
+                operationPlan: null,
+            },
+            presetExtraStopsMode: "second",
+            presetExtraStops: [...TOKOROZAWA_KOTESASHI_DEADHEAD_STOPS],
+        };
+    }
+
+    if (direction === "上り") {
+        return {
+            first: {
+                ...deadheadTrain,
+                dest: "所沢",
+            },
+            second: {
+                ...requestedTrain,
+                changeStation: "所沢",
+                source: TOKOROZAWA_KOTESASHI_DEADHEAD_SOURCE,
+                operationPlan: null,
+            },
+            presetExtraStopsMode: "first",
+            presetExtraStops: [...TOKOROZAWA_KOTESASHI_DEADHEAD_STOPS],
+        };
+    }
+
+    return null;
+}
+
 // ==== Screens ====
 function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
@@ -2612,6 +2692,7 @@ function screenSettings() {
 					b.classList.remove("active-selected"),
 				);
 				btn.classList.add("active-selected");
+				updateTokorozawaKotesashiDeadheadSummary();
 			};
 			return btn;
 		})(),
@@ -2631,6 +2712,7 @@ function screenSettings() {
 					b.classList.remove("active-selected"),
 				);
 				btn.classList.add("active-selected");
+				updateTokorozawaKotesashiDeadheadSummary();
 			};
 			return btn;
 		})(),
@@ -2664,6 +2746,7 @@ function screenSettings() {
 		if (!changeStationSel.value || changeStationSel.value === state.config.dest) {
 			changeStationSel.value = destSel.value || "";
 		}
+		updateTokorozawaKotesashiDeadheadSummary();
 	};
 
     // ---- 運転日区分（平日 / 土休日） ----
@@ -2736,7 +2819,43 @@ function screenSettings() {
 
 	// ---- 途中駅で列情変更 ON/OFF ----
 	const endChange = el("input", { type: "checkbox", id: "endChange" });
+	const tokorozawaKotesashiDeadhead = el("input", {
+		type: "checkbox",
+		id: "tokorozawaKotesashiDeadhead",
+	});
 	const secondWrap = el("div", { id: "secondConfig", style: "display:none;" });
+	const deadheadSummary = el("div", {
+		class: "small tokorozawa-kotesashi-deadhead-summary",
+		style: "display:none;",
+	});
+	let endChangeCheckedBeforeDeadheadPreset = false;
+
+	function updateTokorozawaKotesashiDeadheadSummary() {
+		if (!tokorozawaKotesashiDeadhead.checked) {
+			deadheadSummary.style.display = "none";
+			deadheadSummary.textContent = "";
+			return;
+		}
+
+		const no = trainNo.value.trim() || "----";
+		if (selectedDir === "下り") {
+			deadheadSummary.textContent =
+				`所沢から：${no} 回送 小手指ゆき` +
+				"（所沢・小手指停車）";
+		} else if (selectedDir === "上り") {
+			const requestedType = typeSel.value || "種別未選択";
+			const requestedDestination = destSel.value || "行先未選択";
+			deadheadSummary.textContent =
+				`小手指～所沢：${no} 回送 所沢ゆき` +
+				`（所沢・小手指停車）／所沢から：${no} ` +
+				`${requestedType} ${requestedDestination}ゆき`;
+		} else {
+			deadheadSummary.textContent =
+				"上り／下りを選択すると、所沢・小手指回送の設定内容を表示します。";
+		}
+
+		deadheadSummary.style.display = "block";
+	}
 
 	endChange.onchange = () => {
 		secondWrap.style.display = endChange.checked ? "block" : "none";
@@ -2747,6 +2866,24 @@ function screenSettings() {
 			}
 		}
 	};
+
+	tokorozawaKotesashiDeadhead.onchange = () => {
+		if (tokorozawaKotesashiDeadhead.checked) {
+			endChangeCheckedBeforeDeadheadPreset = endChange.checked;
+			endChange.checked = true;
+			endChange.disabled = true;
+			secondWrap.style.display = "none";
+		} else {
+			endChange.disabled = false;
+			endChange.checked = endChangeCheckedBeforeDeadheadPreset;
+			secondWrap.style.display = endChange.checked ? "block" : "none";
+		}
+
+		updateTokorozawaKotesashiDeadheadSummary();
+	};
+
+	trainNo.addEventListener("input", updateTokorozawaKotesashiDeadheadSummary);
+	typeSel.addEventListener("change", updateTokorozawaKotesashiDeadheadSummary);
 
 	// ---- 後半：列番・種別・行先（両数は固定で表示のみ） ----
 	const trainNo2 = el("input", { type: "text" });
@@ -2825,6 +2962,7 @@ function screenSettings() {
 				);
 				if (target) target.classList.add("active-selected");
 			}
+			updateTokorozawaKotesashiDeadheadSummary();
 		} else {
 			alert("列番表に該当がありません。手動で選択してください。");
 		}
@@ -2875,6 +3013,7 @@ function screenSettings() {
 
         const target = dirButtons.querySelector(`button[data-dir="${dir}"]`);
         if (target) target.classList.add("active-selected");
+        updateTokorozawaKotesashiDeadheadSummary();
     }
 
     function setSelectValueIfExists(selectEl, value) {
@@ -3030,8 +3169,35 @@ function screenSettings() {
             return;
         }
 
+        const useTokorozawaKotesashiDeadhead =
+            tokorozawaKotesashiDeadhead.checked;
+        const deadheadPreset = useTokorozawaKotesashiDeadhead
+            ? buildTokorozawaKotesashiDeadheadPreset({
+                trainNo: trainNo.value.trim(),
+                direction: selectedDir,
+                type: typeSel.value,
+                dest: destSel.value,
+                cars: selectedCars,
+            })
+            : null;
+
+        if (useTokorozawaKotesashiDeadhead && !deadheadPreset) {
+            alert("所-指回送の列車情報を作成できませんでした。");
+            return;
+        }
+
+        if (
+            useTokorozawaKotesashiDeadhead &&
+            (!(state.datasets.types || []).includes("回送") ||
+                !(state.datasets.dests || []).includes("所沢") ||
+                !(state.datasets.dests || []).includes("小手指"))
+        ) {
+            alert("所-指回送に必要な「回送」「所沢」「小手指」のデータがありません。");
+            return;
+        }
+
         // --- ★ 途中駅で列情変更用のチェック ---
-        if (endChange.checked) {
+        if (endChange.checked && !useTokorozawaKotesashiDeadhead) {
             if (!trainNo2.value.trim()) {
                 alert("変更後の列車番号を入力してください。");
                 return;
@@ -3064,39 +3230,87 @@ function screenSettings() {
 
         // --- ★ 必須チェックここまで ---
 
+        const firstTrain = deadheadPreset
+            ? deadheadPreset.first
+            : {
+                trainNo: trainNo.value.trim(),
+                type: normalizeTypeName(typeSel.value),
+                dest: destSel.value,
+                cars: selectedCars,
+            };
+
         // 前半設定
-        state.config.trainNo   = trainNo.value.trim();
+        state.config.trainNo   = firstTrain.trainNo;
         state.config.direction = selectedDir;
-        state.config.type      = typeSel.value;
-        state.config.dest      = destSel.value;
-        state.config.cars      = selectedCars;
+        state.config.type      = firstTrain.type;
+        state.config.dest      = firstTrain.dest;
+        state.config.cars      = firstTrain.cars;
         state.config.dayType   = dayTypeSel.value || "平日";
-        state.config.type      = normalizeTypeName(typeSel.value);        
+        state.config.type      = normalizeTypeName(firstTrain.type);
+
+        // 新しい設定操作では、前回まだ開始していない番線入力を持ち越さない。
+        clearInitialPlatformPlan();
 
         // 途中駅で列情変更
-        state.config.endChange = endChange.checked;
-        if (endChange.checked) {
-            state.config.second.trainNo       = trainNo2.value.trim();
-            state.config.second.type          = typeSel2.value;
-            state.config.second.dest          = destSel2.value;
-            state.config.second.cars          = state.config.cars;
-            state.config.second.changeStation = changeStationSel.value;
+        state.config.endChange = !!(
+            deadheadPreset || endChange.checked
+        );
+        if (state.config.endChange) {
+            const secondTrain = deadheadPreset
+                ? deadheadPreset.second
+                : {
+                    trainNo: trainNo2.value.trim(),
+                    type: typeSel2.value,
+                    dest: destSel2.value,
+                    cars: state.config.cars,
+                    changeStation: changeStationSel.value,
+                    source: "settings",
+                    operationPlan: null,
+                };
+
+            state.config.second.trainNo       = secondTrain.trainNo;
+            state.config.second.type          = normalizeTypeName(secondTrain.type);
+            state.config.second.dest          = secondTrain.dest;
+            state.config.second.cars          = secondTrain.cars;
+            state.config.second.changeStation = secondTrain.changeStation;
+            state.config.second.source        = secondTrain.source;
+            state.config.second.operationPlan = secondTrain.operationPlan;
 
             // ★ runtime 初期化
             state.runtime.midChangePending        = true;
             state.runtime.midChangeApplied        = false;
             state.runtime.midChangeArrivalHandled = false;
+            state.runtime.midChangeTriggerStation = null;
+            state.runtime.midChangeAppliedReason = null;
+            state.runtime.midChangeRouteLastWarningAt = 0;
             if (state.runtime.midChangeConfirmTimer) {
                 clearTimeout(state.runtime.midChangeConfirmTimer);
                 state.runtime.midChangeConfirmTimer = null;
             }
         } else {
+            state.config.second.source        = "settings";
+            state.config.second.operationPlan = null;
             state.runtime.midChangePending        = false;
             state.runtime.midChangeApplied        = false;
             state.runtime.midChangeArrivalHandled = false;
+            state.runtime.midChangeTriggerStation = null;
+            state.runtime.midChangeAppliedReason = null;
+            state.runtime.midChangeRouteLastWarningAt = 0;
             if (state.runtime.midChangeConfirmTimer) {
                 clearTimeout(state.runtime.midChangeConfirmTimer);
                 state.runtime.midChangeConfirmTimer = null;
+            }
+        }
+
+        if (deadheadPreset) {
+            const presetStops = new Set(deadheadPreset.presetExtraStops);
+
+            if (deadheadPreset.presetExtraStopsMode === "first") {
+                state.runtime.nonPassengerExtraStops = presetStops;
+                state.runtime.nonPassengerExtraStopsSecond = new Set();
+            } else {
+                state.runtime.nonPassengerExtraStops = new Set();
+                state.runtime.nonPassengerExtraStopsSecond = presetStops;
             }
         }
 
@@ -3107,8 +3321,18 @@ function screenSettings() {
 
         // 追加停車駅設定キューを構築
         state.runtime.extraStopsQueue = [];
-        if (nonPassengerFirst)  state.runtime.extraStopsQueue.push("first");
-        if (nonPassengerSecond) state.runtime.extraStopsQueue.push("second");
+        if (
+            nonPassengerFirst &&
+            (!deadheadPreset || deadheadPreset.presetExtraStopsMode !== "first")
+        ) {
+            state.runtime.extraStopsQueue.push("first");
+        }
+        if (
+            nonPassengerSecond &&
+            (!deadheadPreset || deadheadPreset.presetExtraStopsMode !== "second")
+        ) {
+            state.runtime.extraStopsQueue.push("second");
+        }
 
         // 設定画面を一旦閉じる
         document
@@ -3124,7 +3348,7 @@ function screenSettings() {
                 .getElementById("screen-extra-stops")
                 .classList.add("active");
         } else {
-            // 回送・試運転・臨時が一切ない場合 → そのまま開始画面へ
+            // 追加停車駅の個別設定が不要な場合 → そのまま開始画面へ
             startGpsWatch();
             document
                 .getElementById("screen-start")
@@ -3164,15 +3388,133 @@ function screenSettings() {
         ]),
         // ★ ここまで追加
         el("div", { class: "row endchange-row" }, [
-            endChange,
-            el("span", {}, " 途中駅で列情変更"),
+            el("label", { class: "endchange-option" }, [
+                endChange,
+                el("span", {}, "途中駅で列情変更"),
+            ]),
+            el("label", { class: "endchange-option" }, [
+                tokorozawaKotesashiDeadhead,
+                el("span", {}, "所-指回送"),
+            ]),
         ]),
+        deadheadSummary,
         secondWrap,
         execBtn,
     );
 
     root.append(c, refModal);
     return root;
+}
+
+function getInitialPlatformSetupStations() {
+    const dayData = getPlatformDayData();
+    if (!dayData) return [];
+
+    const result = [];
+    const seen = new Set();
+
+    const add = (stationName) => {
+        const name = String(stationName || "").trim();
+        if (!name || seen.has(name) || !dayData[name]) return;
+
+        const platformNumbers = Object.keys(dayData[name]).sort(
+            (a, b) => parseInt(a, 10) - parseInt(b, 10),
+        );
+        if (!platformNumbers.length) return;
+
+        seen.add(name);
+        result.push({ stationName: name, platformNumbers });
+    };
+
+    // 運転整理と同じ物理線区順を優先し、データ側だけにある駅も末尾へ残す。
+    getOperationStationNames().forEach(add);
+    Object.keys(dayData).forEach(add);
+
+    return result;
+}
+
+function beginGuidanceFromStartScreen(startMode) {
+    if (!isVoiceCacheReady()) {
+        updateVoiceCacheStartControls();
+        return false;
+    }
+
+    const guideRouteError = getGuideRouteValidationError();
+    if (guideRouteError) {
+        alert(guideRouteError);
+        return false;
+    }
+
+    // iPadのユーザー操作中に音声セッションを初期化・再許可する。
+    configureVoiceAudioSession();
+    getRecordedVoiceAudio();
+    void rearmVoiceFromUserGesture();
+
+    // ダイヤ上の基本停車駅から通過駅リストを構築する。
+    // 上り所-指回送は、前半の停車駅を所沢・小手指の2駅へ固定するため、
+    // 同一列番の旧手動停車設定では上書きしない。
+    const isUpDeadheadPreset =
+        state.config.direction === "上り" &&
+        state.config.second &&
+        state.config.second.source === TOKOROZAWA_KOTESASHI_DEADHEAD_SOURCE;
+    buildPassStationList({
+        restoreTrainScopedManualSettings: !isUpDeadheadPreset,
+    });
+    state.runtime.muteUntil = Date.now() + 10000;
+
+    if (startMode === "underground") {
+        enterUndergroundMode("downButton");
+    }
+
+    document.getElementById("screen-start").classList.remove("active");
+    document
+        .getElementById("screen-initial-platforms")
+        .classList.remove("active");
+    document.getElementById("screen-guidance").classList.add("active");
+
+    const started = startGuidance();
+    if (!started) {
+        document.getElementById("screen-guidance").classList.remove("active");
+        document.getElementById("screen-start").classList.add("active");
+    }
+
+    return started;
+}
+
+function requestGuidanceStart(startMode) {
+    if (!isVoiceCacheReady()) {
+        updateVoiceCacheStartControls();
+        return false;
+    }
+
+    const guideRouteError = getGuideRouteValidationError();
+    if (guideRouteError) {
+        alert(guideRouteError);
+        return false;
+    }
+
+    // 前回の未開始編集や別列番の基準番線を、この開始操作へ持ち越さない。
+    clearInitialPlatformPlan();
+
+    if (needsInitialPlatformSetup(state.config.trainNo)) {
+        const stations = getInitialPlatformSetupStations();
+        if (!stations.length) {
+            alert("選択可能な番線データがありません。platform.json を確認してください。");
+            return false;
+        }
+
+        state.runtime.pendingGuidanceStartMode =
+            startMode === "underground" ? "underground" : "normal";
+        renderInitialPlatformSetupScreen(stations);
+
+        document.getElementById("screen-start").classList.remove("active");
+        document
+            .getElementById("screen-initial-platforms")
+            .classList.add("active");
+        return true;
+    }
+
+    return beginGuidanceFromStartScreen(startMode);
 }
 
 function screenStart() {
@@ -3255,64 +3597,15 @@ function screenStart() {
         }
 
         if (e.target.id === "btn-begin") {
-            if (!isVoiceCacheReady()) {
-                updateVoiceCacheStartControls();
-                return;
-            }
-
-            const guideRouteError = getGuideRouteValidationError();
-            if (guideRouteError) {
-                alert(guideRouteError);
-                return;
-            }
-
-            // ★ iPadのユーザー操作中に音声セッションを初期化・再許可する
-            configureVoiceAudioSession();
-            getRecordedVoiceAudio();
-            void rearmVoiceFromUserGesture();
-
-            // ダイヤ上の基本停車駅から通過駅リストを構築
-            buildPassStationList();
-
-            // ★ 案内開始から10秒間は他の案内をミュート
-            state.runtime.muteUntil = Date.now() + 10000;
-
-            document.getElementById("screen-start").classList.remove("active");
-            document.getElementById("screen-guidance").classList.add("active");
-            startGuidance();
+            requestGuidanceStart("normal");
 
         } else if (e.target.id === "btn-cancel") {
+            clearInitialPlatformPlan();
             document.getElementById("screen-start").classList.remove("active");
             document.getElementById("screen-settings").classList.add("active");
 
         } else if (e.target.id === "btn-underground-start") {
-            if (!isVoiceCacheReady()) {
-                updateVoiceCacheStartControls();
-                return;
-            }
-
-            const guideRouteError = getGuideRouteValidationError();
-            if (guideRouteError) {
-                alert(guideRouteError);
-                return;
-            }
-
-            // ★ iPadのユーザー操作中に音声セッションを初期化・再許可する
-            configureVoiceAudioSession();
-            getRecordedVoiceAudio();
-            void rearmVoiceFromUserGesture();
-
-            // ★ 地下起動ボタン：有楽町線地下モードで案内開始（下り列車想定）
-            buildPassStationList();
-
-            state.runtime.muteUntil = Date.now() + 10000;
-
-            // 地下モード開始（下り用）
-            enterUndergroundMode("downButton");
-
-            document.getElementById("screen-start").classList.remove("active");
-            document.getElementById("screen-guidance").classList.add("active");
-            startGuidance();
+            requestGuidanceStart("underground");
         }
     };
 
@@ -3504,10 +3797,7 @@ function screenGuidance() {
             el("h3", {}, "メニュー"),
             el("div", { class: "list" }, [
                 el("button", { class: "btn secondary", id: "m-end" }, "案内終了"),
-                el("button", { class: "btn secondary", id: "m-stop" }, "臨時停車・通過"),
-                el("button", { class: "btn secondary", id: "m-dest" }, "行先変更"),
-                el("button", { class: "btn secondary", id: "m-type" }, "種別変更"),
-                el("button", { class: "btn secondary", id: "m-train" }, "列番変更"),
+                el("button", { class: "btn secondary", id: "m-operation" }, "運転整理"),
                 el("button", { class: "btn secondary", id: "m-volume" }, "音量設定・テスト"),
                 el("button", { class: "btn secondary", id: "m-voice" }, "音声変更"),
                 el("button", { class: "btn secondary", id: "m-reset" }, "地点リセット"),
@@ -3518,6 +3808,31 @@ function screenGuidance() {
         ]),
     ]);
     root.appendChild(modal);
+
+    // 踏切名表示。開始画面の警告と同様に画面中央へ出し、
+    // 「閉じる」またはメッセージ画面外のタップで閉じられるようにする。
+    const navSpotMessageModal = el(
+        "div",
+        {
+            class: "modal nav-spot-message-modal",
+            id: "navSpotMessageModal",
+            role: "alertdialog",
+            "aria-modal": "true",
+            "aria-hidden": "true",
+            "aria-labelledby": "navSpotMessageText",
+        },
+        [
+            el("div", { class: "panel nav-spot-message-panel" }, [
+                el("div", { class: "nav-spot-message-text", id: "navSpotMessageText" }, ""),
+                el(
+                    "button",
+                    { class: "btn secondary nav-spot-message-close", id: "navSpotMessageClose", type: "button" },
+                    "閉じる",
+                ),
+            ]),
+        ],
+    );
+    root.appendChild(navSpotMessageModal);
 
     const panel = modal.querySelector(".panel");
 
@@ -3544,6 +3859,20 @@ function screenGuidance() {
     root._sideSpace    = sideSpace;                 // 右側エリア
     root._navTrack     = navWrapper.querySelector(".nav-track");
     root._navTrain     = navWrapper.querySelector(".nav-train");
+    root._navSpotMessageModal = navSpotMessageModal;
+    root._navSpotMessageText = navSpotMessageModal.querySelector("#navSpotMessageText");
+    root._navSpotMessageClose = navSpotMessageModal.querySelector("#navSpotMessageClose");
+
+    const closeNavSpotMessage = () => {
+        navSpotMessageModal.classList.remove("active");
+        navSpotMessageModal.setAttribute("aria-hidden", "true");
+    };
+    root._navSpotMessageClose.onclick = closeNavSpotMessage;
+    navSpotMessageModal.onclick = (e) => {
+        if (e.target === navSpotMessageModal) {
+            closeNavSpotMessage();
+        }
+    };
 
     // --- メニュー開閉 ---
     band5.querySelector("#btnMenu").onclick = () => {
@@ -3565,18 +3894,7 @@ function screenGuidance() {
         document.getElementById("screen-settings").classList.add("active");
     };
 
-    modal.querySelector("#m-dest").onclick = () =>
-        openList("行先変更", state.datasets.dests, (v) => {
-            state.config.dest = v;
-        });
-
-    modal.querySelector("#m-type").onclick = () =>
-        openList("種別変更", state.datasets.types, (v) => {
-            state.config.type = normalizeTypeName(v);
-        });
-
-    modal.querySelector("#m-stop").onclick = () => openStopList();
-    modal.querySelector("#m-train").onclick = () => openTrainChange();
+    modal.querySelector("#m-operation").onclick = () => openOperationAdjustment();
     modal.querySelector("#m-volume").onclick = () => openVolumePanel();
     modal.querySelector("#m-voice").onclick = () => openVoiceModePanel();
     modal.querySelector("#m-info").onclick = () => openOperationInfo();
@@ -3675,6 +3993,20 @@ function setGpsStatus(text) {
 
     const displayText = text || "";
 
+    // 案内開始直後など、現在の案内区間をまだ確定できていない間は、
+    // GPS の更新時刻にかかわらず赤い「×」で未判定を明示する。
+    const activeSegmentId = rt.undergroundMode
+        ? GUIDE_UNDERGROUND_SEGMENT_ID
+        : rt.activeGuideSegmentId;
+    if (rt.started && !getGuideSegment(activeSegmentId)) {
+        stopGpsBlink();
+        setGpsIndicatorColor("red");
+        if (s && s._gpsStatus) {
+            s._gpsStatus.textContent = displayText || "GPS";
+        }
+        return;
+    }
+
     // ===== 地下モード中：黄色固定 =====
     if (rt.undergroundMode) {
         stopGpsBlink();
@@ -3706,68 +4038,341 @@ function setGpsStatus(text) {
         s._gpsStatus.textContent = displayText || "GPS";
     }
 }
+// ==== 運転整理（列番・種別・行先・停車通過・着発線の途中変更） ====
 
+function getOperationStationNames() {
+    const stations = state.datasets.stations || {};
+    const names = [];
+    const seen = new Set();
 
+    const add = (stationName) => {
+        const name = String(stationName || "").trim();
+        if (!name || seen.has(name) || !stations[name]) return;
+        seen.add(name);
+        names.push(name);
+    };
 
+    [
+        MAIN_LINE_ORDER,
+        YURAKU_LINE_ORDER,
+        TOSHIMA_LINE_ORDER,
+        SAYAMA_LINE_ORDER,
+    ].forEach((line) => line.forEach(add));
+    Object.keys(stations).forEach(add);
 
-
-// 汎用リスト（行先変更・種別変更）
-function openList(title, list, onPick) {
-	const modal = document.getElementById("menuModal");
-	const panel = modal.querySelector(".panel");
-
-	// サブ画面種別
-	let kind = "list";
-	if (title.includes("行先")) kind = "dest";
-	else if (title.includes("種別")) kind = "type";
-
-	// 既に同じ kind が開いていたらトグルで閉じる
-	const existing = panel.querySelector(
-		`.menu-subpanel[data-kind="${kind}"]`,
-	);
-	if (existing) {
-		existing.remove();
-		return;
-	}
-
-	// 他のサブ画面は閉じる
-	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
-
-	const wrap = el(
-		"div",
-		{ class: "menu-subpanel", "data-kind": kind },
-		[
-			el("hr", { class: "sep" }),
-			el("h3", {}, title),
-			el(
-				"div",
-				{ class: "list" },
-				list.map((v) => {
-					const b = el("button", { class: "btn secondary" }, v);
-					b.onclick = () => {
-						onPick(v);
-						modal.classList.remove("active");
-					};
-					return b;
-				}),
-			),
-		],
-	);
-
-	panel.appendChild(wrap);
+    return names;
 }
 
-// 臨時停車・通過 ＋ 着発線変更（UI: A-1）
-function openStopList() {
+function getStopForTypeWithExtras(stationName, type, extraStops) {
+    let shouldStop = baseIsStopRawForType(stationName, type);
+
+    if (
+        isNonPassenger(type) &&
+        extraStops instanceof Set &&
+        extraStops.has(stationName)
+    ) {
+        shouldStop = true;
+    }
+
+    return shouldStop;
+}
+
+function createStopPlanFromPassStations(passStations) {
+    const passSet = passStations instanceof Set
+        ? passStations
+        : new Set(passStations || []);
+    const result = {};
+
+    getOperationStationNames().forEach((stationName) => {
+        result[stationName] = !passSet.has(stationName);
+    });
+
+    return result;
+}
+
+// 現在予約中の途中駅列情変更も含め、各駅で現在「予定されている」停車状態を作る。
+// 新しい運転整理を確定するまでは既存予約を変更しない。
+function buildProjectedOperationBaseline() {
+    const rt = state.runtime;
+    const cfg2 = state.config.second || {};
+    const actualStops = createStopPlanFromPassStations(rt.passStations);
+    const currentRouteStations = getGuidePlanStationOrder();
+    const names = getOperationStationNames();
+    const stops = {};
+    const hasPendingChange = !!(
+        state.config.endChange &&
+        rt.midChangePending &&
+        !rt.midChangeApplied &&
+        String(cfg2.trainNo || "").trim() &&
+        String(cfg2.changeStation || "").trim()
+    );
+
+    // 現在の予定経路に含まれない駅は「停車予定なし」として比較する。
+    // GPS取得前などで経路がまだ無い場合だけ、現行の停車状態を仮表示する。
+    names.forEach((stationName) => {
+        stops[stationName] = currentRouteStations.length
+            ? false
+            : !!actualStops[stationName];
+    });
+
+    let currentRouteLimit = currentRouteStations.length;
+    if (hasPendingChange) {
+        const pendingChangeIndex = currentRouteStations.indexOf(
+            String(cfg2.changeStation || "").trim(),
+        );
+        if (currentRouteStations.length && pendingChangeIndex === -1) {
+            return {
+                stops,
+                error: "既存の途中駅列情変更駅が現在の案内経路上にありません。",
+            };
+        }
+        if (pendingChangeIndex >= 0) {
+            // 変更駅そのものは、既存予約の変更後計画で上書きする。
+            currentRouteLimit = pendingChangeIndex;
+        }
+    }
+
+    currentRouteStations
+        .slice(0, currentRouteLimit)
+        .forEach((stationName) => {
+            if (Object.prototype.hasOwnProperty.call(stops, stationName)) {
+                stops[stationName] = !!actualStops[stationName];
+            }
+        });
+
+    if (!hasPendingChange) {
+        return { stops, error: null };
+    }
+
+    const operationPlan = cfg2.operationPlan || null;
+    if (cfg2.source === "operation-control" && operationPlan) {
+        const routeStations = Array.isArray(operationPlan.routeStations)
+            ? operationPlan.routeStations
+            : [];
+        const passStations = Array.isArray(operationPlan.passStations)
+            ? new Set(operationPlan.passStations)
+            : null;
+
+        if (!routeStations.length || !passStations) {
+            return {
+                stops,
+                error: "既存の運転整理の停車計画を読み取れません。",
+            };
+        }
+
+        routeStations.forEach((stationName) => {
+            if (Object.prototype.hasOwnProperty.call(stops, stationName)) {
+                stops[stationName] = !passStations.has(stationName);
+            }
+        });
+
+        return { stops, error: null };
+    }
+
+    const secondGuide = getMidChangeSecondGuideContext();
+    if (!secondGuide) {
+        return {
+            stops,
+            error: "既存の途中駅列情変更後の案内経路を確認できません。",
+        };
+    }
+
+    const manualOverrides = captureManualStopOverrides();
+    const extraStops = new Set(rt.nonPassengerExtraStopsSecond || []);
+    const routeStations = secondGuide.stationOrder.slice(
+        secondGuide.changeStationIndex,
+    );
+
+    routeStations.forEach((stationName) => {
+        if (!Object.prototype.hasOwnProperty.call(stops, stationName)) return;
+
+        let shouldStop = getStopForTypeWithExtras(
+            stationName,
+            cfg2.type,
+            extraStops,
+        );
+
+        if (manualOverrides.has(stationName)) {
+            shouldStop = manualOverrides.get(stationName);
+        }
+
+        stops[stationName] = shouldStop;
+    });
+
+    return { stops, error: null };
+}
+
+function getOperationAdjustmentStateSignature() {
+    const rt = state.runtime;
+    const cfg2 = state.config.second || {};
+    const manualPlatforms = rt.manualPlatforms || {};
+
+    return JSON.stringify({
+        current: {
+            trainNo: String(state.config.trainNo || ""),
+            type: String(state.config.type || ""),
+            dest: String(state.config.dest || ""),
+            cars: state.config.cars,
+            direction: state.config.direction,
+            endChange: !!state.config.endChange,
+        },
+        second: {
+            trainNo: String(cfg2.trainNo || ""),
+            type: String(cfg2.type || ""),
+            dest: String(cfg2.dest || ""),
+            cars: cfg2.cars,
+            changeStation: String(cfg2.changeStation || ""),
+            source: String(cfg2.source || ""),
+            operationPlan: cfg2.operationPlan || null,
+        },
+        runtime: {
+            midChangePending: !!rt.midChangePending,
+            midChangeApplied: !!rt.midChangeApplied,
+            passStations: Array.from(rt.passStations || []).sort(),
+            manualPlatforms: Object.keys(manualPlatforms)
+                .sort()
+                .map((stationName) => [stationName, manualPlatforms[stationName]]),
+            initialPlatformPlan: rt.initialPlatformPlan || null,
+            nonPassengerExtraStops: Array.from(
+                rt.nonPassengerExtraStops || [],
+            ).sort(),
+            nonPassengerExtraStopsSecond: Array.from(
+                rt.nonPassengerExtraStopsSecond || [],
+            ).sort(),
+        },
+    });
+}
+
+function validateOperationAdjustmentInput(input) {
+    const trainNo = String(input && input.trainNo || "").trim();
+    const type = normalizeTypeName(input && input.type || "");
+    const dest = String(input && input.dest || "").trim();
+    const changeStation = String(input && input.changeStation || "").trim();
+
+    if (!trainNo) {
+        return { error: "変更後の列車番号を入力してください。" };
+    }
+    if (!type) {
+        return { error: "変更後の種別を選択してください。" };
+    }
+    if (!dest) {
+        return { error: "変更後の行先を選択してください。" };
+    }
+    if (!changeStation) {
+        return { error: "変更駅を選択してください。" };
+    }
+
+    const currentTrainNo = parseInt(String(state.config.trainNo || ""), 10);
+    const nextTrainNo = parseInt(trainNo, 10);
+    if (Number.isNaN(currentTrainNo) || Number.isNaN(nextTrainNo)) {
+        return { error: "列車番号が正しくありません。" };
+    }
+    if (
+        (currentTrainNo % 2 + 2) % 2 !==
+        (nextTrainNo % 2 + 2) % 2
+    ) {
+        return {
+            error: "変更前と変更後の列車番号は、同じ方向（偶数/奇数）にしてください。",
+        };
+    }
+
+    if (!(state.datasets.types || []).includes(type)) {
+        return { error: `種別「${type}」は登録されていません。` };
+    }
+    if (!(state.datasets.dests || []).includes(dest)) {
+        return { error: `行先「${dest}」は登録されていません。` };
+    }
+
+    const currentOrder = getGuidePlanStationOrder();
+    if (!currentOrder.length) {
+        return {
+            error: "現在の案内経路が未確定です。GPSで区間が確定してから設定してください。",
+        };
+    }
+
+    const changeStationIndex = currentOrder.indexOf(changeStation);
+    if (changeStationIndex === -1) {
+        return {
+            error: `変更駅「${changeStation}」は現在の案内経路上にありません。`,
+        };
+    }
+
+    const currentStationIndex = currentOrder.indexOf(
+        String(state.runtime.prevStationName || ""),
+    );
+    if (
+        currentStationIndex !== -1 &&
+        changeStationIndex < currentStationIndex
+    ) {
+        return {
+            error: `変更駅「${changeStation}」はすでに通過した可能性があるため設定できません。`,
+        };
+    }
+
+    const plan = buildGuidePlanFromStation(
+        changeStation,
+        dest,
+        state.config.direction,
+    );
+    if (!plan) {
+        return {
+            error: `変更駅「${changeStation}」から行先「${dest}」までの案内経路を作成できません。`,
+        };
+    }
+
+    const fullRouteStations = getGuideStationOrderForPlan(
+        plan,
+        state.config.direction,
+    );
+    const routeStartIndex = fullRouteStations.indexOf(changeStation);
+    if (routeStartIndex === -1) {
+        return {
+            error: `変更駅「${changeStation}」を変更後の案内経路に含められません。`,
+        };
+    }
+
+    return {
+        error: null,
+        input: { trainNo, type, dest, changeStation },
+        plan,
+        routeStations: fullRouteStations.slice(routeStartIndex),
+    };
+}
+
+function buildOperationAdjustmentPreview(input, baselineStops) {
+    const validation = validateOperationAdjustmentInput(input);
+    if (validation.error) return validation;
+
+    const stops = { ...(baselineStops || {}) };
+    const terminalName = validation.plan.terminalName;
+
+    validation.routeStations.forEach((stationName) => {
+        stops[stationName] = getStopForTypeWithExtras(
+            stationName,
+            validation.input.type,
+            new Set(),
+        );
+    });
+
+    // 行先駅は列車種別の停車パターンにかかわらず停車扱いとする。
+    if (terminalName && Object.prototype.hasOwnProperty.call(stops, terminalName)) {
+        stops[terminalName] = true;
+    }
+
+    return {
+        ...validation,
+        stops,
+        terminalName,
+    };
+}
+
+function openOperationAdjustment() {
     const modal = document.getElementById("menuModal");
-    const panel = modal.querySelector(".panel");
-
+    const panel = modal && modal.querySelector(".panel");
     const stations = state.datasets.stations;
-    if (!stations) return;
+    if (!modal || !panel || !stations) return;
 
-    const kind = "stop";
-
-    // 既に同じサブ画面が開いていればトグルで閉じる
+    const kind = "operation-adjustment";
     const existing = panel.querySelector(
         `.menu-subpanel[data-kind="${kind}"]`,
     );
@@ -3776,168 +4381,511 @@ function openStopList() {
         return;
     }
 
-    // 他のサブ画面は閉じる
-    panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
+    panel.querySelectorAll(".menu-subpanel").forEach((item) => item.remove());
 
-    const wrap = el(
-        "div",
-        { class: "menu-subpanel", "data-kind": kind },
-        [
-            el("hr", { class: "sep" }),
-            el("h3", {}, "臨時停車・通過・着発線変更"),
-        ],
-    );
-
-    const box = el("div", {
-        style: "max-height:50vh;overflow:auto;font-size:14px;",
-    });
-
-    // 駅名の並び順は、これまでの「臨時停車・通過」と同じ
-    const names = Object.keys(stations);
-
-    // platform.json（あれば使用）
+    const names = getOperationStationNames();
+    const initialBaseline = buildProjectedOperationBaseline();
+    const initialStops = initialBaseline.stops;
     const platforms = state.datasets.platforms || null;
     const dayType = state.config.dayType || "平日";
     const dayData = platforms && platforms[dayType] ? platforms[dayType] : null;
+    const currentOverrides = state.runtime.manualPlatforms || {};
 
-    const overrides = state.runtime.manualPlatforms || {};
+    const wrap = el(
+        "div",
+        {
+            class: "menu-subpanel operation-adjustment-panel",
+            "data-kind": kind,
+        },
+        [
+            el("hr", { class: "sep" }),
+            el("h3", {}, "運転整理"),
+        ],
+    );
 
-    names.forEach((n) => {
-        // ★ 現在の設定：passStations に入っていれば通過、入っていなければ停車
-        const isCurrentlyPass = state.runtime.passStations.has(n);
-        const isStopNow = !isCurrentlyPass;
+    const trainNoInput = el("input", {
+        type: "text",
+        inputmode: "numeric",
+        value: String(state.config.trainNo || ""),
+        "aria-label": "変更後の列車番号",
+    });
+    const searchButton = el(
+        "button",
+        { class: "btn secondary", type: "button" },
+        "検索",
+    );
 
-        // 駅ごとのコンテナ
+    const typeSelect = el("select", { "aria-label": "変更後の種別" });
+    const typeValues = Array.from(state.datasets.types || []);
+    const currentType = normalizeTypeName(state.config.type || "");
+    if (currentType && !typeValues.includes(currentType)) {
+        typeValues.unshift(currentType);
+    }
+    typeValues.forEach((value) => {
+        typeSelect.appendChild(el("option", { value }, value));
+    });
+    typeSelect.value = currentType;
+
+    const destSelect = el("select", { "aria-label": "変更後の行先" });
+    const destValues = Array.from(state.datasets.dests || []);
+    const currentDest = String(state.config.dest || "").trim();
+    if (currentDest && !destValues.includes(currentDest)) {
+        destValues.unshift(currentDest);
+    }
+    destValues.forEach((value) => {
+        destSelect.appendChild(el("option", { value }, value));
+    });
+    destSelect.value = currentDest;
+
+    const changeStationSelect = el("select", {
+        "aria-label": "変更駅",
+    });
+    changeStationSelect.appendChild(
+        el("option", { value: "" }, "変更駅を選択"),
+    );
+    names.forEach((stationName) => {
+        changeStationSelect.appendChild(
+            el("option", { value: stationName }, stationName),
+        );
+    });
+    changeStationSelect.value = "";
+
+    const reflectButton = el(
+        "button",
+        { class: "btn operation-reflect-button", type: "button" },
+        "反映",
+    );
+    const previewStatus = el(
+        "div",
+        { class: "small operation-preview-status", role: "status" },
+        initialBaseline.error ||
+            "変更内容と変更駅を入力し、「反映」を押してください。",
+    );
+
+    const controls = el("div", { class: "operation-controls" }, [
+        el("div", { class: "operation-train-row" }, [
+            el("div", {}, [
+                el("label", {}, "列車番号"),
+                trainNoInput,
+            ]),
+            searchButton,
+        ]),
+        el("div", { class: "operation-select-grid" }, [
+            el("div", {}, [el("label", {}, "種別"), typeSelect]),
+            el("div", {}, [el("label", {}, "行先"), destSelect]),
+        ]),
+        el("div", { class: "operation-change-station-row" }, [
+            el("label", {}, "変更駅"),
+            changeStationSelect,
+        ]),
+        reflectButton,
+        previewStatus,
+    ]);
+
+    const box = el("div", {
+        class: "operation-station-list",
+        "aria-label": "変更後の停車駅と番線",
+    });
+
+    names.forEach((stationName) => {
         const block = el("div", {
-            class: "station-block",
-            "data-station": n,
-            style: "margin-bottom:6px;border-bottom:1px solid #ccc;padding-bottom:4px;",
+            class: "station-block operation-station-block",
+            "data-station": stationName,
         });
-
-        // 1行構成（A-1）：チェックボックス + 駅名 + 番線ボタン群
-        const row = el("div", {
-            class: "row",
-            style: "display:flex;align-items:center;flex-wrap:wrap;column-gap:4px;row-gap:2px;",
-        });
-
-        // --- 停車 / 通過 チェック ---
-        const chk = el("input", { type: "checkbox" });
-        chk.checked = isStopNow; // チェック = 停車扱い
-
-        const label = el("label", {}, [chk, " ", n]);
+        const row = el("div", { class: "operation-station-row" });
+        const checkbox = el("input", { type: "checkbox" });
+        checkbox.checked = initialStops[stationName] !== false;
+        const label = el("label", { class: "operation-station-label" }, [
+            checkbox,
+            " ",
+            stationName,
+        ]);
         row.appendChild(label);
 
-        // --- 番線ボタン群（platform.json にデータがある駅のみ） ---
-        const stationPlatMap =
-            dayData && dayData[n] ? dayData[n] : null;
-
+        const stationPlatMap = dayData && dayData[stationName]
+            ? dayData[stationName]
+            : null;
         if (stationPlatMap) {
             const platNos = Object.keys(stationPlatMap).sort(
                 (a, b) => parseInt(a, 10) - parseInt(b, 10),
             );
+            const basePlatform = getPlatformForStationForTrain(
+                stationName,
+                state.config.trainNo,
+            );
+            const selectedPlatform =
+                currentOverrides[stationName] || basePlatform || null;
 
-            if (platNos.length > 0) {
-                const basePlat = getPlatformForStation(n); // この列車の標準番線（なければ null）
-                const currentOverride = overrides[n] || null;
-
-                // ★ 選択状態の初期値：
-                //   1) 手動 override があればそれ
-                //   2) なければ basePlat
-                //   3) どちらも無ければ「何も選択しない」
-                let selectedPlat = null;
-                if (currentOverride) {
-                    selectedPlat = currentOverride;
-                } else if (basePlat) {
-                    selectedPlat = basePlat;
-                }
-
-                platNos.forEach((platNo) => {
-                    const btn = el(
-                        "button",
-                        {
-                            class:
-                                "btn secondary" +
-                                (selectedPlat &&
-                                String(platNo) === String(selectedPlat)
-                                    ? " active-selected"
-                                    : ""),
-                            type: "button",
-                            "data-plat": platNo,
-                            // ボタンサイズに対して 1/2 くらいの間隔イメージ
-                            style: "margin-left:4px;padding:2px 6px;",
-                        },
-                        `${platNo}番`,
-                    );
-
-                    btn.onclick = (e) => {
-                        // 同じ駅内の他番線ボタンの active を外し、このボタンだけ active に
-                        const parent = e.currentTarget.parentElement;
-                        parent
-                            .querySelectorAll("button[data-plat]")
-                            .forEach((b) =>
-                                b.classList.remove("active-selected"),
-                            );
-                        e.currentTarget.classList.add("active-selected");
-                    };
-
-                    row.appendChild(btn);
-                });
-            }
+            platNos.forEach((platNo) => {
+                const platformButton = el(
+                    "button",
+                    {
+                        class:
+                            "btn secondary operation-platform-button" +
+                            (selectedPlatform &&
+                            String(selectedPlatform) === String(platNo)
+                                ? " active-selected"
+                                : ""),
+                        type: "button",
+                        "data-plat": platNo,
+                    },
+                    `${platNo}番`,
+                );
+                platformButton.onclick = (event) => {
+                    if (event.currentTarget.disabled) return;
+                    row.querySelectorAll("button[data-plat]").forEach((button) => {
+                        button.classList.remove("active-selected");
+                    });
+                    event.currentTarget.classList.add("active-selected");
+                };
+                row.appendChild(platformButton);
+            });
         }
 
-        block.appendChild(row);
+        const scopeText = el(
+            "span",
+            { class: "small operation-station-scope" },
+            "反映待ち",
+        );
+        block.append(row, scopeText);
         box.appendChild(block);
     });
 
-    const done = el("button", { class: "btn", style: "margin-top:8px;" }, "決定");
-    done.onclick = () => {
-        const newStopSet = new Set();
-        const newOverrides = {};
+    let previewState = null;
 
-        const blocks = box.querySelectorAll(".station-block");
+    function readInput() {
+        return {
+            trainNo: trainNoInput.value.trim(),
+            type: normalizeTypeName(typeSelect.value),
+            dest: destSelect.value,
+            changeStation: changeStationSelect.value,
+        };
+    }
 
-        blocks.forEach((block) => {
+    function getInputSignature(input) {
+        return JSON.stringify({
+            trainNo: String(input.trainNo || "").trim(),
+            type: normalizeTypeName(input.type || ""),
+            dest: String(input.dest || "").trim(),
+            changeStation: String(input.changeStation || "").trim(),
+        });
+    }
+
+    function setStationRowsEnabled(routeStations, terminalName) {
+        const routeSet = new Set(routeStations || []);
+
+        box.querySelectorAll(".operation-station-block").forEach((block) => {
             const stationName = block.getAttribute("data-station");
-            if (!stationName) return;
+            const inRoute = routeSet.has(stationName);
+            const checkbox = block.querySelector('input[type="checkbox"]');
+            const scopeText = block.querySelector(".operation-station-scope");
 
-            // 停車／通過の反映
-            const chk = block.querySelector('input[type="checkbox"]');
-            if (chk && chk.checked) {
-                newStopSet.add(stationName); // チェック = 停車駅
+            block.classList.toggle("operation-route-excluded", !inRoute);
+            if (checkbox) {
+                checkbox.disabled = !inRoute || stationName === terminalName;
             }
+            block.querySelectorAll("button[data-plat]").forEach((button) => {
+                button.disabled = !inRoute;
+            });
 
-            // 番線の反映
-            const activePlatBtn = block.querySelector(
-                "button[data-plat].active-selected",
-            );
-
-            const basePlat = getPlatformForStation(stationName);
-            const selectedPlat =
-                activePlatBtn && activePlatBtn.getAttribute("data-plat")
-                    ? activePlatBtn.getAttribute("data-plat")
-                    : null;
-
-            // ★ 標準番線と異なる場合のみ「着発線変更」として保存
-            if (selectedPlat) {
-                if (!basePlat || String(selectedPlat) !== String(basePlat)) {
-                    newOverrides[stationName] = selectedPlat;
+            if (scopeText) {
+                if (!inRoute) {
+                    scopeText.textContent = "変更対象外";
+                } else if (stationName === terminalName) {
+                    scopeText.textContent = "行先（停車）";
+                } else {
+                    scopeText.textContent = "変更対象";
                 }
             }
         });
+    }
 
-        // 通過駅 = 全駅 - 停車駅
-        state.runtime.passStations = new Set(
-            names.filter((n) => !newStopSet.has(n)),
+    function disableStationRows(message) {
+        setStationRowsEnabled([], null);
+        box.querySelectorAll(".operation-station-scope").forEach((scopeText) => {
+            scopeText.textContent = "反映待ち";
+        });
+        if (message) previewStatus.textContent = message;
+    }
+
+    function invalidatePreview() {
+        if (!previewState) return;
+        previewState = null;
+        disableStationRows("入力内容が変わりました。再度「反映」を押してください。");
+    }
+
+    function applyPreviewToRows(preview) {
+        const routeSet = new Set(preview.routeStations);
+
+        box.querySelectorAll(".operation-station-block").forEach((block) => {
+            const stationName = block.getAttribute("data-station");
+            const checkbox = block.querySelector('input[type="checkbox"]');
+            if (checkbox && Object.prototype.hasOwnProperty.call(preview.stops, stationName)) {
+                checkbox.checked = !!preview.stops[stationName];
+            }
+
+            if (!routeSet.has(stationName)) return;
+
+            const basePlatform = getPlatformForStationForTrain(
+                stationName,
+                preview.input.trainNo,
+            );
+            block.querySelectorAll("button[data-plat]").forEach((button) => {
+                button.classList.toggle(
+                    "active-selected",
+                    !!basePlatform &&
+                        String(button.getAttribute("data-plat")) ===
+                            String(basePlatform),
+                );
+            });
+        });
+
+        setStationRowsEnabled(preview.routeStations, preview.terminalName);
+    }
+
+    function getSelectedPlatform(block) {
+        const active = block.querySelector(
+            "button[data-plat].active-selected",
         );
+        return active ? active.getAttribute("data-plat") : null;
+    }
 
-        // 着発線変更の反映
-        state.runtime.manualPlatforms = newOverrides;
+    function collectEditedPlan(preview) {
+        const stopMap = {};
+        const passStations = [];
+        const manualPlatforms = {};
+        const nonPassengerExtraStops = [];
+        const routeSet = new Set(preview.routeStations);
 
+        box.querySelectorAll(".operation-station-block").forEach((block) => {
+            const stationName = block.getAttribute("data-station");
+            const checkbox = block.querySelector('input[type="checkbox"]');
+            const shouldStop = !!(checkbox && checkbox.checked);
+            stopMap[stationName] = shouldStop;
+
+            if (!shouldStop) passStations.push(stationName);
+            if (!routeSet.has(stationName)) return;
+
+            if (
+                isNonPassenger(preview.input.type) &&
+                shouldStop &&
+                !baseIsStopRawForType(stationName, preview.input.type)
+            ) {
+                nonPassengerExtraStops.push(stationName);
+            }
+
+            const selectedPlatform = getSelectedPlatform(block);
+            const basePlatform = getPlatformForStationForTrain(
+                stationName,
+                preview.input.trainNo,
+            );
+            if (
+                selectedPlatform &&
+                (!basePlatform ||
+                    String(selectedPlatform) !== String(basePlatform))
+            ) {
+                manualPlatforms[stationName] = selectedPlatform;
+            }
+        });
+
+        return {
+            stopMap,
+            passStations,
+            manualPlatforms,
+            nonPassengerExtraStops,
+        };
+    }
+
+    function hasAdjustmentChanges(preview, editedPlan) {
+        // 既存の途中駅列情変更を新しい運転整理へ置き換えること自体も変更扱い。
+        if (state.config.endChange && state.runtime.midChangePending) {
+            return true;
+        }
+
+        if (
+            String(state.config.trainNo || "") !== preview.input.trainNo ||
+            normalizeTypeName(state.config.type) !== preview.input.type ||
+            String(state.config.dest || "") !== preview.input.dest
+        ) {
+            return true;
+        }
+
+        for (const stationName of preview.routeStations) {
+            if (
+                !!preview.baselineStops[stationName] !==
+                !!editedPlan.stopMap[stationName]
+            ) {
+                return true;
+            }
+
+            const block = Array.from(
+                box.querySelectorAll(".operation-station-block"),
+            ).find(
+                (item) => item.getAttribute("data-station") === stationName,
+            );
+            const selectedPlatform = block ? getSelectedPlatform(block) : null;
+            const currentPlatform = getEffectivePlatformForStation(stationName);
+            if (
+                String(selectedPlatform || "") !==
+                String(currentPlatform || "")
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    trainNoInput.addEventListener("input", invalidatePreview);
+    typeSelect.addEventListener("change", invalidatePreview);
+    destSelect.addEventListener("change", invalidatePreview);
+    changeStationSelect.addEventListener("change", invalidatePreview);
+
+    searchButton.onclick = () => {
+        const result = parseTrainNo(trainNoInput.value.trim());
+        if (!result) {
+            alert("列番表に該当がありません。手動で選択してください。");
+            return;
+        }
+
+        typeSelect.value = normalizeTypeName(result.type);
+        destSelect.value = result.dest;
+        invalidatePreview();
+
+        if (result.direction !== state.config.direction) {
+            alert("検索した列車番号は、現在の案内方向と一致していません。");
+        }
+    };
+
+    reflectButton.onclick = () => {
+        const input = readInput();
+        const baseline = buildProjectedOperationBaseline();
+        if (baseline.error) {
+            alert(baseline.error);
+            return;
+        }
+
+        const preview = buildOperationAdjustmentPreview(input, baseline.stops);
+        if (preview.error) {
+            alert(preview.error);
+            return;
+        }
+
+        preview.baselineStops = { ...baseline.stops };
+        preview.inputSignature = getInputSignature(preview.input);
+        preview.stateSignature = getOperationAdjustmentStateSignature();
+        previewState = preview;
+        applyPreviewToRows(preview);
+        previewStatus.textContent =
+            `${preview.input.changeStation}から${preview.input.dest}までの停車駅・番線を反映しました。`;
+    };
+
+    const setButton = el(
+        "button",
+        { class: "btn", type: "button" },
+        "運転整理を設定",
+    );
+    const cancelButton = el(
+        "button",
+        { class: "btn secondary", type: "button" },
+        "取消",
+    );
+
+    setButton.onclick = () => {
+        const currentInput = readInput();
+        if (
+            !previewState ||
+            previewState.inputSignature !== getInputSignature(currentInput)
+        ) {
+            alert("変更内容を確認するため、先に「反映」を押してください。");
+            return;
+        }
+
+        if (
+            previewState.stateSignature !==
+            getOperationAdjustmentStateSignature()
+        ) {
+            previewState = null;
+            disableStationRows(
+                "案内状態が更新されました。内容を確認して再度「反映」を押してください。",
+            );
+            alert("編集中に案内状態が更新されました。再度「反映」を押してください。");
+            return;
+        }
+
+        const validation = validateOperationAdjustmentInput(currentInput);
+        if (validation.error) {
+            alert(validation.error);
+            return;
+        }
+
+        if (
+            JSON.stringify(validation.routeStations) !==
+            JSON.stringify(previewState.routeStations)
+        ) {
+            previewState = null;
+            disableStationRows(
+                "案内経路が更新されました。再度「反映」を押してください。",
+            );
+            alert("案内経路が更新されました。再度「反映」を押してください。");
+            return;
+        }
+
+        const editedPlan = collectEditedPlan(previewState);
+        if (!hasAdjustmentChanges(previewState, editedPlan)) {
+            alert("列車情報、停車駅、番線に変更がありません。");
+            return;
+        }
+
+        state.config.endChange = true;
+        state.config.second = {
+            trainNo: previewState.input.trainNo,
+            type: previewState.input.type,
+            dest: previewState.input.dest,
+            cars: state.config.cars,
+            changeStation: previewState.input.changeStation,
+            source: "operation-control",
+            operationPlan: {
+                passStations: [...editedPlan.passStations],
+                manualPlatforms: { ...editedPlan.manualPlatforms },
+                comparisonStops: { ...previewState.baselineStops },
+                nonPassengerExtraStops: [
+                    ...editedPlan.nonPassengerExtraStops,
+                ],
+                routeStations: [...previewState.routeStations],
+                terminalName: previewState.terminalName,
+            },
+        };
+
+        const rt = state.runtime;
+        rt.nonPassengerExtraStopsSecond = new Set(
+            editedPlan.nonPassengerExtraStops,
+        );
+        rt.midChangePending = true;
+        rt.midChangeApplied = false;
+        rt.midChangeArrivalHandled = false;
+        rt.midChangeTriggerStation = null;
+        rt.midChangeAppliedReason = null;
+        rt.midChangeRouteLastWarningAt = 0;
+        rt.guideMidChangeRouteApplied = false;
+
+        wrap.remove();
         modal.classList.remove("active");
     };
 
-    wrap.append(box, done);
+    cancelButton.onclick = () => {
+        previewState = null;
+        wrap.remove();
+    };
+
+    const actionRow = el("div", { class: "operation-action-row" }, [
+        setButton,
+        cancelButton,
+    ]);
+
+    wrap.append(controls, box, actionRow);
     panel.appendChild(wrap);
+    disableStationRows();
 }
 
 // 音声方式変更
@@ -4464,51 +5412,6 @@ function openPlatformList() {
     panel.appendChild(wrap);
 }
 
-// 列番変更
-function openTrainChange() {
-	const modal = document.getElementById("menuModal");
-	const panel = modal.querySelector(".panel");
-	const names = Object.keys(state.datasets.stations);
-
-	const kind = "train";
-
-	// 既に同じサブ画面が開いていればトグルで閉じる
-	const existing = panel.querySelector(
-		`.menu-subpanel[data-kind="${kind}"]`,
-	);
-	if (existing) {
-		existing.remove();
-		return;
-	}
-
-	// 他のサブ画面は閉じる
-	panel.querySelectorAll(".menu-subpanel").forEach((el) => el.remove());
-
-	const wrap = el(
-		"div",
-		{ class: "menu-subpanel", "data-kind": kind },
-		[
-			el("hr", { class: "sep" }),
-			el("h3", {}, "列番変更"),
-		],
-	);
-
-	const sel = el("select");
-	names.forEach((n) => {
-		sel.appendChild(el("option", { value: n }, n));
-	});
-	const input = el("input", { type: "text", placeholder: "例：1234" });
-	const done = el("button", { class: "btn" }, "決定");
-	done.onclick = () => {
-		state.runtime.manualTrainChangeAt = sel.value;
-		state.runtime.manualTrainNo = input.value.trim();
-		modal.classList.remove("active");
-	};
-
-	wrap.append(sel, input, done);
-	panel.appendChild(wrap);
-}
-
 // ==== 停車パターン（ダイヤ上の基本停車駅） ====
 
 function baseIsStopRawForType(stationName, type) {
@@ -4541,6 +5444,32 @@ function baseIsStop(stationName) {
         }
     }
     return base;
+}
+
+// 運転整理適用後は、変更後種別の基本停車パターンではなく、
+// 運転整理を設定する直前に予定されていた停車状態と比較する。
+function getStopGuidanceClassification(stationName) {
+    const rt = state.runtime;
+    const isStop = !rt.passStations.has(stationName);
+    let referenceStop = baseIsStop(stationName);
+
+    if (
+        rt.operationChangeActive &&
+        rt.operationBaselineStops &&
+        Object.prototype.hasOwnProperty.call(
+            rt.operationBaselineStops,
+            stationName,
+        )
+    ) {
+        referenceStop = !!rt.operationBaselineStops[stationName];
+    }
+
+    return {
+        isStop,
+        referenceStop,
+        isExtraStop: !referenceStop && isStop,
+        isExtraPass: referenceStop && !isStop,
+    };
 }
 
 // ==== 停車駅/通過駅リスト生成（ダイヤ基準） ====
@@ -4975,8 +5904,21 @@ function updateGuideSegmentStatus() {
         : rt.activeGuideSegmentId;
     const segment = getGuideSegment(segmentId);
 
-    root._guideSegmentStatus.textContent = segment ? segment.shortName : "";
-    root._guideSegmentStatus.style.display = segment ? "inline" : "none";
+    if (segment) {
+        root._guideSegmentStatus.textContent = segment.shortName;
+        root._guideSegmentStatus.style.display = "inline";
+        return;
+    }
+
+    if (rt.started) {
+        root._guideSegmentStatus.textContent = "×";
+        root._guideSegmentStatus.style.display = "inline";
+        root._guideSegmentStatus.style.color = "red";
+        return;
+    }
+
+    root._guideSegmentStatus.textContent = "";
+    root._guideSegmentStatus.style.display = "none";
 }
 
 function clearGuidePlan() {
@@ -5056,6 +5998,24 @@ function recalculateGuidePlanFromStation(stationName, destination) {
     return applyGuidePlan(plan);
 }
 
+const MID_CHANGE_ROUTE_WARNING_INTERVAL_MS = 5000;
+
+function warnMidChangeRouteRecalculationFailure(details) {
+    const rt = state.runtime;
+    const now = Date.now();
+
+    if (
+        !rt.midChangeRouteLastWarningAt ||
+        now - rt.midChangeRouteLastWarningAt >= MID_CHANGE_ROUTE_WARNING_INTERVAL_MS
+    ) {
+        console.warn(
+            "途中駅列情変更後の案内経路を確定できませんでした。",
+            details,
+        );
+        rt.midChangeRouteLastWarningAt = now;
+    }
+}
+
 // 途中駅で列情変更する列車は、種別・列番などの既存切替タイミングとは分けて、
 // 変更駅の200m圏内に入った時点でだけ後半行先の案内経路へ切り替える。
 function maybeRecalculateGuidePlanAtMidChangeStation(ns) {
@@ -5069,6 +6029,7 @@ function maybeRecalculateGuidePlanAtMidChangeStation(ns) {
         changeStation;
 
     if (
+        !rt.started ||
         !hasMidChange ||
         rt.guideMidChangeRouteApplied ||
         !ns ||
@@ -5085,11 +6046,18 @@ function maybeRecalculateGuidePlanAtMidChangeStation(ns) {
     );
 
     if (!routeUpdated) {
-        console.warn("途中駅列情変更後の案内経路を確定できませんでした。", {
+        warnMidChangeRouteRecalculationFailure({
             changeStation,
             destination: nextDestination,
+            reason: "change-station-200m",
         });
-    } else if (
+        return false;
+    }
+
+    rt.guideMidChangeRouteApplied = true;
+    rt.midChangeRouteLastWarningAt = 0;
+
+    if (
         rt.prevStationName === changeStation &&
         Number.isFinite(rt.prevStationDistance) &&
         rt.prevStationDistance <= 200
@@ -5099,17 +6067,15 @@ function maybeRecalculateGuidePlanAtMidChangeStation(ns) {
         rt.lastStopStation = findNextStopStationName(changeStation) || null;
     }
 
-    // 同じGPS座標で繰り返し再計算・警告しない。
-    rt.guideMidChangeRouteApplied = true;
-    return routeUpdated;
+    return true;
 }
 
-function getGuidePlanStationOrder() {
-    const rt = state.runtime;
-    const direction = state.config.direction;
+function getGuideStationOrderForPlan(plan, direction) {
+    if (!plan || !Array.isArray(plan.segmentIds)) return [];
+
     const orderedStations = [];
 
-    for (const segmentId of rt.guidePlan || []) {
+    for (const segmentId of plan.segmentIds) {
         const segment = getGuideSegment(segmentId);
         if (!segment) continue;
 
@@ -5123,10 +6089,152 @@ function getGuidePlanStationOrder() {
         }
     }
 
-    const terminalIndex = orderedStations.indexOf(rt.guideTerminalName);
+    const terminalIndex = orderedStations.indexOf(plan.terminalName);
     return terminalIndex >= 0
         ? orderedStations.slice(0, terminalIndex + 1)
         : orderedStations;
+}
+
+function getGuidePlanStationOrder() {
+    const rt = state.runtime;
+    return getGuideStationOrderForPlan({
+        segmentIds: rt.guidePlan || [],
+        terminalName: rt.guideTerminalName,
+    }, state.config.direction);
+}
+
+function getMidChangeSecondGuideContext() {
+    const second = state.config.second || {};
+    const changeStation = String(second.changeStation || "").trim();
+    const destination = String(second.dest || "").trim();
+
+    if (
+        !state.config.endChange ||
+        !String(second.trainNo || "").trim() ||
+        !changeStation ||
+        !destination
+    ) {
+        return null;
+    }
+
+    const plan = buildGuidePlanFromStation(
+        changeStation,
+        destination,
+        state.config.direction,
+    );
+    if (!plan) return null;
+
+    const stationOrder = getGuideStationOrderForPlan(
+        plan,
+        state.config.direction,
+    );
+    const changeStationIndex = stationOrder.indexOf(changeStation);
+    if (changeStationIndex === -1) return null;
+
+    return {
+        changeStation,
+        destination,
+        plan,
+        stationOrder,
+        changeStationIndex,
+    };
+}
+
+// 途中起動・地点リセットで変更駅より後から再開した場合だけ、
+// 変更駅手前の予約イベントを通っていなくても後半列情へ追いつかせる。
+// 通常走行中の単発GPS飛びでは呼ばず、起動位置を確定する瞬間だけ使用する。
+function maybeApplyMidTrainChangeAfterStartupPosition(ns, lat, lng) {
+    const rt = state.runtime;
+    if (
+        !rt.started ||
+        rt.undergroundMode ||
+        !rt.startupMode ||
+        rt.startupFixed ||
+        !rt.midChangePending ||
+        rt.midChangeApplied ||
+        !ns ||
+        !ns.name
+    ) {
+        return false;
+    }
+
+    const secondGuide = getMidChangeSecondGuideContext();
+    if (!secondGuide) return false;
+
+    const currentStationIndex = secondGuide.stationOrder.indexOf(ns.name);
+    if (currentStationIndex <= secondGuide.changeStationIndex) {
+        return false;
+    }
+
+    const startSpot = findNearestGuideStartSpot(lat, lng);
+    const nextPlan = startSpot
+        ? buildGuidePlanFromStartSpot(
+            startSpot,
+            secondGuide.destination,
+            state.config.direction,
+        )
+        : null;
+
+    if (!nextPlan) {
+        warnMidChangeRouteRecalculationFailure({
+            changeStation: secondGuide.changeStation,
+            destination: secondGuide.destination,
+            currentStation: ns.name,
+            reason: "startup-after-change-station",
+        });
+        return false;
+    }
+
+    if (!applyMidTrainChange("startup-after-change-station")) {
+        return false;
+    }
+
+    if (!applyGuidePlan(nextPlan)) {
+        warnMidChangeRouteRecalculationFailure({
+            changeStation: secondGuide.changeStation,
+            destination: secondGuide.destination,
+            currentStation: ns.name,
+            reason: "startup-after-change-station-apply",
+        });
+        return true;
+    }
+
+    rt.guideMidChangeRouteApplied = true;
+    rt.midChangeRouteLastWarningAt = 0;
+    return true;
+}
+
+function maybeApplyMidTrainChangeAtChangeStation(ns) {
+    const rt = state.runtime;
+    const second = state.config.second || {};
+    const changeStation = String(second.changeStation || "").trim();
+
+    if (
+        !rt.started ||
+        rt.undergroundMode ||
+        !rt.midChangePending ||
+        rt.midChangeApplied ||
+        !changeStation ||
+        !ns ||
+        ns.name !== changeStation ||
+        !Number.isFinite(ns.distance) ||
+        ns.distance > 200
+    ) {
+        return false;
+    }
+
+    return applyMidTrainChange("change-station-200m-fallback");
+}
+
+function processMidTrainChangeAtPosition(ns) {
+    const rt = state.runtime;
+    if (!rt.started || rt.undergroundMode || !ns) return false;
+
+    const applied = maybeApplyMidTrainChangeAtChangeStation(ns);
+    const routeUpdated = maybeRecalculateGuidePlanAtMidChangeStation(ns);
+    const arrivalHandled = maybeHandleMidChangeArrival(ns);
+
+    return applied || routeUpdated || arrivalHandled;
 }
 
 function isGuidanceDisabledStation(stationName) {
@@ -5461,7 +6569,6 @@ function getCurrentLineIdsForDelay() {
 }
 
 // ★ 遅延検索用：現在案内中の列車番号を取得
-//   （必要に応じて manualTrainNo を使いたい場合はここにロジックを追加）
 function getCurrentTrainNoForDelay() {
     return String(state.config.trainNo || "").trim();
 }
@@ -6042,28 +7149,106 @@ function handleUndergroundToStationName(toName) {
 
 // ==== 発着番線取得 ====
 // platform.json: dayType ("平日" / "土休日") → 駅名 → 番線番号 → [列車番号...]
-function getPlatformForStation(stationName) {
+function getPlatformDayData() {
     const platforms = state.datasets.platforms;
     if (!platforms) return null;
 
     const dayType = state.config.dayType || "平日";
-    const dayData = platforms[dayType];
+    return platforms[dayType] || null;
+}
+
+function getRegisteredPlatformForStationAndTrain(stationName, trainNo) {
+    const dayData = getPlatformDayData();
     if (!dayData) return null;
 
     const stationData = dayData[stationName];
     if (!stationData) return null;
 
-    const n = parseInt(state.config.trainNo, 10);
+    const n = parseInt(trainNo, 10);
     if (Number.isNaN(n)) return null;
 
-    // 各番線の配列を見て、自列車番号が含まれている番線を探す
+    // 各番線の配列を見て、自列車番号が含まれている番線を探す。
+    // JSON側が数値・文字列のどちらでも照合できるよう数値化して比較する。
     for (const [platNo, list] of Object.entries(stationData)) {
         if (!Array.isArray(list)) continue;
-        if (list.includes(n)) {
+        if (list.some((value) => parseInt(value, 10) === n)) {
             return platNo; // 文字列の "1" "2" ... をそのまま返す
         }
     }
     return null;
+}
+
+function getRegisteredPlatformMapForTrain(trainNo) {
+    const dayData = getPlatformDayData();
+    const result = {};
+    if (!dayData) return result;
+
+    Object.keys(dayData).forEach((stationName) => {
+        const platform = getRegisteredPlatformForStationAndTrain(
+            stationName,
+            trainNo,
+        );
+        if (platform) result[stationName] = platform;
+    });
+
+    return result;
+}
+
+function needsInitialPlatformSetup(trainNo) {
+    return Object.keys(getRegisteredPlatformMapForTrain(trainNo)).length === 0;
+}
+
+function clearInitialPlatformPlan() {
+    state.runtime.initialPlatformPlan = null;
+    state.runtime.pendingGuidanceStartMode = null;
+}
+
+function setInitialPlatformPlan(trainNo, selections) {
+    const platforms = {};
+
+    Object.entries(selections || {}).forEach(([stationName, platform]) => {
+        const name = String(stationName || "").trim();
+        const value = String(platform || "").trim();
+        if (name && value) platforms[name] = value;
+    });
+
+    state.runtime.initialPlatformPlan = {
+        trainNo: String(trainNo || "").trim(),
+        dayType: state.config.dayType || "平日",
+        platforms,
+    };
+}
+
+function getInitialPlatformForStationAndTrain(stationName, trainNo) {
+    const plan = state.runtime.initialPlatformPlan;
+    if (!plan || !plan.platforms) return null;
+
+    if (
+        String(plan.trainNo || "").trim() !== String(trainNo || "").trim() ||
+        String(plan.dayType || "") !== String(state.config.dayType || "平日")
+    ) {
+        return null;
+    }
+
+    return plan.platforms[stationName] || null;
+}
+
+function getPlatformForStationForTrain(stationName, trainNo) {
+    const registered = getRegisteredPlatformForStationAndTrain(
+        stationName,
+        trainNo,
+    );
+    if (registered) return registered;
+
+    // platform.json に1件も無い列番では、案内開始前に選択した基準番線を使う。
+    return getInitialPlatformForStationAndTrain(stationName, trainNo);
+}
+
+function getPlatformForStation(stationName) {
+    return getPlatformForStationForTrain(
+        stationName,
+        state.config.trainNo,
+    );
 }
 
 // ==== 発着番線（実際に使う値） ====
@@ -6517,10 +7702,14 @@ function startGuidance() {
     rt.midChangePending        = !!(state.config.endChange && state.config.second.trainNo && state.config.second.changeStation);
     rt.midChangeApplied        = false;
     rt.midChangeArrivalHandled = false;
+    rt.midChangeTriggerStation = null;
+    rt.midChangeAppliedReason  = null;
+    rt.midChangeRouteLastWarningAt = 0;
+    rt.operationBaselineStops = null;
+    rt.operationChangeActive = false;
     if (rt.midChangeConfirmTimer) {
         clearTimeout(rt.midChangeConfirmTimer);
         rt.midChangeConfirmTimer = null;
-        rt.midChangeTriggerStation = null;
     }
 
     // ★ 前回案内の残りをリセット
@@ -6599,8 +7788,17 @@ function stopGuidance() {
     rt.started = false;
     rt.voiceMuted = false;
     rt.autoUndergroundReady = false;
+
+    // ★ 地下状態を次回の案内へ持ち越さない。
+    //   started=false にしてから共通の解除処理を呼ぶことで、
+    //   地点リセット相当の再判定だけは開始させない。
+    if (rt.undergroundMode) {
+        exitUndergroundMode(null);
+    }
+
     stopGpsBlink();
     releaseWakeLock();
+    hideNavSpotNamePopup();
 
     // ★ 音声系も案内終了時に完全停止
     clearAutomaticVoiceRearmSchedule();
@@ -6642,10 +7840,17 @@ function stopGuidance() {
     rt.midChangeApplied = false;
     rt.midChangeArrivalHandled = false;
     rt.midChangeTriggerStation = null;
+    rt.midChangeAppliedReason = null;
+    rt.midChangeRouteLastWarningAt = 0;
+    rt.operationBaselineStops = null;
+    rt.operationChangeActive = false;
 
     // ★ 現在の runtime 上の手動設定は一旦消す
     //   ただし lastTrainScopedManualSettings は残す
     resetTrainScopedManualSettings();
+
+    // 案内開始前に選択した基準番線は、この運用限りとする。
+    clearInitialPlatformPlan();
 
 }
 
@@ -6868,12 +8073,19 @@ function ensureSideSegmentElements(root) {
     if (!root) return null;
 
     // すでに作成済みなら再利用
-    if (root._navSegNext && root._navSegPrev && root._navCurrentStation && root._navTrain) {
+    if (
+        root._navSegNext &&
+        root._navSegPrev &&
+        root._navCurrentStation &&
+        root._navTrain &&
+        root._navSpotLayer
+    ) {
         return {
             segNext: root._navSegNext,
             segPrev: root._navSegPrev,
             currentBox: root._navCurrentStation,
             navTrain: root._navTrain,
+            spotLayer: root._navSpotLayer,
         };
     }
 
@@ -6920,32 +8132,41 @@ function ensureSideSegmentElements(root) {
         (middleBand && middleBand.querySelector(".nav-train")) ||
         wrapper.querySelector(".nav-train");
 
+    // 駅・踏切を中央バンド全幅へ置くための専用レイヤー。
+    let spotLayer = middleBand && middleBand.querySelector(".nav-spot-layer");
+    if (!spotLayer && middleBand) {
+        spotLayer = document.createElement("div");
+        spotLayer.className = "nav-spot-layer";
+        middleBand.appendChild(spotLayer);
+    }
+
     // --- 上・下の駅名ラベルと中央の黄色い枠を生成 ---
-    const segNext = document.createElement("div");
+    const segNext = root._navSegNext || document.createElement("div");
     segNext.className = "nav-seg-label nav-seg-label-next";
 
-    const segPrev = document.createElement("div");
+    const segPrev = root._navSegPrev || document.createElement("div");
     segPrev.className = "nav-seg-label nav-seg-label-prev";
 
-    const currentBox = document.createElement("div");
+    const currentBox = root._navCurrentStation || document.createElement("div");
     currentBox.className = "nav-current-station";
 
-    if (topBand) topBand.appendChild(segNext);
-    if (bottomBand) bottomBand.appendChild(segPrev);
-    if (middleBand) middleBand.appendChild(currentBox);
+    if (!root._navSegNext && topBand) topBand.appendChild(segNext);
+    if (!root._navSegPrev && bottomBand) bottomBand.appendChild(segPrev);
+    if (!root._navCurrentStation && middleBand) middleBand.appendChild(currentBox);
 
     // 参照を保存
     root._navSegNext = segNext;
     root._navSegPrev = segPrev;
     root._navCurrentStation = currentBox;
     root._navTrain = navTrain;
+    root._navSpotLayer = spotLayer;
 
     // 右側ナビを使うので、中央の「A⇒B」テキストは非表示にしておく
     if (root._segmentInfo) {
         root._segmentInfo.style.display = "none";
     }
 
-    return { segNext, segPrev, currentBox, navTrain };
+    return { segNext, segPrev, currentBox, navTrain, spotLayer };
 }
 
 
@@ -7032,9 +8253,8 @@ function updateSegmentDisplay(ns, lat, lng) {
     }
 }
 
-function isCrossingOnActiveGuideSegment(spot) {
-  if (!spot || spot.kind !== "踏切") return false;
-
+function isNavSpotOnActiveGuideSegment(spot) {
+  if (!spot) return false;
   const activeSegmentId = state.runtime.activeGuideSegmentId;
   return (
     !!activeSegmentId &&
@@ -7042,28 +8262,59 @@ function isCrossingOnActiveGuideSegment(spot) {
   );
 }
 
-function showNavSpotNamePopup(trackEl, spotName, topPercent) {
-  if (!trackEl || !spotName) return;
+function isCrossingOnActiveGuideSegment(spot) {
+  return (
+    !!spot &&
+    spot.kind === "踏切" &&
+    isNavSpotOnActiveGuideSegment(spot)
+  );
+}
 
-  if (trackEl._navSpotPopupTimer) {
-    clearTimeout(trackEl._navSpotPopupTimer);
-    trackEl._navSpotPopupTimer = null;
+function shouldDisplayNavSpotOnBand2(spot) {
+  if (!spot || spot.guidanceDisabled) return false;
+
+  const isStation = spot.kind === "駅";
+  const isCrossing = spot.kind === "踏切";
+  if (!isStation && !isCrossing) return false;
+
+  // 案内区間が確定している間は、駅・踏切ともその区間に属するものだけを表示する。
+  // 飯能など複数区間を持つ境界駅は、CSVの複数指定により両区間で表示される。
+  if (state.runtime.activeGuideSegmentId) {
+    return isCrossing
+      ? isCrossingOnActiveGuideSegment(spot)
+      : isNavSpotOnActiveGuideSegment(spot);
   }
 
-  const existing = trackEl.querySelector(".nav-spot-popup");
-  if (existing) existing.remove();
+  // 区間未判定時は従来互換として駅だけ旧routeLineで絞り込む。
+  // 踏切は所属区間を確定できないため表示しない。
+  if (isCrossing) return false;
 
-  const popup = document.createElement("div");
-  popup.className = "nav-spot-popup";
-  popup.textContent = spotName;
-  popup.style.top = `${topPercent}%`;
-  popup.setAttribute("role", "status");
-  trackEl.appendChild(popup);
+  const lockedLine = state.runtime.routeLine;
+  return !lockedLine || stationBelongsToLockedLine(spot.name, lockedLine);
+}
 
-  trackEl._navSpotPopupTimer = setTimeout(() => {
-    if (popup.parentNode) popup.remove();
-    trackEl._navSpotPopupTimer = null;
-  }, 2500);
+function hideNavSpotNamePopup() {
+  const root = document.getElementById("screen-guidance");
+  const modal = root && root._navSpotMessageModal;
+  if (!modal) return;
+
+  modal.classList.remove("active");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function showNavSpotNamePopup(spotName) {
+  if (!spotName) return;
+
+  const root = document.getElementById("screen-guidance");
+  if (!root || !root._navSpotMessageModal || !root._navSpotMessageText) return;
+
+  root._navSpotMessageText.textContent = spotName;
+  root._navSpotMessageModal.setAttribute("aria-hidden", "false");
+  root._navSpotMessageModal.classList.add("active");
+
+  if (root._navSpotMessageClose && typeof root._navSpotMessageClose.focus === "function") {
+    root._navSpotMessageClose.focus({ preventScroll: true });
+  }
 }
 
 // ★ カーナビ: 右側 BAND2 の線路上にスポットを配置する
@@ -7073,12 +8324,12 @@ function updateNavSpotsOnBand2(latitude, longitude) {
   const root = document.getElementById("screen-guidance");
   if (!root) return;
 
-  // 右側 BAND2 の線路要素
-  // 既存のレイアウトを想定して .nav-track / #navTrack を探します
+  // 右側中央バンド全体を使うスポットレイヤー。
+  const navContext = ensureSideSegmentElements(root);
   const trackEl =
     root._navBand2Track ||
-    root.querySelector(".nav-track") ||
-    root.querySelector("#navTrack");
+    (navContext && navContext.spotLayer) ||
+    root._navSpotLayer;
 
   if (!trackEl) {
     // まだ線路 DOM を作っていない場合は何もしない
@@ -7156,32 +8407,13 @@ function updateNavSpotsOnBand2(latitude, longitude) {
   const maxRange = 600; // [m] 現在位置から半径 600m を表示範囲とする
   const markers = [];
 
-  const rt = state.runtime;
-  const lockedLine = rt.routeLine;
-  const useRouteFilter = !!lockedLine;
-
   for (const spot of spots) {
-    if (!spot) continue;
-    if (spot.guidanceDisabled) continue;
+    if (!shouldDisplayNavSpotOnBand2(spot)) continue;
 
-    const isStation = spot.kind === "駅";
     const isCrossing = spot.kind === "踏切";
-    if (!isStation && !isCrossing) continue;
-
-    // 踏切は、列車が現在いる案内区間に属するものだけを描画する。
-    // 駅の既存表示条件は変更しない。
-    if (isCrossing && !isCrossingOnActiveGuideSegment(spot)) {
-      continue;
-    }
 
     const name = spot.name;
     if (!name) continue;
-
-    // ルートロック済みなら、現在のルートに属さない駅は除外
-    // （分岐駅での分岐判定を利用）
-    if (isStation && useRouteFilter && !stationBelongsToLockedLine(name, lockedLine)) {
-      continue;
-    }
 
     // 現在位置からの距離 [m]（BAND 全体のスケール用）
     const dist = haversine(latitude, longitude, spot.lat, spot.lng);
@@ -7235,7 +8467,7 @@ function updateNavSpotsOnBand2(latitude, longitude) {
       el.setAttribute("type", "button");
       el.setAttribute("aria-label", `踏切 ${m.name}`);
       el.addEventListener("click", () => {
-        showNavSpotNamePopup(trackEl, m.name, clampedTop);
+        showNavSpotNamePopup(m.name);
       });
     } else {
       el.textContent = m.name;
@@ -7483,9 +8715,9 @@ function initStartupBetween(ns) {
 }
 
 // ★ 起動モード中の「現在駅＋次駅」判定ロジック（速度は使わない）
-function handleStartupPosition(ns) {
+function handleStartupPosition(ns, lat, lng) {
     const rt = state.runtime;
-    if (!rt.startupMode || !ns) return;
+    if (!rt.startupMode || !ns) return false;
 
     // ★ 起動判定中もルートロックを更新しておく
     updateRouteLock(ns);
@@ -7493,7 +8725,7 @@ function handleStartupPosition(ns) {
     // すでに確定済みなら何もしない
     if (rt.startupFixed) {
         rt.startupMode = false;
-        return;
+        return false;
     }
 
     // ★ 判定基準：駅200m圏内かどうかだけで「駅 / 駅間」を分ける
@@ -7504,10 +8736,12 @@ function handleStartupPosition(ns) {
 
     // 1) 駅と駅の間（= 200m圏外） → 即「駅間起動」で確定
     if (!inStationArea) {
+        const midChangeCaughtUp =
+            maybeApplyMidTrainChangeAfterStartupPosition(ns, lat, lng);
         initStartupBetween(ns);
         rt.startupMode = false;
         rt.startupFixed = true;
-        return;
+        return midChangeCaughtUp;
     }
 
     // 2) 駅にいる（= 200m圏内）
@@ -7521,21 +8755,27 @@ function handleStartupPosition(ns) {
 
     // ★ 3回連続で同一駅なら確定（従来の安定化だけ残す）
     if (rt.startupCount >= 3) {
+        const midChangeCaughtUp =
+            maybeApplyMidTrainChangeAfterStartupPosition(ns, lat, lng);
         initStartupAtStation(ns.name);
         rt.startupMode = false;
         rt.startupFixed = true;
-        return;
+        return midChangeCaughtUp;
     }
 
     // （任意）万一いつまでも確定しないと困るなら、タイムアウトで駅確定
     // 速度は使わず、時間だけでフォールバックする
     const since = rt.startupSince || Date.now();
     if (Date.now() - since > 8000) { // 8秒は好みで調整OK
+        const midChangeCaughtUp =
+            maybeApplyMidTrainChangeAfterStartupPosition(ns, lat, lng);
         initStartupAtStation(ns.name);
         rt.startupMode = false;
         rt.startupFixed = true;
-        return;
+        return midChangeCaughtUp;
     }
+
+    return false;
 }
 
 
@@ -7762,16 +9002,21 @@ function onPos(pos) {
 
     // ★ 最寄り地点判定（案内経路確定後はその経路に含まれる駅だけを候補にする）
     //    「案内しない」地点も経路・地下移行等の物理判定には使い続ける。
-    const physicalNs = nearestStation(latitude, longitude);
-    //    ただし、音声案内だけは「案内しない」設定の地点を対象にしない。
-    const guidanceNs = physicalNs && !physicalNs.guidanceDisabled
-        ? physicalNs
-        : null;
+    let physicalNs = nearestStation(latitude, longitude);
 
-    // ★ 途中駅列情変更の後半経路は、変更駅の200m圏内に入った時点でだけ確定する。
-    //    音声案内・停車パターンの既存切替ロジックには依存させない。
-    if (!rt.undergroundMode) {
-        maybeRecalculateGuidePlanAtMidChangeStation(physicalNs);
+    // 起動・地点リセット中だけは、前半経路の絞り込みを受けない最近傍駅も使う。
+    // これにより、変更駅より後から再開した場合でも後半列情へ追いつける。
+    const startupPhysicalNs = rt.startupMode
+        ? nearestStationForReference(latitude, longitude)
+        : null;
+    const midChangePositionNs = startupPhysicalNs || physicalNs;
+    const wasUndergroundBeforePositionUpdate = rt.undergroundMode;
+
+    // ★ 予約イベントを通らなくても、変更駅200m圏内なら列情本体を適用する。
+    //    その後、同じGPS更新内で後半経路と到着確認タイマーも整合させる。
+    if (!rt.undergroundMode && processMidTrainChangeAtPosition(midChangePositionNs)) {
+        updateActiveGuideSegmentFromPosition(latitude, longitude);
+        physicalNs = nearestStation(latitude, longitude);
     }
 
     // ★ 有楽区間を通る上り列車は、練馬の200m圏内への進入で地下待機に入る。
@@ -7802,19 +9047,43 @@ function onPos(pos) {
         exitUndergroundMode("main", { forceStationName: "練馬", recalculateGuidePlan: true });
     }
 
-    // 地下解除と同じGPS更新で変更駅にいる場合も、ここで後半経路へ切り替える。
-    if (!rt.undergroundMode) {
-        maybeRecalculateGuidePlanAtMidChangeStation(physicalNs);
+    // 地下解除と同じGPS更新で変更駅にいる場合も、ここで列情と後半経路を切り替える。
+    if (
+        wasUndergroundBeforePositionUpdate &&
+        !rt.undergroundMode &&
+        processMidTrainChangeAtPosition(physicalNs)
+    ) {
+        updateActiveGuideSegmentFromPosition(latitude, longitude);
+        physicalNs = nearestStation(latitude, longitude);
     }
+
+    // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行。
+    //    変更駅より後からの途中起動・地点リセットが確定した場合は、
+    //    後半列情と後半経路を適用してから次停車駅を初期化する。
+    const startupNs = rt.startupMode
+        ? nearestStationForReference(latitude, longitude)
+        : physicalNs;
+    const startupMidChangeCaughtUp = handleStartupPosition(
+        startupNs,
+        latitude,
+        longitude,
+    );
+
+    if (startupMidChangeCaughtUp) {
+        updateActiveGuideSegmentFromPosition(latitude, longitude);
+        physicalNs = nearestStation(latitude, longitude);
+    }
+
+    // 「案内しない」設定の地点は、音声案内だけを対象外にする。
+    const guidanceNs = physicalNs && !physicalNs.guidanceDisabled
+        ? physicalNs
+        : null;
 
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
     updateSegmentDisplay(physicalNs, latitude, longitude);
 
     // ★ 追加: カーナビ（右側 BAND2）のスポット表示
     updateNavSpotsOnBand2(latitude, longitude);
-
-    // ★ 起動モード中なら「現在駅＋次駅」を決めるロジックを先に実行
-    handleStartupPosition(physicalNs);
 
     // ★ 駅案内ロジック（「案内しない」設定の地点は音声対象から外す）
     maybeSpeak(guidanceNs);
@@ -7934,14 +9203,45 @@ function computeMidChangeTriggerStation(fromName, targetName, direction) {
 }
 
 // ★ 実際に「後半列車」の情報へ切り替える処理
-function applyMidTrainChange() {
+//   予約イベントと変更駅200m補完が同時に成立しても、一度だけ適用する。
+function applyMidTrainChange(reason) {
     const cfg2 = state.config.second || {};
-    if (!state.config.endChange || !cfg2.trainNo) return;
+    const rt = state.runtime;
+    if (
+        !state.config.endChange ||
+        !cfg2.trainNo ||
+        !rt.midChangePending ||
+        rt.midChangeApplied
+    ) {
+        return false;
+    }
+
+    const operationPlan = cfg2.source === "operation-control"
+        ? cfg2.operationPlan
+        : null;
+    const isOperationAdjustment = !!operationPlan;
+    const isTokorozawaKotesashiDeadhead =
+        cfg2.source === TOKOROZAWA_KOTESASHI_DEADHEAD_SOURCE;
+
+    if (
+        isOperationAdjustment &&
+        (!Array.isArray(operationPlan.passStations) ||
+            !operationPlan.manualPlatforms ||
+            !operationPlan.comparisonStops)
+    ) {
+        console.error("運転整理の停車・番線計画を読み取れないため、列情変更を適用できません。", {
+            changeStation: cfg2.changeStation,
+            operationPlan,
+        });
+        return false;
+    }
 
     // 変更前種別の基本パターンとの差分だけを手動操作として保存する。
     // 同一列車番号でも、前半種別の通過駅一覧そのものは引き継がない。
     const manualStopOverrides =
-        captureManualStopOverrides();
+        isOperationAdjustment || isTokorozawaKotesashiDeadhead
+        ? null
+        : captureManualStopOverrides();
 
     // 列車情報を後半列車に上書き
     state.config.trainNo = cfg2.trainNo || state.config.trainNo;
@@ -7949,23 +9249,46 @@ function applyMidTrainChange() {
     state.config.dest    = cfg2.dest    || state.config.dest;
     state.config.cars    = cfg2.cars    || state.config.cars;
 
-    // 追加停車駅セットも後半列車用に切替
-    state.runtime.nonPassengerExtraStops = new Set(
-        state.runtime.nonPassengerExtraStopsSecond || []
-    );
+    if (isOperationAdjustment) {
+        // 「反映」後に利用者が調整した停車・通過・番線を、そのまま一括適用する。
+        rt.nonPassengerExtraStops = new Set(
+            operationPlan.nonPassengerExtraStops || [],
+        );
+        rt.passStations = new Set(operationPlan.passStations);
+        rt.manualPlatforms = { ...operationPlan.manualPlatforms };
+        rt.platformChanges = new Set(
+            Object.keys(operationPlan.manualPlatforms),
+        );
 
-    // 種別が変わるので停車パターンを再構築する。
-    // この場面では、同一列番用の旧スナップショットで上書きしない。
-    buildPassStationList({
-        restoreTrainScopedManualSettings: false,
-    });
+        // この比較基準に対する差だけを、臨時停車／臨時通過として案内する。
+        rt.operationBaselineStops = {
+            ...operationPlan.comparisonStops,
+        };
+        rt.operationChangeActive = true;
+    } else {
+        // 追加停車駅セットも後半列車用に切替
+        rt.nonPassengerExtraStops = new Set(
+            rt.nonPassengerExtraStopsSecond || []
+        );
 
-    // 基本パターンは変更後種別を使い、手動で変えた停車・通過だけ戻す。
-    applyManualStopOverrides(manualStopOverrides);
+        // 種別が変わるので停車パターンを再構築する。
+        // この場面では、同一列番用の旧スナップショットで上書きしない。
+        buildPassStationList({
+            restoreTrainScopedManualSettings: false,
+        });
 
-    state.runtime.midChangePending        = false;
-    state.runtime.midChangeApplied        = true;
-    state.runtime.midChangeTriggerStation = null;
+        // 基本パターンは変更後種別を使い、手動で変えた停車・通過だけ戻す。
+        // 所-指回送プリセットは所沢・小手指の2駅停車を固定するため、
+        // 前半列車の手動停車差分は引き継がない。
+        applyManualStopOverrides(manualStopOverrides);
+        rt.operationBaselineStops = null;
+        rt.operationChangeActive = false;
+    }
+
+    rt.midChangePending        = false;
+    rt.midChangeApplied        = true;
+    rt.midChangeTriggerStation = null;
+    rt.midChangeAppliedReason  = String(reason || "reserved-trigger");
 
     // 画面の表示（種別バッジ・列番・行先）も更新しておく
     renderGuidance();
@@ -7973,6 +9296,44 @@ function applyMidTrainChange() {
     // 「列情変更」「方向幕確認」の案内をここで実施
     speakOnce("midchange_change", "列情変更");
     speakOnce("midchange_maku", "方向幕確認");
+
+    return true;
+}
+
+// 変更駅の200m圏内にいることを確認できた時点で、到着後処理を一度だけ行う。
+// 初回測位がすでに200m以内でも、予約イベントの有無に依存せず動作する。
+function maybeHandleMidChangeArrival(ns) {
+    const rt = state.runtime;
+    const cfg2 = state.config.second || {};
+    const changeStation = String(cfg2.changeStation || "").trim();
+
+    if (
+        !rt.started ||
+        !rt.midChangeApplied ||
+        rt.midChangeArrivalHandled ||
+        !changeStation ||
+        !ns ||
+        ns.name !== changeStation ||
+        !Number.isFinite(ns.distance) ||
+        ns.distance > 200
+    ) {
+        return false;
+    }
+
+    // 種別・列番・行先を変更後の内容で再描画する。
+    renderGuidance();
+
+    if (rt.midChangeConfirmTimer) {
+        clearTimeout(rt.midChangeConfirmTimer);
+    }
+
+    rt.midChangeArrivalHandled = true;
+    rt.midChangeConfirmTimer = setTimeout(() => {
+        rt.midChangeConfirmTimer = null;
+        speakOnce("midchange_confirm", "列情確認");
+    }, 20000);
+
+    return true;
 }
 
 // ==== 次停車駅大型表示 ====
@@ -8134,11 +9495,7 @@ function maybeSpeak(ns) {
     // ★ ルート確定
     updateRouteLock(ns);
 
-    const t = state.config.type;
     const d = state.runtime.speedKmh;
-
-    // ★ 回送/試運転/臨時かどうか（ドア扱い注意の制御に使う）
-    const isNonP = isNonPassenger(t);
 
     // ★ 前回の最近傍駅と距離
     const prevName = state.runtime.prevStationName;
@@ -8167,16 +9524,24 @@ function maybeSpeak(ns) {
         applyMidTrainChange();
     }
 
+    // 予約済み・200m補完のどちらで列情を適用した場合も、
+    // 変更駅到着後の表示更新と確認タイマーは同じ処理へ集約する。
+    maybeHandleMidChangeArrival(ns);
+
     // 特記事項
     otherSpeaks(ns);
 
+    // 同じGPS更新内で途中駅列情変更が適用されることがあるため、
+    // 種別は切替判定の後で取得する。
+    const t = state.config.type;
+    const isNonP = isNonPassenger(t);
+
     const key = ns.name;
 
-    const baseStop = baseIsStop(ns.name);
-    const isStop = !state.runtime.passStations.has(ns.name);
-
-    const isExtraStop = !baseStop && isStop; // 本来通過→いま停車
-    const isExtraPass = baseStop && !isStop; // 本来停車→いま通過
+    const stopClassification = getStopGuidanceClassification(ns.name);
+    const isStop = stopClassification.isStop;
+    const isExtraStop = stopClassification.isExtraStop;
+    const isExtraPass = stopClassification.isExtraPass;
 
     // ★ 停車すべき駅の190m以内では、その駅の発車時刻を表示
     maybeShowDepartureForNearbyStopStation(ns, isStop);
@@ -8240,11 +9605,11 @@ function maybeSpeak(ns) {
             }
 
             // ★ ここから先の判定は、すでに変更後種別で行われる
-            const baseNextStop = baseIsStop(nextName);
-            const isNextStop   = !state.runtime.passStations.has(nextName);
-
-            const isExtraStopNext = !baseNextStop && isNextStop;
-            const isExtraPassNext = baseNextStop && !isNextStop;
+            const nextStopClassification =
+                getStopGuidanceClassification(nextName);
+            const isNextStop = nextStopClassification.isStop;
+            const isExtraStopNext = nextStopClassification.isExtraStop;
+            const isExtraPassNext = nextStopClassification.isExtraPass;
 
             if (isNextStop) {
                 const word = isExtraStopNext ? "臨時停車" : "停車";
@@ -8383,41 +9748,6 @@ function maybeSpeak(ns) {
             state.runtime.lastStopStation = nextName || null;
         }
 
-        // ★ ここから追加：途中駅列情変更の「変更駅」に到着したタイミング
-        const cfg2 = state.config.second || {};
-        const isChangeStation =
-            state.runtime.midChangeApplied &&
-            !state.runtime.midChangeArrivalHandled &&
-            cfg2.changeStation &&
-            ns.name === cfg2.changeStation;
-
-        if (isChangeStation) {
-            const root = document.getElementById("screen-guidance");
-            if (root) {
-                // 案内画面の種別・列番・行先を変更後のものに更新
-                if (root._badgeType) {
-                    // ★ 縦書きクラスを維持する
-                    root._badgeType.className = "badge badge-vertical " + typeClass(state.config.type);
-                    root._badgeType.textContent = state.config.type;
-                }
-                if (root._cellNo) {
-                    root._cellNo.textContent = state.config.trainNo;
-                }
-                if (root._cellDest) {
-                    root._cellDest.textContent = state.config.dest;
-                }
-            }
-
-            // 20秒後に「列情確認」
-            if (state.runtime.midChangeConfirmTimer) {
-                clearTimeout(state.runtime.midChangeConfirmTimer);
-            }
-            state.runtime.midChangeConfirmTimer = setTimeout(() => {
-                speakOnce("midchange_confirm", "列情確認");
-            }, 20000);
-
-            state.runtime.midChangeArrivalHandled = true;
-        }
     }
 
     // ===== 通過列車の案内 =====
@@ -8598,13 +9928,174 @@ function screenExtraStops() {
     return root;
 }
 
+function screenInitialPlatforms() {
+    const root = el("div", {
+        class: "screen initial-platform-screen",
+        id: "screen-initial-platforms",
+    });
+    const container = el("div", { class: "initial-platform-container" });
+    const title = el("h2", { id: "initialPlatformTitle" }, "番線の設定");
+    const description = el(
+        "p",
+        { class: "initial-platform-description" },
+        "この列車番号には登録済みの番線がありません。各駅の基準番線を選択してください。",
+    );
+    const progress = el(
+        "div",
+        {
+            class: "small initial-platform-progress",
+            id: "initialPlatformProgress",
+            role: "status",
+        },
+        "",
+    );
+    const list = el("div", {
+        class: "initial-platform-list",
+        id: "initialPlatformList",
+    });
+    const actions = el("div", { class: "initial-platform-actions" }, [
+        el(
+            "button",
+            { class: "btn secondary", id: "initialPlatformBack", type: "button" },
+            "戻る",
+        ),
+        el(
+            "button",
+            { class: "btn", id: "initialPlatformStart", type: "button" },
+            "この番線で開始",
+        ),
+    ]);
+
+    container.append(title, description, progress, list, actions);
+    root.appendChild(container);
+
+    root._title = title;
+    root._progress = progress;
+    root._list = list;
+
+    root._updateProgress = () => {
+        const rows = Array.from(
+            list.querySelectorAll(".initial-platform-row"),
+        );
+        const selectedCount = rows.filter((row) =>
+            row.querySelector('input[type="radio"]:checked'),
+        ).length;
+
+        progress.textContent = `${selectedCount} / ${rows.length} 駅を選択済み`;
+    };
+
+    root.addEventListener("change", (event) => {
+        if (event.target.matches('input[type="radio"]')) {
+            root._updateProgress();
+        }
+    });
+
+    root.addEventListener("click", (event) => {
+        if (event.target.id === "initialPlatformBack") {
+            clearInitialPlatformPlan();
+            root.classList.remove("active");
+
+            const startRoot = document.getElementById("screen-start");
+            startRoot.classList.add("active");
+            if (startRoot._updateUndergroundButtonVisibility) {
+                startRoot._updateUndergroundButtonVisibility();
+            }
+            return;
+        }
+
+        if (event.target.id !== "initialPlatformStart") return;
+
+        const selections = {};
+        const rows = Array.from(
+            list.querySelectorAll(".initial-platform-row"),
+        );
+        const missingRow = rows.find(
+            (row) => !row.querySelector('input[type="radio"]:checked'),
+        );
+
+        if (missingRow) {
+            const stationName = missingRow.getAttribute("data-station") || "未選択の駅";
+            alert(`「${stationName}」の番線を選択してください。`);
+            missingRow.scrollIntoView({ block: "center", behavior: "smooth" });
+            const firstRadio = missingRow.querySelector('input[type="radio"]');
+            if (firstRadio) firstRadio.focus();
+            return;
+        }
+
+        rows.forEach((row) => {
+            const stationName = row.getAttribute("data-station");
+            const checked = row.querySelector('input[type="radio"]:checked');
+            if (stationName && checked) {
+                selections[stationName] = checked.value;
+            }
+        });
+
+        const startMode = state.runtime.pendingGuidanceStartMode || "normal";
+        setInitialPlatformPlan(state.config.trainNo, selections);
+        state.runtime.pendingGuidanceStartMode = null;
+        root.classList.remove("active");
+
+        if (!beginGuidanceFromStartScreen(startMode)) {
+            document.getElementById("screen-start").classList.add("active");
+        }
+    });
+
+    return root;
+}
+
+function renderInitialPlatformSetupScreen(stations) {
+    const root = document.getElementById("screen-initial-platforms");
+    if (!root || !root._list) return;
+
+    const rows = Array.isArray(stations)
+        ? stations
+        : getInitialPlatformSetupStations();
+    root._list.innerHTML = "";
+    root._title.textContent =
+        `列車番号 ${state.config.trainNo || "----"} の番線設定`;
+
+    rows.forEach((item, stationIndex) => {
+        const row = el("div", {
+            class: "initial-platform-row",
+            "data-station": item.stationName,
+        });
+        row.appendChild(
+            el("div", { class: "initial-platform-station-name" }, item.stationName),
+        );
+
+        const choices = el("div", { class: "initial-platform-choices" });
+        item.platformNumbers.forEach((platformNumber, platformIndex) => {
+            const id = `initialPlatform_${stationIndex}_${platformIndex}`;
+            const input = el("input", {
+                type: "radio",
+                name: `initialPlatform_${stationIndex}`,
+                value: platformNumber,
+                id,
+            });
+            const label = el(
+                "label",
+                { for: id, class: "initial-platform-choice" },
+                [input, el("span", {}, `${platformNumber}番`)],
+            );
+            choices.appendChild(label);
+        });
+
+        row.appendChild(choices);
+        root._list.appendChild(row);
+    });
+
+    root._updateProgress();
+    root._list.scrollTop = 0;
+}
+
 
 function init() {
 	const app = document.getElementById("app");
 	app.append(screenSettings());
 	app.append(screenStart());
 	app.append(screenGuidance());
-    app.append(screenExtraStops()); 
+    app.append(screenExtraStops());
+    app.append(screenInitialPlatforms());
 }
 
 // ★ 追加停車駅画面のリストを描画

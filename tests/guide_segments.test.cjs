@@ -7,6 +7,10 @@ const appSource = fs.readFileSync(
     path.join(__dirname, "..", "app.js"),
     "utf8",
 );
+const stylesSource = fs.readFileSync(
+    path.join(__dirname, "..", "styles.css"),
+    "utf8",
+);
 
 function createHarness() {
     const document = {
@@ -208,6 +212,72 @@ function testCrossingsRemainNavSpotsAndGuideStartCandidates() {
     assert.equal(result.hiddenOnOtherSegment, true);
 }
 
+function testNavSpotStationsFollowActiveGuideSegment() {
+    const context = createHarness();
+    context.csvText = new TextDecoder("shift_jis").decode(
+        fs.readFileSync(path.join(__dirname, "..", "data", "stationdata.csv")),
+    );
+
+    const result = evaluateJson(
+        context,
+        `(() => {
+            const data = parseStationDataCsv(csvText);
+            state.datasets.stations = data.stations;
+            state.datasets.navSpots = data.navSpots;
+            state.runtime.routeLine = "main";
+
+            const higashiHanno = data.navSpots.find(
+                (spot) => spot.kind === "駅" && spot.name === "東飯能"
+            );
+            const hanno = data.navSpots.find(
+                (spot) => spot.kind === "駅" && spot.name === "飯能"
+            );
+
+            state.runtime.activeGuideSegmentId = "池袋4";
+            const ikebukuro4 = {
+                higashiHanno: shouldDisplayNavSpotOnBand2(higashiHanno),
+                hanno: shouldDisplayNavSpotOnBand2(hanno),
+            };
+
+            state.runtime.activeGuideSegmentId = "池袋5";
+            const ikebukuro5 = {
+                higashiHanno: shouldDisplayNavSpotOnBand2(higashiHanno),
+                hanno: shouldDisplayNavSpotOnBand2(hanno),
+            };
+
+            state.runtime.activeGuideSegmentId = null;
+            const legacyRouteFallback =
+                shouldDisplayNavSpotOnBand2(higashiHanno);
+
+            return {
+                higashiHannoSegments: higashiHanno.guideSegmentIds,
+                hannoSegments: hanno.guideSegmentIds,
+                ikebukuro4,
+                ikebukuro5,
+                legacyRouteFallback,
+            };
+        })()`,
+    );
+
+    assert.deepEqual(result.higashiHannoSegments, ["池袋5"]);
+    assert.deepEqual(result.hannoSegments, ["池袋4", "池袋5"]);
+    assert.deepEqual(
+        result.ikebukuro4,
+        { higashiHanno: false, hanno: true },
+        "池袋4では東飯能を隠し、境界駅の飯能は表示する。",
+    );
+    assert.deepEqual(
+        result.ikebukuro5,
+        { higashiHanno: true, hanno: true },
+        "池袋5では東飯能と境界駅の飯能を表示する。",
+    );
+    assert.equal(
+        result.legacyRouteFallback,
+        true,
+        "案内区間の確定前は既存のrouteLineによる駅表示を維持する。",
+    );
+}
+
 function testGuidePlanBranchesAndTerminals() {
     const context = createHarness();
     setDestinations(context);
@@ -350,6 +420,135 @@ function testGuideSegmentIndicatorUsesGpsStatusColor() {
     assert.equal(startRoot._gpsStatus.textContent, "GPS");
 }
 
+function testUndeterminedGuideSegmentShowsRedCross() {
+    const context = createHarness();
+    const guidanceRoot = {
+        _guideSegmentStatus: { textContent: "", style: {} },
+    };
+    const startRoot = {
+        _gpsStatus: { textContent: "", style: {} },
+    };
+    context.document.getElementById = (id) => {
+        if (id === "screen-guidance") return guidanceRoot;
+        if (id === "screen-start") return startRoot;
+        return null;
+    };
+
+    vm.runInContext(
+        `
+            state.runtime.started = true;
+            state.runtime.activeGuideSegmentId = null;
+            state.runtime.lastGpsUpdate = Date.now();
+            state.runtime.undergroundMode = false;
+            state.runtime.autoUndergroundReady = false;
+            setGpsStatus("GPS");
+        `,
+        context,
+    );
+
+    assert.equal(guidanceRoot._guideSegmentStatus.textContent, "×");
+    assert.equal(guidanceRoot._guideSegmentStatus.style.display, "inline");
+    assert.equal(guidanceRoot._guideSegmentStatus.style.color, "red");
+    assert.equal(startRoot._gpsStatus.style.color, "red");
+}
+
+function testStopGuidanceClearsUndergroundMode() {
+    const context = createHarness();
+
+    vm.runInContext(
+        `
+            state.config.trainNo = "1002";
+            state.runtime.started = true;
+            state.runtime.undergroundMode = true;
+            state.runtime.undergroundSource = "autoUp";
+            state.runtime.undergroundLastToStationName = "新桜台";
+            state.runtime.guideSegmentBeforeUnderground = "池袋2";
+            state.runtime.activeGuideSegmentId = "有楽";
+            state.runtime.routeLine = "yuraku";
+            state.runtime.routeLocked = true;
+            stopGuidance();
+        `,
+        context,
+    );
+
+    assert.equal(vm.runInContext("state.runtime.started", context), false);
+    assert.equal(vm.runInContext("state.runtime.undergroundMode", context), false);
+    assert.equal(vm.runInContext("state.runtime.undergroundSource", context), null);
+    assert.equal(vm.runInContext("state.runtime.undergroundLastToStationName", context), null);
+    assert.equal(vm.runInContext("state.runtime.guideSegmentBeforeUnderground", context), null);
+    assert.equal(vm.runInContext("state.runtime.routeLine", context), null);
+    assert.equal(vm.runInContext("state.runtime.routeLocked", context), false);
+}
+
+function testCrossingMessageCanBeShownAndHidden() {
+    const context = createHarness();
+    const activeClasses = new Set();
+    const attributes = {};
+    let focusCalled = false;
+    const modal = {
+        classList: {
+            add(value) { activeClasses.add(value); },
+            remove(value) { activeClasses.delete(value); },
+        },
+        setAttribute(name, value) { attributes[name] = value; },
+    };
+    const message = { textContent: "" };
+    const closeButton = {
+        focus() { focusCalled = true; },
+    };
+    const guidanceRoot = {
+        _navSpotMessageModal: modal,
+        _navSpotMessageText: message,
+        _navSpotMessageClose: closeButton,
+    };
+    context.document.getElementById = (id) =>
+        id === "screen-guidance" ? guidanceRoot : null;
+
+    context.crossingName = "石神井公園10号踏切（長い名称の確認）";
+    vm.runInContext("showNavSpotNamePopup(crossingName)", context);
+
+    assert.equal(message.textContent, context.crossingName);
+    assert.equal(activeClasses.has("active"), true);
+    assert.equal(attributes["aria-hidden"], "false");
+    assert.equal(focusCalled, true);
+
+    vm.runInContext("hideNavSpotNamePopup()", context);
+    assert.equal(activeClasses.has("active"), false);
+    assert.equal(attributes["aria-hidden"], "true");
+}
+
+function getCssRule(selector) {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = stylesSource.match(
+        new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "s"),
+    );
+    assert.ok(match, `CSS rule not found: ${selector}`);
+    return match[1];
+}
+
+function testCrossingBandLayoutAndStackingOrder() {
+    const trackRule = getCssRule("#screen-guidance .nav-track");
+    const trainRule = getCssRule("#screen-guidance .nav-train");
+    const stationRule = getCssRule(".nav-spot--station");
+    const crossingRule = getCssRule(".nav-spot--crossing");
+    const messageRule = getCssRule(".nav-spot-message-text");
+
+    assert.match(crossingRule, /width:\s*100%/);
+    assert.match(crossingRule, /height:\s*14px/);
+    assert.match(crossingRule, /overflow:\s*visible/);
+    assert.match(crossingRule, /z-index:\s*1/);
+    assert.match(trackRule, /z-index:\s*2/);
+    assert.match(stationRule, /z-index:\s*3/);
+    assert.match(trainRule, /z-index:\s*4/);
+    assert.match(messageRule, /overflow-wrap:\s*anywhere/);
+
+    assert.match(
+        appSource,
+        /if\s*\(e\.target\s*===\s*navSpotMessageModal\)\s*\{\s*closeNavSpotMessage\(\)/s,
+        "踏切名メッセージは背景タップでも閉じられる必要がある。",
+    );
+}
+
 function testUndergroundWaitUsesDelayApiToStationName() {
     const context = createHarness();
 
@@ -451,6 +650,7 @@ function testMidChangeRouteWaitsForChangeStation200mRadius() {
                 changeStation: "西所沢",
                 dest: "西武球場前",
             };
+            state.runtime.started = true;
             applyGuidePlan({
                 segmentIds: ["池袋3", "池袋4", "池袋5", "秩父1", "秩父2"],
                 terminalName: "西武秩父",
@@ -478,6 +678,49 @@ function testMidChangeRouteWaitsForChangeStation200mRadius() {
     assert.deepEqual(
         evaluateJson(context, "({ plan: state.runtime.guidePlan, terminal: state.runtime.guideTerminalName })"),
         { plan: ["狭山"], terminal: "西武球場前" },
+    );
+    assert.equal(
+        vm.runInContext("state.runtime.guideMidChangeRouteApplied", context),
+        true,
+    );
+}
+
+function testMidChangeRouteRetriesAfterRecalculationFailure() {
+    const context = createHarness();
+    context.console = { ...console, warn() {} };
+
+    vm.runInContext(
+        `
+            state.config.direction = "下り";
+            state.config.endChange = true;
+            state.config.second = {
+                trainNo: "9999",
+                changeStation: "西所沢",
+                dest: "西武球場前",
+            };
+            state.runtime.started = true;
+            state.runtime.guideMidChangeRouteApplied = false;
+            recalculateGuidePlanFromStation = () => false;
+        `,
+        context,
+    );
+
+    context.changePosition = { name: "西所沢", distance: 200 };
+    assert.equal(
+        vm.runInContext("maybeRecalculateGuidePlanAtMidChangeStation(changePosition)", context),
+        false,
+        "経路再計算に失敗した時点では適用済みにしない。",
+    );
+    assert.equal(
+        vm.runInContext("state.runtime.guideMidChangeRouteApplied", context),
+        false,
+    );
+
+    vm.runInContext("recalculateGuidePlanFromStation = () => true;", context);
+    assert.equal(
+        vm.runInContext("maybeRecalculateGuidePlanAtMidChangeStation(changePosition)", context),
+        true,
+        "次のGPS更新で経路再計算を再試行できる。",
     );
     assert.equal(
         vm.runInContext("state.runtime.guideMidChangeRouteApplied", context),
@@ -531,13 +774,19 @@ function testOneSegmentGpsJumpDoesNotCommitAwayFromBoundary() {
 testStationDataGuideSegmentColumn();
 testGuidanceDisabledColumnIsMetadata();
 testCrossingsRemainNavSpotsAndGuideStartCandidates();
+testNavSpotStationsFollowActiveGuideSegment();
 testGuidePlanBranchesAndTerminals();
 testGuidePlanStopsAtItsTerminal();
 testGuidanceDisabledStationIsSkippedAsNextVoiceTarget();
 testGuideSegmentIndicatorUsesGpsStatusColor();
+testUndeterminedGuideSegmentShowsRedCross();
+testStopGuidanceClearsUndergroundMode();
+testCrossingMessageCanBeShownAndHidden();
+testCrossingBandLayoutAndStackingOrder();
 testGuideRouteValidationRejectsUnregisteredDestinations();
 testMidChangeRecalculatesFromChangeStation();
 testMidChangeRouteWaitsForChangeStation200mRadius();
+testMidChangeRouteRetriesAfterRecalculationFailure();
 testOneSegmentGpsJumpDoesNotCommitAwayFromBoundary();
 testUndergroundWaitUsesDelayApiToStationName();
 console.log("guide segment tests passed");
