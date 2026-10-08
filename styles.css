@@ -81,6 +81,77 @@ input[type="text"], select, input[type="number"] {
   margin: 0 12px 12px;
 }
 
+/* 案内開始前の経路判定と運転停車選択 */
+.prestart-route-status {
+  margin: 16px 0;
+  line-height: 1.5;
+}
+
+.prestart-route-actions,
+.operating-stops-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operating-stops-screen.active {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.operating-stops-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  gap: 8px;
+}
+
+.operating-stops-description {
+  color: #ddd;
+  line-height: 1.45;
+}
+
+.operating-stops-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.operating-stops-phase + .operating-stops-phase {
+  margin-top: 14px;
+}
+
+.operating-stops-phase h3 {
+  margin-bottom: 6px;
+}
+
+.operating-stops-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0;
+  padding: 5px 2px;
+  border-bottom: 1px solid #333;
+  color: #fff;
+}
+
+.operating-stops-choice input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  accent-color: #2c7be5;
+}
+
 /* =========================
    案内開始前：未登録列番の基準番線設定
 ========================= */
@@ -1150,6 +1221,13 @@ input[type="text"], select, input[type="number"] {
   color: #fff;
 }
 
+.operation-stop-mode {
+  width: auto;
+  min-width: 7em;
+  min-height: 34px;
+  padding: 4px 8px;
+}
+
 .operation-platform-button {
   min-height: 34px;
   margin-left: 4px;
@@ -1168,7 +1246,8 @@ input[type="text"], select, input[type="number"] {
 }
 
 .operation-station-block button:disabled,
-.operation-station-block input:disabled {
+.operation-station-block input:disabled,
+.operation-station-block select:disabled {
   cursor: not-allowed;
 }
 

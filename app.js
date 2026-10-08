@@ -264,6 +264,7 @@ const state = {
       stationIdMap: {},         // ★ 駅名 → 駅ID
       nonPassengerTypes: null,  // ★ 回送/臨時の細分類
       navSpots: [],             // ★ 追加: カーナビ用スポット一覧（station.csv）
+      navGeometry: null,        // 右側ナビ用の線路順序（座標は stationdata.csv を参照）
     },
     config: {
         direction: "上り",
@@ -299,6 +300,9 @@ const state = {
         lastPosition: null,
         speedKmh: 0,
         passStations: new Set(),
+        operatingStops: new Set(),
+        operatingStopsSecond: new Set(),
+        operatingStopBaseStations: new Set(),
         platformChanges: new Set(),
         lastStopDistance: null,
         prevStationName: null,
@@ -370,6 +374,8 @@ const state = {
         speedOutlierStreak: 0,   // ★ 追加：外れ値が連続した回数
         headingRad: null,   // ★ 追加: 進行方向（北=0, 時計回り, ラジアン）
         navAxis: null,      // ★ 追加: 画面用進行方向ベクトル { x, y }
+        navRoutePath: null,
+        navMatchedPosition: null,
     },
 };
 
@@ -383,6 +389,7 @@ async function loadData() {
         carIcons,
         platforms,
         nonPassengerTypes,
+        navGeometry,
     ] = await Promise.all([
         fetchCsvText("./data/stationdata.csv"),
         fetch("./data/types.json").then((r) => r.json()),
@@ -391,6 +398,16 @@ async function loadData() {
         fetch("./data/car_icons.json").then((r) => r.json()),
         fetch("./data/platform.json").then((r) => r.json()),
         fetch("./data/nonpassenger_types.json").then((r) => r.json()),
+        // ナビ専用データの欠落で音声やGPSの起動まで止めない。
+        fetch("./data/nav_geometry.json")
+            .then((r) => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.json();
+            })
+            .catch((error) => {
+                console.warn("ナビ用線形データを読み込めませんでした。従来表示へ戻します。", error);
+                return null;
+            }),
     ]);
 
     const stationData = parseStationDataCsv(stationDataCsvText);
@@ -400,6 +417,7 @@ async function loadData() {
     state.datasets.stationIds   = stationData.stationIds;
     state.datasets.stationIdMap = stationData.stationIdMap;
     state.datasets.navSpots     = stationData.navSpots;
+    state.datasets.navGeometry  = navGeometry;
 
     // ★ 従来どおり JSON から読み込むデータ
     state.datasets.types             = types;
@@ -2519,7 +2537,7 @@ function isJapaneseHoliday(date) {
 }
 
 // ==== 1列車限りの手動設定 保存・復元 ====
-// 対象：臨時停車・臨時通過・着発線変更
+// 対象：臨時停車・臨時通過・運転停車・着発線変更
 // 条件：直前の列車番号と同じ列車番号が再設定された場合だけ復元する
 
 function saveTrainScopedManualSettingsSnapshot() {
@@ -2533,6 +2551,7 @@ function saveTrainScopedManualSettingsSnapshot() {
 
         // 臨時停車・臨時通過を含む現在の停車/通過状態
         passStations: Array.from(rt.passStations || []),
+        operatingStops: Array.from(rt.operatingStops || []),
 
         // 着発線変更
         manualPlatforms: { ...(rt.manualPlatforms || {}) },
@@ -2547,6 +2566,9 @@ function resetTrainScopedManualSettings() {
 
     // 臨時停車・臨時通過
     rt.passStations = new Set();
+    rt.operatingStops = new Set();
+    rt.operatingStopsSecond = new Set();
+    rt.operatingStopBaseStations = new Set();
 
     // 着発線変更
     rt.manualPlatforms = {};
@@ -3250,6 +3272,9 @@ function screenSettings() {
 
         // 新しい設定操作では、前回まだ開始していない番線入力を持ち越さない。
         clearInitialPlatformPlan();
+        state.runtime.operatingStops = new Set();
+        state.runtime.operatingStopsSecond = new Set();
+        state.runtime.operatingStopBaseStations = new Set();
 
         // 途中駅で列情変更
         state.config.endChange = !!(
@@ -3348,17 +3373,8 @@ function screenSettings() {
                 .getElementById("screen-extra-stops")
                 .classList.add("active");
         } else {
-            // 追加停車駅の個別設定が不要な場合 → そのまま開始画面へ
-            startGpsWatch();
-            document
-                .getElementById("screen-start")
-                .classList.add("active");
-
-            // ★ 下り列車なら「地下起動」ボタンを表示
-            const startRoot = document.getElementById("screen-start");
-            if (startRoot && startRoot._updateUndergroundButtonVisibility) {
-                startRoot._updateUndergroundButtonVisibility();
-            }
+            // 案内開始地点から実際の経由線区を確認してから開始画面へ進む。
+            continueAfterTrainSettings();
         }
     }
 
@@ -3515,6 +3531,86 @@ function requestGuidanceStart(startMode) {
     }
 
     return beginGuidanceFromStartScreen(startMode);
+}
+
+let operatingStopRouteRequestSerial = 0;
+
+function showStartScreenAfterSettings() {
+    startGpsWatch();
+    const root = document.getElementById("screen-start");
+    if (!root) return;
+    root.classList.add("active");
+    if (root._updateUndergroundButtonVisibility) {
+        root._updateUndergroundButtonVisibility();
+    }
+}
+
+function requestPreStartOperatingStopRoute() {
+    const root = document.getElementById("screen-prestart-route");
+    if (!root || !root.classList.contains("active")) return;
+    const serial = ++operatingStopRouteRequestSerial;
+    root._retry.disabled = true;
+    root._status.textContent = "GPSから案内経路を確認しています…";
+
+    const routeError = getGuideRouteValidationError();
+    if (routeError) {
+        root._status.textContent = routeError;
+        return;
+    }
+    if (!navigator.geolocation) {
+        root._status.textContent = "GPSを利用できません。位置情報の設定を確認してください。";
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        (position) => {
+            if (serial !== operatingStopRouteRequestSerial ||
+                !root.classList.contains("active")) return;
+
+            const accuracy = position.coords.accuracy ?? Infinity;
+            const ageMs = Date.now() - position.timestamp;
+            if (accuracy > 200 || ageMs > 10000) {
+                root._status.textContent =
+                    "位置情報の精度または鮮度が不足しています。再試行してください。";
+                root._retry.disabled = false;
+                return;
+            }
+
+            const setup = buildOperatingStopSetupFromPosition(
+                position.coords.latitude, position.coords.longitude,
+            );
+            if (!setup) {
+                root._status.textContent =
+                    "現在地から案内経路を判定できません。位置を確認して再試行してください。";
+                root._retry.disabled = false;
+                return;
+            }
+
+            root.classList.remove("active");
+            if (setup.traversesTarget) {
+                renderOperatingStopSetupScreen(setup);
+                document.getElementById("screen-operating-stops")
+                    .classList.add("active");
+            } else {
+                showStartScreenAfterSettings();
+            }
+        },
+        () => {
+            if (serial !== operatingStopRouteRequestSerial ||
+                !root.classList.contains("active")) return;
+            root._status.textContent =
+                "位置情報を取得できません。再試行するか、設定画面へ戻ってください。";
+            root._retry.disabled = false;
+        },
+        { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 },
+    );
+}
+
+function continueAfterTrainSettings() {
+    const root = document.getElementById("screen-prestart-route");
+    if (!root) return;
+    root.classList.add("active");
+    requestPreStartOperatingStopRoute();
 }
 
 function screenStart() {
@@ -4077,6 +4173,130 @@ function getStopForTypeWithExtras(stationName, type, extraStops) {
     return shouldStop;
 }
 
+const OPERATING_STOP_SEGMENT_IDS = new Set(["池袋5", "秩父1"]);
+
+function isOperatingStopEligibleStation(stationName) {
+    if (isGuidanceDisabledStation(stationName)) return false;
+    return getGuideSegmentIdsForStation(stationName).some(
+        (segmentId) => OPERATING_STOP_SEGMENT_IDS.has(segmentId),
+    );
+}
+
+function getTraversedOperatingStopSegmentIds(stationOrder) {
+    const traversed = new Set();
+    for (let index = 1; index < (stationOrder || []).length; index++) {
+        const before = new Set(getGuideSegmentIdsForStation(stationOrder[index - 1]));
+        for (const segmentId of getGuideSegmentIdsForStation(stationOrder[index])) {
+            if (before.has(segmentId) && OPERATING_STOP_SEGMENT_IDS.has(segmentId)) {
+                traversed.add(segmentId);
+            }
+        }
+    }
+    return traversed;
+}
+
+function getOperatingStopCandidates(stationOrder, type, extraStops, terminalName) {
+    const traversed = getTraversedOperatingStopSegmentIds(stationOrder);
+    return (stationOrder || []).filter((stationName) =>
+        stationName !== terminalName &&
+        isOperatingStopEligibleStation(stationName) &&
+        getGuideSegmentIdsForStation(stationName).some(
+            (segmentId) => traversed.has(segmentId),
+        ) &&
+        !getStopForTypeWithExtras(stationName, type, extraStops),
+    );
+}
+
+function buildOperatingStopSetupFromPosition(lat, lng) {
+    const startSpot = findNearestGuideStartSpot(lat, lng);
+    if (!startSpot) return null;
+
+    const firstPlan = startSpot && buildGuidePlanFromStartSpot(
+        startSpot, state.config.dest, state.config.direction,
+    );
+    const second = state.config.second || {};
+    const hasSecond = !!(
+        state.config.endChange && second.trainNo && second.changeStation
+    );
+    const fromPosition = (plan) => {
+        const order = getGuideStationOrderForPlan(plan, state.config.direction);
+        let nearestIndex = 0;
+        let nearestDistance = Infinity;
+        order.forEach((stationName, index) => {
+            const station = state.datasets.stations?.[stationName];
+            if (!station) return;
+            const distance = haversine(lat, lng, station.lat, station.lng);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestIndex = index;
+            }
+        });
+        return order.slice(nearestIndex);
+    };
+
+    let firstPhaseOrder = [];
+    let secondPhaseOrder = [];
+    let secondPlan = null;
+
+    if (!hasSecond) {
+        if (!firstPlan) return null;
+        firstPhaseOrder = fromPosition(firstPlan);
+    } else {
+        secondPlan = buildGuidePlanFromStation(
+            second.changeStation, second.dest, state.config.direction,
+        );
+        if (!secondPlan) return null;
+
+        const firstOrder = firstPlan ? fromPosition(firstPlan) : [];
+        const changeIndex = firstOrder.indexOf(second.changeStation);
+        if (changeIndex >= 0) {
+            // 変更駅までの最後の駅間も前半列車の走行線区に含める。
+            // 変更駅そのものの停車計画は後半列車側で選ぶ。
+            firstPhaseOrder = firstOrder.slice(0, changeIndex + 1);
+            secondPhaseOrder = getGuideStationOrderForPlan(
+                secondPlan, state.config.direction,
+            );
+        } else {
+            // 変更駅より後からの途中起動は、後半列車側の現在位置から選ぶ。
+            const secondFromPosition = buildGuidePlanFromStartSpot(
+                startSpot, second.dest, state.config.direction,
+            );
+            if (!secondFromPosition) return null;
+            secondPlan = secondFromPosition;
+            secondPhaseOrder = fromPosition(secondFromPosition);
+        }
+    }
+
+    const firstCandidates = getOperatingStopCandidates(
+        firstPhaseOrder,
+        state.config.type,
+        state.runtime.nonPassengerExtraStops,
+        firstPlan?.terminalName,
+    ).filter((stationName) =>
+        !hasSecond || stationName !== second.changeStation,
+    );
+
+    let secondCandidates = [];
+    if (hasSecond) {
+        secondCandidates = getOperatingStopCandidates(
+            secondPhaseOrder,
+            second.type,
+            state.runtime.nonPassengerExtraStopsSecond,
+            secondPlan.terminalName,
+        );
+    }
+
+    return {
+        startSpot: startSpot.name,
+        firstCandidates,
+        secondCandidates,
+        firstTrainNo: state.config.trainNo,
+        secondTrainNo: hasSecond ? second.trainNo : null,
+        traversesTarget: getTraversedOperatingStopSegmentIds(firstPhaseOrder).size > 0 ||
+            getTraversedOperatingStopSegmentIds(secondPhaseOrder).size > 0,
+    };
+}
+
 function createStopPlanFromPassStations(passStations) {
     const passSet = passStations instanceof Set
         ? passStations
@@ -4195,11 +4415,37 @@ function buildProjectedOperationBaseline() {
         if (manualOverrides.has(stationName)) {
             shouldStop = manualOverrides.get(stationName);
         }
+        if (rt.operatingStopsSecond.has(stationName)) {
+            shouldStop = true;
+        }
 
         stops[stationName] = shouldStop;
     });
 
     return { stops, error: null };
+}
+
+function getProjectedOperatingStops() {
+    const rt = state.runtime;
+    const second = state.config.second || {};
+    const projected = new Set(rt.operatingStops || []);
+    if (state.config.endChange && rt.midChangePending && !rt.midChangeApplied) {
+        const futureStations = second.source === "operation-control" &&
+            second.operationPlan?.routeStations
+            ? second.operationPlan.routeStations
+            : getMidChangeSecondGuideContext()?.stationOrder || [];
+        futureStations.forEach((stationName) => projected.delete(stationName));
+        if (second.source === "operation-control" && second.operationPlan) {
+            (second.operationPlan.operatingStops || []).forEach(
+                (stationName) => projected.add(stationName),
+            );
+        } else {
+            (rt.operatingStopsSecond || []).forEach(
+                (stationName) => projected.add(stationName),
+            );
+        }
+    }
+    return projected;
 }
 
 function getOperationAdjustmentStateSignature() {
@@ -4239,6 +4485,8 @@ function getOperationAdjustmentStateSignature() {
             nonPassengerExtraStopsSecond: Array.from(
                 rt.nonPassengerExtraStopsSecond || [],
             ).sort(),
+            operatingStops: Array.from(rt.operatingStops || []).sort(),
+            operatingStopsSecond: Array.from(rt.operatingStopsSecond || []).sort(),
         },
     });
 }
@@ -4354,6 +4602,13 @@ function buildOperationAdjustmentPreview(input, baselineStops) {
         );
     });
 
+    const projectedOperatingStops = getProjectedOperatingStops();
+    const operatingStops = validation.routeStations.filter((stationName) =>
+        isOperatingStopEligibleStation(stationName) &&
+        projectedOperatingStops.has(stationName),
+    );
+    operatingStops.forEach((stationName) => { stops[stationName] = true; });
+
     // 行先駅は列車種別の停車パターンにかかわらず停車扱いとする。
     if (terminalName && Object.prototype.hasOwnProperty.call(stops, terminalName)) {
         stops[terminalName] = true;
@@ -4362,6 +4617,7 @@ function buildOperationAdjustmentPreview(input, baselineStops) {
     return {
         ...validation,
         stops,
+        operatingStops,
         terminalName,
     };
 }
@@ -4394,6 +4650,7 @@ function buildDirectOperationAdjustmentPreview(input) {
         plan: null,
         routeStations,
         stops,
+        operatingStops: Array.from(state.runtime.operatingStops || []),
         terminalName: null,
         platforms,
         directEdit: true,
@@ -4407,9 +4664,31 @@ function applyDirectOperationAdjustment(editedPlan) {
         return false;
     }
 
+    const rt = state.runtime;
     const manualPlatforms = { ...(editedPlan.manualPlatforms || {}) };
+    const nextOperatingStops = new Set(editedPlan.operatingStops || []);
+    const oldOperatingStops = rt.operatingStops || new Set();
+    const baselineStops = { ...(rt.operationBaselineStops || {}) };
+    let operatingStopChanged = false;
+
+    for (const stationName of getOperationStationNames()) {
+        if (
+            oldOperatingStops.has(stationName) ===
+            nextOperatingStops.has(stationName)
+        ) continue;
+        // 運転停車→通過は直前の運転停車（停車予定）を基準に臨時通過。
+        // 通過→運転停車は直前の通過予定を基準に臨時停車。
+        baselineStops[stationName] = !rt.passStations.has(stationName);
+        operatingStopChanged = true;
+    }
+
     state.runtime.passStations = new Set(editedPlan.passStations);
     state.runtime.manualPlatforms = manualPlatforms;
+    rt.operatingStops = nextOperatingStops;
+    if (operatingStopChanged) {
+        rt.operationBaselineStops = baselineStops;
+        rt.operationChangeActive = true;
+    }
     state.runtime.platformChanges = new Set(
         Object.keys(manualPlatforms),
     );
@@ -4543,14 +4822,31 @@ function openOperationAdjustment() {
             "data-station": stationName,
         });
         const row = el("div", { class: "operation-station-row" });
-        const checkbox = el("input", { type: "checkbox" });
-        checkbox.checked = initialStops[stationName] !== false;
-        const label = el("label", { class: "operation-station-label" }, [
-            checkbox,
-            " ",
-            stationName,
-        ]);
+        const eligibleForOperatingStop =
+            isOperatingStopEligibleStation(stationName);
+        const checkbox = eligibleForOperatingStop
+            ? null
+            : el("input", { type: "checkbox" });
+        if (checkbox) checkbox.checked = initialStops[stationName] !== false;
+        const label = el("label", { class: "operation-station-label" },
+            checkbox ? [checkbox, " ", stationName] : stationName,
+        );
         row.appendChild(label);
+
+        if (eligibleForOperatingStop) {
+            const modeSelect = el("select", {
+                class: "operation-stop-mode",
+                "aria-label": `${stationName}の停車扱い`,
+            }, [
+                el("option", { value: "pass" }, "通過"),
+                el("option", { value: "stop" }, "停車"),
+                el("option", { value: "operating-stop" }, "運転停車"),
+            ]);
+            modeSelect.value = state.runtime.operatingStops.has(stationName)
+                ? "operating-stop"
+                : (initialStops[stationName] ? "stop" : "pass");
+            row.appendChild(modeSelect);
+        }
 
         const stationPlatMap = dayData && dayData[stationName]
             ? dayData[stationName]
@@ -4632,11 +4928,20 @@ function openOperationAdjustment() {
             const stationName = block.getAttribute("data-station");
             const inRoute = routeSet.has(stationName);
             const checkbox = block.querySelector('input[type="checkbox"]');
+            const modeSelect = block.querySelector(".operation-stop-mode");
             const scopeText = block.querySelector(".operation-station-scope");
 
             block.classList.toggle("operation-route-excluded", !inRoute);
             if (checkbox) {
                 checkbox.disabled = !inRoute || stationName === terminalName;
+            }
+            if (modeSelect) {
+                modeSelect.disabled = !inRoute;
+                const passOption = modeSelect.querySelector('option[value="pass"]');
+                if (passOption) passOption.disabled = stationName === terminalName;
+                if (inRoute && stationName === terminalName && modeSelect.value === "pass") {
+                    modeSelect.value = "stop";
+                }
             }
             block.querySelectorAll("button[data-plat]").forEach((button) => {
                 button.disabled = !inRoute;
@@ -4673,12 +4978,19 @@ function openOperationAdjustment() {
 
     function applyPreviewToRows(preview) {
         const routeSet = new Set(preview.routeStations);
+        const operatingStopSet = new Set(preview.operatingStops || []);
 
         box.querySelectorAll(".operation-station-block").forEach((block) => {
             const stationName = block.getAttribute("data-station");
             const checkbox = block.querySelector('input[type="checkbox"]');
             if (checkbox && Object.prototype.hasOwnProperty.call(preview.stops, stationName)) {
                 checkbox.checked = !!preview.stops[stationName];
+            }
+            const modeSelect = block.querySelector(".operation-stop-mode");
+            if (modeSelect) {
+                modeSelect.value = operatingStopSet.has(stationName)
+                    ? "operating-stop"
+                    : (preview.stops[stationName] ? "stop" : "pass");
             }
 
             if (!routeSet.has(stationName)) return;
@@ -4724,16 +5036,23 @@ function openOperationAdjustment() {
         const passStations = [];
         const manualPlatforms = {};
         const nonPassengerExtraStops = [];
+        const operatingStops = [];
         const routeSet = new Set(preview.routeStations);
 
         box.querySelectorAll(".operation-station-block").forEach((block) => {
             const stationName = block.getAttribute("data-station");
             const checkbox = block.querySelector('input[type="checkbox"]');
-            const shouldStop = !!(checkbox && checkbox.checked);
+            const modeSelect = block.querySelector(".operation-stop-mode");
+            const shouldStop = modeSelect
+                ? modeSelect.value !== "pass"
+                : !!(checkbox && checkbox.checked);
             stopMap[stationName] = shouldStop;
 
             if (!shouldStop) passStations.push(stationName);
             if (!routeSet.has(stationName)) return;
+            if (modeSelect && modeSelect.value === "operating-stop") {
+                operatingStops.push(stationName);
+            }
 
             if (
                 isNonPassenger(preview.input.type) &&
@@ -4762,6 +5081,7 @@ function openOperationAdjustment() {
             passStations,
             manualPlatforms,
             nonPassengerExtraStops,
+            operatingStops,
         };
     }
 
@@ -4783,6 +5103,12 @@ function openOperationAdjustment() {
             if (
                 !!preview.baselineStops[stationName] !==
                 !!editedPlan.stopMap[stationName]
+            ) {
+                return true;
+            }
+            if (
+                !!preview.baselineOperatingStops?.includes(stationName) !==
+                editedPlan.operatingStops.includes(stationName)
             ) {
                 return true;
             }
@@ -4836,6 +5162,7 @@ function openOperationAdjustment() {
         }
 
         preview.baselineStops = { ...preview.stops };
+        preview.baselineOperatingStops = [...preview.operatingStops];
         preview.inputSignature = getInputSignature(preview.input);
         preview.stateSignature = getOperationAdjustmentStateSignature();
         previewState = preview;
@@ -4900,6 +5227,9 @@ function openOperationAdjustment() {
         }
 
         preview.baselineStops = { ...baseline.stops };
+        preview.baselineOperatingStops = Array.from(
+            getProjectedOperatingStops(),
+        );
         preview.inputSignature = getInputSignature(preview.input);
         preview.stateSignature = getOperationAdjustmentStateSignature();
         previewState = preview;
@@ -5015,6 +5345,7 @@ function openOperationAdjustment() {
                 nonPassengerExtraStops: [
                     ...editedPlan.nonPassengerExtraStops,
                 ],
+                operatingStops: [...editedPlan.operatingStops],
                 routeStations: [...previewState.routeStations],
                 terminalName: previewState.terminalName,
             },
@@ -5614,7 +5945,8 @@ function baseIsStop(stationName) {
 function getStopGuidanceClassification(stationName) {
     const rt = state.runtime;
     const isStop = !rt.passStations.has(stationName);
-    let referenceStop = baseIsStop(stationName);
+    let referenceStop = baseIsStop(stationName) ||
+        rt.operatingStopBaseStations.has(stationName);
 
     if (
         rt.operationChangeActive &&
@@ -5632,6 +5964,7 @@ function getStopGuidanceClassification(stationName) {
         referenceStop,
         isExtraStop: !referenceStop && isStop,
         isExtraPass: referenceStop && !isStop,
+        isOperatingStop: isStop && rt.operatingStops.has(stationName),
     };
 }
 
@@ -5661,6 +5994,27 @@ function buildPassStationList(options = {}) {
     ) {
         restoreTrainScopedManualSettingsIfSameTrainNo();
     }
+
+    // 同一列番の前回運用を復元しても、今回の開始前画面で外した運転停車は戻さない。
+    const saved = state.runtime.lastTrainScopedManualSettings;
+    if (
+        options.restoreTrainScopedManualSettings !== false &&
+        saved && String(saved.trainNo || "") === String(state.config.trainNo || "")
+    ) {
+        for (const stationName of saved.operatingStops || []) {
+            if (
+                !state.runtime.operatingStops.has(stationName) &&
+                !baseIsStop(stationName)
+            ) {
+                state.runtime.passStations.add(stationName);
+            }
+        }
+    }
+
+    // 運転停車は実際には停車するため、通過駅一覧から除外する。
+    for (const stationName of state.runtime.operatingStops) {
+        state.runtime.passStations.delete(stationName);
+    }
 }
 
 
@@ -5680,6 +6034,9 @@ function captureManualStopOverrides() {
     for (const stationName of Object.keys(stations)) {
         const baseStop = baseIsStop(stationName);
         const currentStop = !passStations.has(stationName);
+
+        // 前半だけの運転停車を、後半列車の手動停車へ暗黙に引き継がない。
+        if (state.runtime.operatingStops.has(stationName)) continue;
 
         if (baseStop !== currentStop) {
             overrides.set(stationName, currentStop);
@@ -6091,6 +6448,8 @@ function clearGuidePlan() {
     rt.activeGuideSegmentId = null;
     rt.guideSegmentCandidateId = null;
     rt.guidePlanErrorShown = false;
+    rt.navRoutePath = null;
+    rt.navMatchedPosition = null;
     updateGuideSegmentStatus();
 }
 
@@ -6105,6 +6464,8 @@ function applyGuidePlan(plan, activeGuideSegmentId) {
     rt.activeGuideSegmentId = activeGuideSegmentId || plan.segmentIds[0];
     rt.guideSegmentCandidateId = rt.activeGuideSegmentId;
     rt.guidePlanErrorShown = false;
+    rt.navRoutePath = null;
+    rt.navMatchedPosition = null;
     updateGuideSegmentStatus();
     // 区間略称が初めて表示される時点でも、直近の GPS 状態の色を反映する。
     setGpsStatus("");
@@ -6203,6 +6564,12 @@ function maybeRecalculateGuidePlanAtMidChangeStation(ns) {
         return false;
     }
 
+    const beforeRoute = getGuidePlanStationOrder();
+    const changeIndex = beforeRoute.indexOf(changeStation);
+    const completedStations = changeIndex >= 0
+        ? beforeRoute.slice(0, changeIndex)
+        : [];
+
     const routeUpdated = recalculateGuidePlanFromStation(
         changeStation,
         nextDestination,
@@ -6219,6 +6586,11 @@ function maybeRecalculateGuidePlanAtMidChangeStation(ns) {
 
     rt.guideMidChangeRouteApplied = true;
     rt.midChangeRouteLastWarningAt = 0;
+    // 変更駅まで実走した後は、先行切替中だけ残していた前半の運転停車を外す。
+    completedStations.forEach((stationName) => {
+        rt.operatingStops.delete(stationName);
+        rt.operatingStopBaseStations.delete(stationName);
+    });
 
     if (
         rt.prevStationName === changeStation &&
@@ -7951,6 +8323,8 @@ function stopGuidance() {
     rt.started = false;
     rt.voiceMuted = false;
     rt.autoUndergroundReady = false;
+    rt.navRoutePath = null;
+    rt.navMatchedPosition = null;
 
     // ★ 地下状態を次回の案内へ持ち越さない。
     //   started=false にしてから共通の解除処理を呼ぶことで、
@@ -8231,6 +8605,237 @@ function computeCurrentSegmentPair(lat, lng) {
         : { prev: best.b, next: best.a };
 }
 
+// 右側ナビだけが使う線路上の距離。駅・踏切の座標は stationdata.csv を参照し、
+// nav_geometry.json は分岐ごとの通過順だけを指定する。
+const NAV_DISPLAY_RANGE_METERS = 600;
+
+function getNavSegmentPoints(segmentId) {
+    const segment = getGuideSegment(segmentId);
+    const geometry = state.datasets.navGeometry;
+    const references = geometry && geometry.version === 1 && geometry.segments
+        ? geometry.segments[segmentId]
+        : null;
+    if (!segment || !Array.isArray(references) || references.length < 2) return null;
+
+    const spots = new Map();
+    for (const spot of state.datasets.navSpots || []) {
+        if (getGuideSegmentIdsForSpot(spot).includes(segmentId)) {
+            spots.set(`${spot.kind}:${spot.name}`, spot);
+        }
+    }
+
+    const points = [];
+    for (const reference of references) {
+        if (typeof reference === "string") {
+            const spot = spots.get(reference);
+            if (!spot || !Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) {
+                return null;
+            }
+            points.push({
+                kind: spot.kind,
+                name: spot.name,
+                lat: spot.lat,
+                lng: spot.lng,
+                reference,
+            });
+        } else if (
+            reference && Number.isFinite(reference.lat) && Number.isFinite(reference.lng)
+        ) {
+            // カーブの途中に登録する、表示対象ではない補助点。
+            points.push({ kind: "補助点", name: "", lat: reference.lat, lng: reference.lng });
+        } else {
+            return null;
+        }
+    }
+
+    // 駅順は既存の GUIDE_SEGMENTS を正とし、誤った線形データでは従来表示へ戻す。
+    const stationNames = points.filter((point) => point.kind === "駅")
+        .map((point) => point.name);
+    if (stationNames.join("|") !== segment.stations.join("|")) return null;
+    return points;
+}
+
+function buildNavRoutePath() {
+    const plan = state.runtime.guidePlan || [];
+    const direction = state.config.direction;
+    if (!plan.length || !state.datasets.navGeometry) return null;
+
+    const key = `${direction}|${plan.join("|")}`;
+    const points = [];
+    const edges = [];
+    const stations = [];
+    const spotDistances = new Map();
+
+    for (const segmentId of plan) {
+        const segmentPoints = getNavSegmentPoints(segmentId);
+        if (!segmentPoints) {
+            console.warn("ナビ用線形データの参照または駅順が不正です。", segmentId);
+            return null;
+        }
+
+        const ordered = direction === "上り"
+            ? [...segmentPoints].reverse()
+            : segmentPoints;
+
+        for (let i = 0; i < ordered.length; i++) {
+            const point = ordered[i];
+            const last = points[points.length - 1];
+
+            // 分岐駅は前後の案内区間で重複する。同一駅を距離0の接続点にする。
+            if (i === 0 && last) {
+                if (
+                    point.kind !== "駅" || point.name !== last.name ||
+                    haversine(point.lat, point.lng, last.lat, last.lng) > 1
+                ) {
+                    console.warn("ナビ用線形データの区間接続が不正です。", segmentId);
+                    return null;
+                }
+                if (point.reference) {
+                    spotDistances.set(`${segmentId}|${point.reference}`, last.distance);
+                }
+                continue;
+            }
+
+            const length = last
+                ? haversine(last.lat, last.lng, point.lat, point.lng)
+                : 0;
+            const distance = last ? last.distance + length : 0;
+            const pathPoint = { ...point, distance };
+            points.push(pathPoint);
+
+            if (last && length > 0) {
+                edges.push({ a: last, b: pathPoint, length, segmentId });
+            }
+            if (point.reference) {
+                spotDistances.set(`${segmentId}|${point.reference}`, distance);
+            }
+            if (point.kind === "駅" && stations[stations.length - 1]?.name !== point.name) {
+                stations.push({ name: point.name, distance });
+            }
+        }
+    }
+
+    if (!edges.length || stations.length < 2) return null;
+    return { key, points, edges, stations, spotDistances };
+}
+
+function getNavRoutePath() {
+    const rt = state.runtime;
+    const plan = rt.guidePlan || [];
+    if (!plan.length || !state.datasets.navGeometry) return null;
+
+    const key = `${state.config.direction}|${plan.join("|")}`;
+    if (rt.navRoutePath?.key === key) {
+        return rt.navRoutePath.invalid ? null : rt.navRoutePath;
+    }
+
+    const path = buildNavRoutePath();
+    rt.navRoutePath = path || { key, invalid: true };
+    rt.navMatchedPosition = null;
+    return path;
+}
+
+function projectPointOnNavRoute(path, lat, lng, segmentIds, previous, timeMs) {
+    const meterPerLat = 111320;
+    let best = null;
+
+    const elapsed = previous ? (timeMs - previous.time) / 1000 : 0;
+    const usePrevious = previous && previous.pathKey === path.key &&
+        elapsed >= 0 && elapsed <= 30;
+    const dt = usePrevious ? elapsed : 0;
+    const rawMove = usePrevious
+        ? haversine(previous.lat, previous.lng, lat, lng)
+        : 0;
+    const speedMove = usePrevious
+        ? Math.max(0, state.runtime.speedKmh || 0) / 3.6 * dt
+        : 0;
+    const expectedMove = Math.max(80, rawMove * 2.5, speedMove * 1.5);
+
+    for (const edge of path.edges) {
+        if (segmentIds && !segmentIds.includes(edge.segmentId)) continue;
+
+        const meterPerLng = meterPerLat * Math.cos(toRad((edge.a.lat + edge.b.lat) / 2));
+        const bx = (edge.b.lng - edge.a.lng) * meterPerLng;
+        const by = (edge.b.lat - edge.a.lat) * meterPerLat;
+        const px = (lng - edge.a.lng) * meterPerLng;
+        const py = (lat - edge.a.lat) * meterPerLat;
+        const lengthSquared = bx * bx + by * by;
+        if (lengthSquared < 1) continue;
+
+        const fraction = Math.max(0, Math.min(1, (px * bx + py * by) / lengthSquared));
+        const lateralDistance = Math.hypot(px - fraction * bx, py - fraction * by);
+        const distance = edge.a.distance + fraction * edge.length;
+        // 近接した別の腕へGPSが飛ばないよう、直前の線路上位置をナビだけに使う。
+        const excessMove = usePrevious
+            ? Math.max(0, Math.abs(distance - previous.distance) - expectedMove)
+            : 0;
+        const score = lateralDistance + excessMove * 0.3;
+
+        if (!best || score < best.score) {
+            best = { distance, lateralDistance, score };
+        }
+    }
+
+    return best;
+}
+
+function getNavStationPair(path, distance) {
+    const stations = path.stations;
+    let index = 0;
+    while (
+        index < stations.length - 2 &&
+        distance >= stations[index + 1].distance
+    ) {
+        index++;
+    }
+    return { prev: stations[index].name, next: stations[index + 1].name };
+}
+
+function getNavDisplayContext(lat, lng, timeMs) {
+    const path = getNavRoutePath();
+    if (!path) return null;
+
+    const rt = state.runtime;
+    const timestamp = Number.isFinite(timeMs) ? timeMs : Date.now();
+    const projected = projectPointOnNavRoute(
+        path, lat, lng, null, rt.navMatchedPosition, timestamp,
+    );
+    // 従来の駅間判定と同じく、路線から大きく外れたGPSはナビへ採用しない。
+    if (!projected || projected.lateralDistance > 5000) return null;
+
+    rt.navMatchedPosition = {
+        pathKey: path.key,
+        distance: projected.distance,
+        lat,
+        lng,
+        time: timestamp,
+    };
+    return {
+        path,
+        distance: projected.distance,
+        stationPair: getNavStationPair(path, projected.distance),
+    };
+}
+
+function getNavSpotDistance(path, spot) {
+    const reference = `${spot.kind}:${spot.name}`;
+    const segmentIds = getGuideSegmentIdsForSpot(spot)
+        .filter((segmentId) => (state.runtime.guidePlan || []).includes(segmentId));
+    const preferred = state.runtime.activeGuideSegmentId;
+    const orderedIds = preferred && segmentIds.includes(preferred)
+        ? [preferred, ...segmentIds.filter((segmentId) => segmentId !== preferred)]
+        : segmentIds;
+
+    for (const segmentId of orderedIds) {
+        const distance = path.spotDistances.get(`${segmentId}|${reference}`);
+        if (Number.isFinite(distance)) return distance;
+    }
+
+    // 将来CSVへ追加されたスポットが線形データ未登録でも、その区間上に投影する。
+    const projected = projectPointOnNavRoute(path, spot.lat, spot.lng, segmentIds, null, 0);
+    return projected ? projected.distance : null;
+}
+
 // 右側ナビ（縦の線）に、駅名ラベル用の要素を用意する
 function ensureSideSegmentElements(root) {
     if (!root) return null;
@@ -8335,7 +8940,7 @@ function ensureSideSegmentElements(root) {
 
 
 
-function updateSegmentDisplay(ns, lat, lng) {
+function updateSegmentDisplay(ns, lat, lng, navContext) {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._segmentInfo) return;
 
@@ -8360,7 +8965,9 @@ function updateSegmentDisplay(ns, lat, lng) {
 
     // 駅間（A⇔B）の推定
     let seg = null;
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    if (navContext?.stationPair) {
+        seg = navContext.stationPair;
+    } else if (Number.isFinite(lat) && Number.isFinite(lng)) {
         seg = computeCurrentSegmentPair(lat, lng);
     }
 
@@ -8480,18 +9087,17 @@ function showNavSpotNamePopup(spotName) {
   }
 }
 
-// ★ カーナビ: 右側 BAND2 の線路上にスポットを配置する
-//   現在位置と「自分がいる駅間の両端駅（prev / next）」の座標から
-//   線路方向の前後（前方=上 / 後方=下）を判定する。
-function updateNavSpotsOnBand2(latitude, longitude) {
+// ★ カーナビ: 右側 BAND2 の線路上にスポットを配置する。
+//   線路順序データがあれば、曲線や分岐を含む経路上の距離で前後を判定する。
+function updateNavSpotsOnBand2(latitude, longitude, navContext) {
   const root = document.getElementById("screen-guidance");
   if (!root) return;
 
   // 右側中央バンド全体を使うスポットレイヤー。
-  const navContext = ensureSideSegmentElements(root);
+  const navElements = ensureSideSegmentElements(root);
   const trackEl =
     root._navBand2Track ||
-    (navContext && navContext.spotLayer) ||
+    (navElements && navElements.spotLayer) ||
     root._navSpotLayer;
 
   if (!trackEl) {
@@ -8506,8 +9112,9 @@ function updateNavSpotsOnBand2(latitude, longitude) {
     return;
   }
 
-  // 現在の「駅間 prev / next」を stations.json から推定
-  const seg = computeCurrentSegmentPair(latitude, longitude);
+  // 線路沿いの位置を優先し、データが使えない場合だけ従来の直線判定へ戻す。
+  const nav = navContext || getNavDisplayContext(latitude, longitude);
+  const seg = nav?.stationPair || computeCurrentSegmentPair(latitude, longitude);
   if (!seg || !seg.prev || !seg.next) {
     // 駅間が決められないときは一旦何も描画しない
     trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
@@ -8534,40 +9141,37 @@ function updateNavSpotsOnBand2(latitude, longitude) {
   // 既存のスポット表示を削除
   trackEl.querySelectorAll(".nav-spot").forEach((el) => el.remove());
 
-  // ==== ローカル座標系を構築（prev 駅を原点とする）====
-  const lat0 = prevInfo.lat;
-  const lng0 = prevInfo.lng;
-  const baseRad = toRad(lat0);
-  const meterPerLat = 111320; // おおよその値
-  const meterPerLng = meterPerLat * Math.cos(baseRad);
+  let toLocal = null;
+  let ABx = 0;
+  let ABy = 0;
+  let len2 = 0;
+  let segLen = 0;
+  let tP = 0;
 
-  function toLocal(lat, lng) {
-    return {
-      x: (lng - lng0) * meterPerLng, // 東を +x
-      y: (lat - lat0) * meterPerLat, // 北を +y
-    };
+  if (!nav) {
+    // 線形データを使えない場合だけ、従来の駅間直線へ投影する。
+    const lat0 = prevInfo.lat;
+    const lng0 = prevInfo.lng;
+    const meterPerLat = 111320;
+    const meterPerLng = meterPerLat * Math.cos(toRad(lat0));
+    toLocal = (lat, lng) => ({
+      x: (lng - lng0) * meterPerLng,
+      y: (lat - lat0) * meterPerLat,
+    });
+
+    const A = toLocal(prevInfo.lat, prevInfo.lng);
+    const B = toLocal(nextInfo.lat, nextInfo.lng);
+    ABx = B.x - A.x;
+    ABy = B.y - A.y;
+    len2 = ABx * ABx + ABy * ABy;
+    if (!Number.isFinite(len2) || len2 < 1) return;
+
+    segLen = Math.sqrt(len2);
+    const P = toLocal(latitude, longitude);
+    tP = ((P.x - A.x) * ABx + (P.y - A.y) * ABy) / len2;
   }
 
-  // 線分 prev(A) → next(B)
-  const A = toLocal(prevInfo.lat, prevInfo.lng); // ほぼ (0,0)
-  const B = toLocal(nextInfo.lat, nextInfo.lng);
-  const ABx = B.x - A.x;
-  const ABy = B.y - A.y;
-  const len2 = ABx * ABx + ABy * ABy;
-
-  if (!Number.isFinite(len2) || len2 < 1) {
-    // prev / next がほぼ同じ座標 → 方向が定まらないので中止
-    return;
-  }
-
-  const segLen = Math.sqrt(len2);
-
-  // 現在位置 P のパラメータ tP（A を 0, B を 1 としたときの位置）
-  const P = toLocal(latitude, longitude);
-  const tP =
-    ((P.x - A.x) * ABx + (P.y - A.y) * ABy) / len2;
-
-  const maxRange = 600; // [m] 現在位置から半径 600m を表示範囲とする
+  const maxRange = NAV_DISPLAY_RANGE_METERS;
   const markers = [];
 
   for (const spot of spots) {
@@ -8578,19 +9182,22 @@ function updateNavSpotsOnBand2(latitude, longitude) {
     const name = spot.name;
     if (!name) continue;
 
-    // 現在位置からの距離 [m]（BAND 全体のスケール用）
-    const dist = haversine(latitude, longitude, spot.lat, spot.lng);
+    let dist;
+    let along;
+    if (nav) {
+      const spotDistance = getNavSpotDistance(nav.path, spot);
+      if (!Number.isFinite(spotDistance)) continue;
+      along = spotDistance - nav.distance;
+      dist = Math.abs(along);
+    } else {
+      // 従来互換: 線形データがない場合のみ、直線距離と駅間直線上の前後関係。
+      dist = haversine(latitude, longitude, spot.lat, spot.lng);
+      const S = toLocal(spot.lat, spot.lng);
+      const tS = ((S.x * ABx + S.y * ABy) / len2);
+      along = (tS - tP) * segLen;
+    }
     if (!Number.isFinite(dist) || dist > maxRange) continue;
 
-    // 線分 prev→next 上での位置関係を、A を基準に判定
-    const S = toLocal(spot.lat, spot.lng);
-    const tS =
-      ((S.x - A.x) * ABx + (S.y - A.y) * ABy) / len2;
-
-    // 現在位置から見た「線路方向の符号付き距離」[m]
-    const along = (tS - tP) * segLen;
-
-    // along > 0 → 前方（進行方向側）、along < 0 → 後方（通過済み側）
     const sign = along >= 0 ? +1 : -1;
 
     markers.push({
@@ -8604,7 +9211,7 @@ function updateNavSpotsOnBand2(latitude, longitude) {
 
   if (!markers.length) return;
 
-  // なるべく近いスポットから描画するが、踏切が密集しても駅の表示を先に確保する。
+  // 線路沿いに近いスポットから描画するが、踏切が密集しても駅を先に確保する。
   markers.sort((a, b) => a.dist - b.dist);
   const maxSpots = 12;
   const stationMarkers = markers.filter((marker) => !marker.isCrossing);
@@ -8793,6 +9400,7 @@ function startStartupLocationDetection(opts) {
 
     // 通常開始・地点リセット・地下解除では、以前の地下待機状態を持ち越さない。
     rt.autoUndergroundReady = false;
+    rt.navMatchedPosition = null;
     stopGpsBlink();
 
     // 通常の案内開始・地点リセットでは、その時点の座標を新しい開始地点として使う。
@@ -9242,11 +9850,14 @@ function onPos(pos) {
         ? physicalNs
         : null;
 
+    // 右側ナビの駅名とスポットを、同じ線路上位置で更新する。
+    const navContext = getNavDisplayContext(latitude, longitude, gpsTime);
+
     // ★ 駅間表示（地下モード中は updateSegmentDisplay 内で非表示）
-    updateSegmentDisplay(physicalNs, latitude, longitude);
+    updateSegmentDisplay(physicalNs, latitude, longitude, navContext);
 
     // ★ 追加: カーナビ（右側 BAND2）のスポット表示
-    updateNavSpotsOnBand2(latitude, longitude);
+    updateNavSpotsOnBand2(latitude, longitude, navContext);
 
     // ★ 駅案内ロジック（「案内しない」設定の地点は音声対象から外す）
     maybeSpeak(guidanceNs);
@@ -9406,6 +10017,27 @@ function applyMidTrainChange(reason) {
         ? null
         : captureManualStopOverrides();
 
+    // 列情は従来どおり変更駅の手前で先行切替することがある。
+    // その場合でも変更駅より手前の運転停車だけは、前半の設定を保持する。
+    const currentOrder = getGuidePlanStationOrder();
+    const changeIndex = currentOrder.indexOf(cfg2.changeStation);
+    const beforeChange = new Set(changeIndex >= 0
+        ? currentOrder.slice(0, changeIndex)
+        : []);
+    const firstOperatingStops = Array.from(rt.operatingStops || [])
+        .filter((stationName) => beforeChange.has(stationName));
+    const firstOperatingStopBase = Array.from(rt.operatingStopBaseStations || [])
+        .filter((stationName) => beforeChange.has(stationName));
+    const firstComparisonStops = {};
+    for (const stationName of beforeChange) {
+        if (Object.prototype.hasOwnProperty.call(
+            rt.operationBaselineStops || {}, stationName,
+        )) {
+            firstComparisonStops[stationName] =
+                rt.operationBaselineStops[stationName];
+        }
+    }
+
     // 列車情報を後半列車に上書き
     state.config.trainNo = cfg2.trainNo || state.config.trainNo;
     state.config.type    = cfg2.type    || state.config.type;
@@ -9418,6 +10050,13 @@ function applyMidTrainChange(reason) {
             operationPlan.nonPassengerExtraStops || [],
         );
         rt.passStations = new Set(operationPlan.passStations);
+        rt.operatingStops = new Set([
+            ...firstOperatingStops,
+            ...(operationPlan.operatingStops || []),
+        ]);
+        rt.operatingStopBaseStations = new Set(firstOperatingStopBase);
+        firstOperatingStops.forEach((stationName) =>
+            rt.passStations.delete(stationName));
         rt.manualPlatforms = { ...operationPlan.manualPlatforms };
         rt.platformChanges = new Set(
             Object.keys(operationPlan.manualPlatforms),
@@ -9433,6 +10072,14 @@ function applyMidTrainChange(reason) {
         rt.nonPassengerExtraStops = new Set(
             rt.nonPassengerExtraStopsSecond || []
         );
+        rt.operatingStops = new Set([
+            ...firstOperatingStops,
+            ...(rt.operatingStopsSecond || []),
+        ]);
+        rt.operatingStopBaseStations = new Set([
+            ...firstOperatingStopBase,
+            ...(rt.operatingStopsSecond || []),
+        ]);
 
         // 種別が変わるので停車パターンを再構築する。
         // この場面では、同一列番用の旧スナップショットで上書きしない。
@@ -9444,8 +10091,10 @@ function applyMidTrainChange(reason) {
         // 所-指回送プリセットは所沢・小手指の2駅停車を固定するため、
         // 前半列車の手動停車差分は引き継がない。
         applyManualStopOverrides(manualStopOverrides);
-        rt.operationBaselineStops = null;
-        rt.operationChangeActive = false;
+        rt.operationBaselineStops = Object.keys(firstComparisonStops).length
+            ? firstComparisonStops
+            : null;
+        rt.operationChangeActive = !!rt.operationBaselineStops;
     }
 
     rt.midChangePending        = false;
@@ -9705,6 +10354,7 @@ function maybeSpeak(ns) {
     const isStop = stopClassification.isStop;
     const isExtraStop = stopClassification.isExtraStop;
     const isExtraPass = stopClassification.isExtraPass;
+    const isOperatingStop = stopClassification.isOperatingStop;
 
     // ★ 停車すべき駅の190m以内では、その駅の発車時刻を表示
     maybeShowDepartureForNearbyStopStation(ns, isStop);
@@ -9882,7 +10532,7 @@ function maybeSpeak(ns) {
         }
         
         // ★ 回送・試運転・臨時は 200m 案内の直後にも「ドア扱い注意」
-        if (isNonP) {
+        if (isNonP && !isOperatingStop) {
             speakOnce("door200_" + key, "ドア扱い注意");
         }
 
@@ -9897,6 +10547,15 @@ function maybeSpeak(ns) {
             if (ns.name === "練馬" && needsSTrainOpStopAtNerima(t, state.config.direction)) {
                 speakOnce("strain_opstop_" + key, "運転停車、ドア扱い注意");
             }
+        }
+
+        // 練馬のSトレインと同じ到着タイミング・文言で案内する。
+        // Sトレイン既存特例と重なる場合は同じ案内を二重に出さない。
+        if (
+            isOperatingStop &&
+            !(ns.name === "練馬" && needsSTrainOpStopAtNerima(t, state.config.direction))
+        ) {
+            speakOnce("opstop_" + key, "運転停車、ドア扱い注意");
         }
 
         // ★ 次駅情報は必ずセット（この後の「次は〜」案内用）
@@ -9999,6 +10658,131 @@ function otherSpeaks(ns) {
 
 
 
+function screenPreStartRoute() {
+    const root = el("div", {
+        class: "screen prestart-route-screen",
+        id: "screen-prestart-route",
+    });
+    const status = el("p", {
+        class: "prestart-route-status",
+        role: "status",
+    }, "GPSから案内経路を確認しています…");
+    const retry = el("button", {
+        class: "btn secondary", type: "button", id: "prestartRouteRetry",
+    }, "再試行");
+    const back = el("button", {
+        class: "btn secondary", type: "button", id: "prestartRouteBack",
+    }, "設定へ戻る");
+    root.appendChild(el("div", { class: "container" }, [
+        el("h2", {}, "経路を確認中"),
+        status,
+        el("div", { class: "prestart-route-actions" }, [back, retry]),
+    ]));
+    root._status = status;
+    root._retry = retry;
+    retry.onclick = requestPreStartOperatingStopRoute;
+    back.onclick = () => {
+        operatingStopRouteRequestSerial++;
+        root.classList.remove("active");
+        document.getElementById("screen-settings").classList.add("active");
+    };
+    return root;
+}
+
+function screenOperatingStops() {
+    const root = el("div", {
+        class: "screen operating-stops-screen",
+        id: "screen-operating-stops",
+    });
+    const list = el("div", { class: "operating-stops-list" });
+    const back = el("button", {
+        class: "btn secondary", type: "button", id: "operatingStopsBack",
+    }, "設定へ戻る");
+    const next = el("button", {
+        class: "btn", type: "button", id: "operatingStopsNext",
+    }, "開始画面へ");
+    root.appendChild(el("div", { class: "operating-stops-container" }, [
+        el("h2", {}, "運転停車の設定"),
+        el("p", { class: "operating-stops-description" },
+            "通過予定駅のうち、運転停車する駅を選択してください。"),
+        list,
+        el("div", { class: "operating-stops-actions" }, [back, next]),
+    ]));
+    root._list = list;
+    back.onclick = () => {
+        root.classList.remove("active");
+        state.runtime.operatingStops = new Set();
+        state.runtime.operatingStopsSecond = new Set();
+        state.runtime.operatingStopBaseStations = new Set();
+        document.getElementById("screen-settings").classList.add("active");
+    };
+    next.onclick = () => {
+        const first = new Set();
+        const second = new Set();
+        list.querySelectorAll('input[type="checkbox"]:checked').forEach((input) => {
+            const stationName = input.getAttribute("data-station");
+            if (!stationName) return;
+            if (input.getAttribute("data-phase") === "second") {
+                second.add(stationName);
+            } else {
+                first.add(stationName);
+            }
+        });
+        state.runtime.operatingStops = first;
+        state.runtime.operatingStopsSecond = second;
+        state.runtime.operatingStopBaseStations = new Set(first);
+        root.classList.remove("active");
+        showStartScreenAfterSettings();
+    };
+    return root;
+}
+
+function renderOperatingStopSetupScreen(setup) {
+    const root = document.getElementById("screen-operating-stops");
+    if (!root || !root._list) return;
+    const list = root._list;
+    list.innerHTML = "";
+
+    const snap = state.runtime.lastTrainScopedManualSettings;
+    const phases = [
+        { key: "first", trainNo: setup.firstTrainNo,
+            candidates: setup.firstCandidates },
+        { key: "second", trainNo: setup.secondTrainNo,
+            candidates: setup.secondCandidates },
+    ];
+    let count = 0;
+    phases.forEach((phase) => {
+        if (!phase.trainNo || !phase.candidates.length) return;
+        const section = el("section", { class: "operating-stops-phase" });
+        const title = setup.secondTrainNo
+            ? `${phase.key === "first" ? "変更前" : "変更後"}（${phase.trainNo}）`
+            : `列車番号 ${phase.trainNo}`;
+        section.appendChild(el("h3", {}, title));
+        phase.candidates.forEach((stationName) => {
+            const input = el("input", {
+                type: "checkbox",
+                "data-phase": phase.key,
+                "data-station": stationName,
+            });
+            input.checked = !!(
+                snap && String(snap.trainNo || "") === String(phase.trainNo) &&
+                (snap.operatingStops || []).includes(stationName)
+            );
+            section.appendChild(el("label", { class: "operating-stops-choice" }, [
+                input,
+                el("span", {}, stationName),
+            ]));
+            count++;
+        });
+        list.appendChild(section);
+    });
+    if (!count) {
+        list.appendChild(el("p", { class: "small" },
+            "経由する対象線区に、選択可能な通過予定駅はありません。"));
+    }
+    list.scrollTop = 0;
+}
+
 // ★ 回送・試運転・臨時用 追加停車駅設定画面
 function screenExtraStops() {
     const root = el("div", { class: "screen", id: "screen-extra-stops" });
@@ -10021,7 +10805,7 @@ function screenExtraStops() {
         el(
             "button",
             { class: "btn", id: "extraNext" },
-            "開始画面へ"
+            "次へ"
         ),
     ]);
     root.appendChild(btnRow);
@@ -10066,7 +10850,7 @@ function screenExtraStops() {
     			return;
     		}
     
-    		// ★ もうキューが無い → ここで初めて開始画面へ
+		// ★ もうキューが無い → 経路と運転停車の確認へ
     		state.runtime.extraStopsMode = null;
     
     		// 案内開始時のデフォルトは 1本目のセット
@@ -10074,16 +10858,8 @@ function screenExtraStops() {
     			state.runtime.nonPassengerExtraStops || []
     		);
     
-             // GPS開始 → 開始画面へ
-            startGpsWatch();
             root.classList.remove("active");
-            const startRoot = document.getElementById("screen-start");
-            if (startRoot) {
-                startRoot.classList.add("active");
-                if (startRoot._updateUndergroundButtonVisibility) {
-                    startRoot._updateUndergroundButtonVisibility();
-                }
-            }
+            continueAfterTrainSettings();
 
     	}
     });
@@ -10255,6 +11031,8 @@ function renderInitialPlatformSetupScreen(stations) {
 function init() {
 	const app = document.getElementById("app");
 	app.append(screenSettings());
+	app.append(screenPreStartRoute());
+	app.append(screenOperatingStops());
 	app.append(screenStart());
 	app.append(screenGuidance());
     app.append(screenExtraStops());

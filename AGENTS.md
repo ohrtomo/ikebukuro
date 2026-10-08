@@ -36,6 +36,7 @@ Codex は、作業を始める前にこの `AGENTS.md` を読み、さらに必�
 - 発車時刻表示
 - 遅延表示
 - 臨時停車・臨時通過
+- 池袋5・秩父1の運転停車設定
 - 着発線変更
 - 行先・種別・列車番号変更
 - 途中駅での列情変更
@@ -224,6 +225,7 @@ navigator.audioSession.type = "transient-solo"
 現在の主要データ:
 
 - `data/stationdata.csv`
+- `data/nav_geometry.json`
 - `data/types.json`
 - `data/destinations.json`
 - `data/train_number_table.json`
