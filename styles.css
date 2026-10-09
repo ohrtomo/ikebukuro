@@ -44,6 +44,24 @@ input[type="text"], select, input[type="number"] {
 .btn.warn { background: #c92a2a; }
 .btn:active { opacity: .85; }
 
+.setting-start-station-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.start-station-status {
+  margin-top: 6px;
+  color: #ddd;
+  line-height: 1.4;
+}
+
+.start-station-hint {
+  margin-top: 6px;
+  color: #aaa;
+  line-height: 1.4;
+}
+
 .btn.voice-cache-waiting {
   opacity: .55;
   cursor: wait;

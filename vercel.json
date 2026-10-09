@@ -20,7 +20,7 @@
       ]
     },
     {
-      "source": "/data/nav_geometry.json",
+      "source": "/data/stationdata.csv",
       "headers": [
         {
           "key": "Cache-Control",

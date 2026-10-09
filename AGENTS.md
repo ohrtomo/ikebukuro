@@ -118,6 +118,7 @@ PC や Android で動くことより、iPadOS Safari / ホーム画面 Web ア�
 ### 4.6 完成ファイルを出力する場合
 ユーザー環境では JS 単体のダウンロードに失敗した実績があるため、**ZIP 形式を優先**する。
 必要なら JS 単体も併記するが、ZIP を主な受け渡し手段とする。
+現行版として渡す ZIP はリポジトリ直下に置く。新しい版を作る際、旧版や変更前バックアップの ZIP は `oldzip/` に保存・移動し、直下へ増やさない。既存の旧版 ZIP は削除せず保持する。
 
 ---
 
@@ -225,7 +226,6 @@ navigator.audioSession.type = "transient-solo"
 現在の主要データ:
 
 - `data/stationdata.csv`
-- `data/nav_geometry.json`
 - `data/types.json`
 - `data/destinations.json`
 - `data/train_number_table.json`
@@ -242,6 +242,9 @@ navigator.audioSession.type = "transient-solo"
 - `station.csv`
 
 の役割を統合済み。
+
+右側ナビのスポット順序も `ナビ順` 列で管理する。スポットの追加・削除に
+`nav_geometry.json` の編集は不要であり、現行ランタイムは同 JSON を読み込まない。
 
 `destinations.json` は **統合保留中**。
 Codex の判断で `stationdata.csv` に統合しない。

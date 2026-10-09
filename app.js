@@ -58,6 +58,7 @@ const STATIONDATA_META_COLUMNS = new Set([
     "駅ID",
     "案内区間",
     "案内しない",
+    "ナビ順",
 ]);
 
 function splitCsvLine(line) {
@@ -151,6 +152,100 @@ function parseGuideSegmentIds(value) {
         });
 }
 
+// ナビ順は下り方向の区間内順位。単一区間は数値、分岐駅は「区間=順位」を併記する。
+function parseNavOrderCell(value, guideSegmentIds) {
+    const text = String(value ?? "").trim();
+    const isRank = (rank) => /^[1-9]\d*$/.test(rank) &&
+        Number.isSafeInteger(Number(rank));
+
+    if (!text || !guideSegmentIds.length) return null;
+    if (guideSegmentIds.length === 1 && isRank(text)) {
+        return { [guideSegmentIds[0]]: Number(text) };
+    }
+
+    const orders = {};
+    for (const part of text.split("|")) {
+        const separator = part.indexOf("=");
+        if (separator < 1 || part.indexOf("=", separator + 1) !== -1) return null;
+
+        const segmentId = part.slice(0, separator).trim();
+        const rank = part.slice(separator + 1).trim();
+        if (
+            !guideSegmentIds.includes(segmentId) ||
+            Object.prototype.hasOwnProperty.call(orders, segmentId) ||
+            !isRank(rank)
+        ) return null;
+
+        orders[segmentId] = Number(rank);
+    }
+
+    return Object.keys(orders).length === guideSegmentIds.length ? orders : null;
+}
+
+// CSVだけから従来の navGeometry と同じ形を作る。異常区間だけ従来ナビへ戻す。
+function buildNavGeometryFromStationRows(rows) {
+    const ordered = Object.fromEntries(GUIDE_SEGMENTS.map((segment) => [segment.id, []]));
+    const invalid = new Set();
+
+    for (const row of rows) {
+        const guideSegmentIds = parseGuideSegmentIds(row["案内区間"]);
+        const navOrder = String(row["ナビ順"] ?? "").trim();
+        if (!guideSegmentIds.length) {
+            if (navOrder) console.warn("案内区間のないスポットにナビ順があります。", row["名称"]);
+            continue;
+        }
+
+        const kind = row["種類"] || "";
+        const name = row["名称"] || "";
+        const lat = parseFloat(row["緯度"]);
+        const lng = parseFloat(row["経度"]);
+        const orders = parseNavOrderCell(navOrder, guideSegmentIds);
+        const validSpot = kind && (kind === "線形補助点" || name) &&
+            Number.isFinite(lat) && Number.isFinite(lng) && orders;
+
+        for (const segmentId of guideSegmentIds) {
+            if (!Object.prototype.hasOwnProperty.call(ordered, segmentId)) {
+                console.warn("未登録の案内区間です。", segmentId, name);
+                continue;
+            }
+            if (!validSpot) {
+                invalid.add(segmentId);
+                console.warn("スポットの座標またはナビ順が不正です。", segmentId, name);
+                continue;
+            }
+
+            ordered[segmentId].push({
+                rank: orders[segmentId],
+                reference: kind === "線形補助点" ? { lat, lng } : `${kind}:${name}`,
+            });
+        }
+    }
+
+    const segments = {};
+    for (const segment of GUIDE_SEGMENTS) {
+        const points = ordered[segment.id];
+        const ranks = new Set();
+        const references = new Set();
+        for (const point of points) {
+            if (ranks.has(point.rank) ||
+                (typeof point.reference === "string" && references.has(point.reference))) {
+                invalid.add(segment.id);
+            }
+            ranks.add(point.rank);
+            if (typeof point.reference === "string") references.add(point.reference);
+        }
+        if (invalid.has(segment.id) || points.length < 2) {
+            console.warn("案内区間のナビ順を利用できません。", segment.id);
+            segments[segment.id] = null;
+            continue;
+        }
+        points.sort((a, b) => a.rank - b.rank);
+        segments[segment.id] = points.map((point) => point.reference);
+    }
+
+    return { version: 1, segments };
+}
+
 function parseStationDataCsv(csvText) {
     const rows = parseCsvText(csvText);
 
@@ -174,7 +269,7 @@ function parseStationDataCsv(csvText) {
 
         // 旧 station.csv 相当：右側ナビ用スポット
         // 緯度・経度がある行だけ使用する。
-        if (hasLatLng) {
+        if (hasLatLng && kind !== "線形補助点") {
             navSpots.push({ kind, name, lat, lng, guideSegmentIds, guidanceDisabled });
         }
 
@@ -238,7 +333,7 @@ function parseStationDataCsv(csvText) {
 }
 
 async function fetchCsvText(path) {
-    const res = await fetch(path);
+    const res = await fetch(path, { cache: "no-store" });
     const buffer = await res.arrayBuffer();
 
     // Excelで保存した Shift-JIS / CP932 CSV と、UTF-8 CSV の両方に対応する。
@@ -264,7 +359,7 @@ const state = {
       stationIdMap: {},         // ★ 駅名 → 駅ID
       nonPassengerTypes: null,  // ★ 回送/臨時の細分類
       navSpots: [],             // ★ 追加: カーナビ用スポット一覧（station.csv）
-      navGeometry: null,        // 右側ナビ用の線路順序（座標は stationdata.csv を参照）
+      navGeometry: null,        // CSVのナビ順から生成した右側ナビ用の線路順序
     },
     config: {
         direction: "上り",
@@ -272,6 +367,7 @@ const state = {
         dest: "",
         cars: 10,
         trainNo: "",
+        startStation: "",
         endChange: false,
 
         second: {
@@ -298,6 +394,8 @@ const state = {
         lastSpoken: {},
         lastStopStation: null,
         lastPosition: null,
+        lastMeasuredPosition: null,
+        startStationPosition: null,
         speedKmh: 0,
         passStations: new Set(),
         operatingStops: new Set(),
@@ -389,7 +487,6 @@ async function loadData() {
         carIcons,
         platforms,
         nonPassengerTypes,
-        navGeometry,
     ] = await Promise.all([
         fetchCsvText("./data/stationdata.csv"),
         fetch("./data/types.json").then((r) => r.json()),
@@ -398,16 +495,6 @@ async function loadData() {
         fetch("./data/car_icons.json").then((r) => r.json()),
         fetch("./data/platform.json").then((r) => r.json()),
         fetch("./data/nonpassenger_types.json").then((r) => r.json()),
-        // ナビ専用データの欠落で音声やGPSの起動まで止めない。
-        fetch("./data/nav_geometry.json")
-            .then((r) => {
-                if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                return r.json();
-            })
-            .catch((error) => {
-                console.warn("ナビ用線形データを読み込めませんでした。従来表示へ戻します。", error);
-                return null;
-            }),
     ]);
 
     const stationData = parseStationDataCsv(stationDataCsvText);
@@ -417,7 +504,9 @@ async function loadData() {
     state.datasets.stationIds   = stationData.stationIds;
     state.datasets.stationIdMap = stationData.stationIdMap;
     state.datasets.navSpots     = stationData.navSpots;
-    state.datasets.navGeometry  = navGeometry;
+    state.datasets.navGeometry  = buildNavGeometryFromStationRows(
+        parseCsvText(stationDataCsvText),
+    );
 
     // ★ 従来どおり JSON から読み込むデータ
     state.datasets.types             = types;
@@ -2755,6 +2844,81 @@ function screenSettings() {
 		destSel.appendChild(el("option", { value: d }, d));
 	});
 
+    // 開始駅は stationdata.csv の「駅」だけから選ぶ。GPS がなくても
+    // この駅を起点に案内経路と運転停車候補を確定できるようにする。
+    const startStationSel = el("select", { id: "startStation" });
+    startStationSel.appendChild(
+        el("option", { value: "" }, "開始駅を選択"),
+    );
+    getOperationStationNames().forEach((stationName) => {
+        startStationSel.appendChild(
+            el("option", { value: stationName }, stationName),
+        );
+    });
+    const startStationStatus = el("div", {
+        class: "small start-station-status", role: "status",
+        id: "startStationStatus",
+    }, "");
+    const btnCurrentStation = el("button", {
+        class: "btn secondary", type: "button", id: "startStationCurrent",
+    }, "現在地");
+    startStationSel.onchange = () => {
+        state.runtime.startStationPosition = null;
+        startStationStatus.textContent = "";
+    };
+    btnCurrentStation.onclick = () => {
+        const applyPosition = (position) => {
+            const nearest = nearestStationForReference(position.lat, position.lng);
+            if (!nearest || !Array.from(startStationSel.options).some(
+                (option) => option.value === nearest.name,
+            )) {
+                startStationStatus.textContent = "最寄り駅を判定できませんでした。";
+                return;
+            }
+            startStationSel.value = nearest.name;
+            state.runtime.startStationPosition = {
+                stationName: nearest.name,
+                lat: position.lat,
+                lng: position.lng,
+                time: position.time,
+            };
+            startStationStatus.textContent =
+                `最後の測位（${new Date(position.time).toLocaleString("ja-JP")}）から${nearest.name}を選択しました。`;
+        };
+
+        const saved = getLastMeasuredPosition();
+        if (saved) {
+            applyPosition(saved);
+            return;
+        }
+        if (!navigator.geolocation) {
+            startStationStatus.textContent =
+                "測位履歴がありません。開始駅を手動で選択してください。";
+            return;
+        }
+        btnCurrentStation.disabled = true;
+        startStationStatus.textContent = "最後の測位を取得しています…";
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                btnCurrentStation.disabled = false;
+                rememberMeasuredPosition(position);
+                const measured = getLastMeasuredPosition();
+                if (measured) {
+                    applyPosition(measured);
+                } else {
+                    startStationStatus.textContent =
+                        "位置情報の精度が不足しています。開始駅を手動で選択してください。";
+                }
+            },
+            () => {
+                btnCurrentStation.disabled = false;
+                startStationStatus.textContent =
+                    "測位履歴を取得できません。開始駅を手動で選択してください。";
+            },
+            { enableHighAccuracy: true, maximumAge: Infinity, timeout: 10000 },
+        );
+    };
+
 	// ★ 変更となる駅（途中で列情変更する駅）
 	const changeStationSel = el("select", { id: "changeStation" });
 	changeStationSel.appendChild(el("option", { value: "" }, ""));
@@ -3062,8 +3226,11 @@ function screenSettings() {
         });
     }
 
-    function applyReferenceTrain(item) {
+    function applyReferenceTrain(item, stationName) {
         trainNo.value = item.trainNo || "";
+        startStationSel.value = stationName;
+        state.runtime.startStationPosition = null;
+        startStationStatus.textContent = "";
 
         const res = parseTrainNo(trainNo.value.trim());
 
@@ -3129,7 +3296,7 @@ function screenSettings() {
                 );
 
                 btn.onclick = () => {
-                    applyReferenceTrain(item);
+                    applyReferenceTrain(item, stationName);
                 };
 
                 refList.appendChild(btn);
@@ -3184,6 +3351,10 @@ function screenSettings() {
         }
         if (!destSel.value) {
             alert("行先を選択してください。");
+            return;
+        }
+        if (!startStationSel.value) {
+            alert("開始駅を選択してください。");
             return;
         }
         if (!selectedCars) {
@@ -3266,6 +3437,7 @@ function screenSettings() {
         state.config.direction = selectedDir;
         state.config.type      = firstTrain.type;
         state.config.dest      = firstTrain.dest;
+        state.config.startStation = startStationSel.value;
         state.config.cars      = firstTrain.cars;
         state.config.dayType   = dayTypeSel.value || "平日";
         state.config.type      = normalizeTypeName(firstTrain.type);
@@ -3397,6 +3569,16 @@ function screenSettings() {
             el("div", [el("label", {}, "種別"), typeSel]),
             el("div", [el("label", {}, "行先"), destSel]),
         ]),
+        el("div", { class: "row" }, [
+            el("label", { for: "startStation" }, "開始駅"),
+            el("div", { class: "setting-start-station-row" }, [
+                startStationSel,
+                btnCurrentStation,
+            ]),
+            startStationStatus,
+            el("div", { class: "small start-station-hint" },
+                "GPS履歴のない駅間では、進行方向で直前に通過した駅を選択してください。"),
+        ]),
         // ★ ここから追加: 運転日
         el("div", { class: "row" }, [
             el("label", {}, "運転日"),
@@ -3490,6 +3672,9 @@ function beginGuidanceFromStartScreen(startMode) {
 
     const started = startGuidance();
     if (!started) {
+        if (startMode === "underground") {
+            exitUndergroundMode(null);
+        }
         document.getElementById("screen-guidance").classList.remove("active");
         document.getElementById("screen-start").classList.add("active");
     }
@@ -3533,8 +3718,6 @@ function requestGuidanceStart(startMode) {
     return beginGuidanceFromStartScreen(startMode);
 }
 
-let operatingStopRouteRequestSerial = 0;
-
 function showStartScreenAfterSettings() {
     startGpsWatch();
     const root = document.getElementById("screen-start");
@@ -3548,62 +3731,34 @@ function showStartScreenAfterSettings() {
 function requestPreStartOperatingStopRoute() {
     const root = document.getElementById("screen-prestart-route");
     if (!root || !root.classList.contains("active")) return;
-    const serial = ++operatingStopRouteRequestSerial;
     root._retry.disabled = true;
-    root._status.textContent = "GPSから案内経路を確認しています…";
+    root._status.textContent = "開始駅から案内経路を確認しています…";
 
     const routeError = getGuideRouteValidationError();
     if (routeError) {
         root._status.textContent = routeError;
-        return;
-    }
-    if (!navigator.geolocation) {
-        root._status.textContent = "GPSを利用できません。位置情報の設定を確認してください。";
+        root._retry.disabled = false;
         return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-        (position) => {
-            if (serial !== operatingStopRouteRequestSerial ||
-                !root.classList.contains("active")) return;
-
-            const accuracy = position.coords.accuracy ?? Infinity;
-            const ageMs = Date.now() - position.timestamp;
-            if (accuracy > 200 || ageMs > 10000) {
-                root._status.textContent =
-                    "位置情報の精度または鮮度が不足しています。再試行してください。";
-                root._retry.disabled = false;
-                return;
-            }
-
-            const setup = buildOperatingStopSetupFromPosition(
-                position.coords.latitude, position.coords.longitude,
-            );
-            if (!setup) {
-                root._status.textContent =
-                    "現在地から案内経路を判定できません。位置を確認して再試行してください。";
-                root._retry.disabled = false;
-                return;
-            }
-
-            root.classList.remove("active");
-            if (setup.traversesTarget) {
-                renderOperatingStopSetupScreen(setup);
-                document.getElementById("screen-operating-stops")
-                    .classList.add("active");
-            } else {
-                showStartScreenAfterSettings();
-            }
-        },
-        () => {
-            if (serial !== operatingStopRouteRequestSerial ||
-                !root.classList.contains("active")) return;
-            root._status.textContent =
-                "位置情報を取得できません。再試行するか、設定画面へ戻ってください。";
-            root._retry.disabled = false;
-        },
-        { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 },
+    const setup = buildOperatingStopSetupFromStation(
+        state.config.startStation,
     );
+    if (!setup) {
+        root._status.textContent =
+            "開始駅から案内経路を判定できません。駅・行先・方向を確認してください。";
+        root._retry.disabled = false;
+        return;
+    }
+
+    root.classList.remove("active");
+    if (setup.traversesTarget) {
+        renderOperatingStopSetupScreen(setup);
+        document.getElementById("screen-operating-stops")
+            .classList.add("active");
+    } else {
+        showStartScreenAfterSettings();
+    }
 }
 
 function continueAfterTrainSettings() {
@@ -4182,8 +4337,16 @@ function isOperatingStopEligibleStation(stationName) {
     );
 }
 
-function getTraversedOperatingStopSegmentIds(stationOrder) {
+function getTraversedOperatingStopSegmentIds(stationOrder, startSegmentId) {
     const traversed = new Set();
+    if (
+        OPERATING_STOP_SEGMENT_IDS.has(startSegmentId) &&
+        (stationOrder || []).length > 1 &&
+        (stationOrder || []).some((stationName) =>
+            getGuideSegmentIdsForStation(stationName).includes(startSegmentId))
+    ) {
+        traversed.add(startSegmentId);
+    }
     for (let index = 1; index < (stationOrder || []).length; index++) {
         const before = new Set(getGuideSegmentIdsForStation(stationOrder[index - 1]));
         for (const segmentId of getGuideSegmentIdsForStation(stationOrder[index])) {
@@ -4195,8 +4358,8 @@ function getTraversedOperatingStopSegmentIds(stationOrder) {
     return traversed;
 }
 
-function getOperatingStopCandidates(stationOrder, type, extraStops, terminalName) {
-    const traversed = getTraversedOperatingStopSegmentIds(stationOrder);
+function getOperatingStopCandidates(stationOrder, type, extraStops, terminalName, startSegmentId) {
+    const traversed = getTraversedOperatingStopSegmentIds(stationOrder, startSegmentId);
     return (stationOrder || []).filter((stationName) =>
         stationName !== terminalName &&
         isOperatingStopEligibleStation(stationName) &&
@@ -4211,6 +4374,29 @@ function buildOperatingStopSetupFromPosition(lat, lng) {
     const startSpot = findNearestGuideStartSpot(lat, lng);
     if (!startSpot) return null;
 
+    return buildOperatingStopSetupFromStartSpot(startSpot, lat, lng);
+}
+
+function buildOperatingStopSetupFromStation(stationName) {
+    const name = String(stationName || "").trim();
+    if (!state.datasets.stations?.[name]) return null;
+    const startPosition = getStartPositionForRoute(name);
+    if (startPosition) {
+        const spot = getStartSpotFromSelectedPosition(name, startPosition);
+        if (spot) {
+            const fromPosition = buildOperatingStopSetupFromStartSpot(
+                spot, startPosition.lat, startPosition.lng,
+            );
+            if (fromPosition) return fromPosition;
+        }
+    }
+    return buildOperatingStopSetupFromStartSpot({
+        kind: "駅", name,
+        guideSegmentIds: getGuideSegmentIdsForStation(name),
+    });
+}
+
+function buildOperatingStopSetupFromStartSpot(startSpot, lat, lng) {
     const firstPlan = startSpot && buildGuidePlanFromStartSpot(
         startSpot, state.config.dest, state.config.direction,
     );
@@ -4218,8 +4404,27 @@ function buildOperatingStopSetupFromPosition(lat, lng) {
     const hasSecond = !!(
         state.config.endChange && second.trainNo && second.changeStation
     );
-    const fromPosition = (plan) => {
+    const fromStart = (plan) => {
         const order = getGuideStationOrderForPlan(plan, state.config.direction);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            const startIndex = order.indexOf(startSpot.name);
+            return startIndex < 0 ? [] : order.slice(startIndex);
+        }
+        const startSegmentId = plan.segmentIds.find((segmentId) =>
+            getGuideSegmentIdsForSpot(startSpot).includes(segmentId));
+        const references = state.datasets.navGeometry?.segments?.[startSegmentId];
+        const spotIndex = references?.indexOf(`${startSpot.kind}:${startSpot.name}`) ?? -1;
+        if (spotIndex >= 0) {
+            const upcomingIndex = order.findIndex((stationName) => {
+                const stationIndex = references.indexOf(`駅:${stationName}`);
+                return stationIndex >= 0 && (
+                    state.config.direction === "下り"
+                        ? stationIndex >= spotIndex
+                        : stationIndex <= spotIndex
+                );
+            });
+            if (upcomingIndex >= 0) return order.slice(upcomingIndex);
+        }
         let nearestIndex = 0;
         let nearestDistance = Infinity;
         order.forEach((stationName, index) => {
@@ -4240,14 +4445,14 @@ function buildOperatingStopSetupFromPosition(lat, lng) {
 
     if (!hasSecond) {
         if (!firstPlan) return null;
-        firstPhaseOrder = fromPosition(firstPlan);
+        firstPhaseOrder = fromStart(firstPlan);
     } else {
         secondPlan = buildGuidePlanFromStation(
             second.changeStation, second.dest, state.config.direction,
         );
         if (!secondPlan) return null;
 
-        const firstOrder = firstPlan ? fromPosition(firstPlan) : [];
+        const firstOrder = firstPlan ? fromStart(firstPlan) : [];
         const changeIndex = firstOrder.indexOf(second.changeStation);
         if (changeIndex >= 0) {
             // 変更駅までの最後の駅間も前半列車の走行線区に含める。
@@ -4263,7 +4468,7 @@ function buildOperatingStopSetupFromPosition(lat, lng) {
             );
             if (!secondFromPosition) return null;
             secondPlan = secondFromPosition;
-            secondPhaseOrder = fromPosition(secondFromPosition);
+            secondPhaseOrder = fromStart(secondFromPosition);
         }
     }
 
@@ -4272,6 +4477,7 @@ function buildOperatingStopSetupFromPosition(lat, lng) {
         state.config.type,
         state.runtime.nonPassengerExtraStops,
         firstPlan?.terminalName,
+        firstPlan?.segmentIds[0],
     ).filter((stationName) =>
         !hasSecond || stationName !== second.changeStation,
     );
@@ -4283,6 +4489,7 @@ function buildOperatingStopSetupFromPosition(lat, lng) {
             second.type,
             state.runtime.nonPassengerExtraStopsSecond,
             secondPlan.terminalName,
+            secondPlan.segmentIds[0],
         );
     }
 
@@ -4292,8 +4499,11 @@ function buildOperatingStopSetupFromPosition(lat, lng) {
         secondCandidates,
         firstTrainNo: state.config.trainNo,
         secondTrainNo: hasSecond ? second.trainNo : null,
-        traversesTarget: getTraversedOperatingStopSegmentIds(firstPhaseOrder).size > 0 ||
-            getTraversedOperatingStopSegmentIds(secondPhaseOrder).size > 0,
+        traversesTarget: getTraversedOperatingStopSegmentIds(
+            firstPhaseOrder, firstPlan?.segmentIds[0],
+        ).size > 0 || getTraversedOperatingStopSegmentIds(
+            secondPhaseOrder, secondPlan?.segmentIds[0],
+        ).size > 0,
     };
 }
 
@@ -6414,6 +6624,31 @@ function buildGuidePlanFromStation(stationName, destination, direction) {
     }, destination, direction);
 }
 
+function getSelectedStartGuideContext() {
+    const stationName = String(state.config.startStation || "").trim();
+    if (!state.datasets.stations?.[stationName]) return null;
+
+    const secondGuide = getMidChangeSecondGuideContext();
+    const startIndex = secondGuide?.stationOrder.indexOf(stationName) ?? -1;
+    const afterChange = !!(
+        secondGuide && startIndex > secondGuide.changeStationIndex
+    );
+    const destination = afterChange
+        ? state.config.second.dest
+        : state.config.dest;
+    const startPosition = getStartPositionForRoute(stationName);
+    const startSpot = startPosition
+        ? getStartSpotFromSelectedPosition(stationName, startPosition)
+        : null;
+    const plan = (startSpot && buildGuidePlanFromStartSpot(
+        startSpot, destination, state.config.direction,
+    )) || buildGuidePlanFromStation(
+        stationName, destination, state.config.direction,
+    );
+
+    return plan ? { plan, afterChange } : null;
+}
+
 function updateGuideSegmentStatus() {
     const root = document.getElementById("screen-guidance");
     if (!root || !root._guideSegmentStatus) return;
@@ -7134,6 +7369,76 @@ function extractDepartureHms(detail) {
 
 // ==== 設定画面：列車参照用ヘルパー ====
 
+const LAST_MEASURED_POSITION_STORAGE_KEY = "ikebukuro-last-measured-position-v1";
+
+function rememberMeasuredPosition(position) {
+    const lat = position?.coords?.latitude;
+    const lng = position?.coords?.longitude;
+    const accuracy = position?.coords?.accuracy ?? Infinity;
+    const time = position?.timestamp;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+        !Number.isFinite(time) || accuracy > 200) return;
+
+    const previous = getLastMeasuredPosition();
+    if (previous && previous.time > time) return;
+    const measured = { lat, lng, time, accuracy };
+    state.runtime.lastMeasuredPosition = measured;
+    try {
+        localStorage.setItem(
+            LAST_MEASURED_POSITION_STORAGE_KEY,
+            JSON.stringify(measured),
+        );
+    } catch (error) {
+        // 保存できない環境でも、このページ内の最後の測位は利用する。
+    }
+}
+
+function getLastMeasuredPosition() {
+    const memory = state.runtime.lastMeasuredPosition;
+    let saved = null;
+    try {
+        saved = JSON.parse(
+            localStorage.getItem(LAST_MEASURED_POSITION_STORAGE_KEY) || "null",
+        );
+    } catch (error) {
+        // プライベートブラウズ等で保存領域が使えなくても続行する。
+    }
+    const valid = (value) => value && Number.isFinite(value.lat) &&
+        Number.isFinite(value.lng) && Number.isFinite(value.time) &&
+        Number.isFinite(value.accuracy) && value.accuracy <= 200;
+    if (!valid(memory)) return valid(saved) ? saved : null;
+    if (!valid(saved)) return memory;
+    return memory.time >= saved.time ? memory : saved;
+}
+
+function getFreshStartPositionForStation(stationName) {
+    const position = getLastMeasuredPosition();
+    if (!position) return null;
+    const ageMs = Date.now() - position.time;
+    if (ageMs < 0 || ageMs > 10000) return null;
+    const nearest = nearestStationForReference(position.lat, position.lng);
+    return nearest?.name === stationName ? position : null;
+}
+
+function getStartPositionForRoute(stationName) {
+    const selected = state.runtime.startStationPosition;
+    if (selected?.stationName === stationName &&
+        Number.isFinite(selected.lat) && Number.isFinite(selected.lng)) {
+        // 利用者が「現在地」で明示的に選んだ測位だけは、古くても
+        // 駅間のどちら側かを判定する材料として使う。GPSの鮮度判定には流さない。
+        return selected;
+    }
+    return getFreshStartPositionForStation(stationName);
+}
+
+function getStartSpotFromSelectedPosition(stationName, position) {
+    const spot = findNearestGuideStartSpot(position.lat, position.lng);
+    const stationSegments = getGuideSegmentIdsForStation(stationName);
+    return spot && getGuideSegmentIdsForSpot(spot).some(
+        (segmentId) => stationSegments.includes(segmentId),
+    ) ? spot : null;
+}
+
 // 設定画面の「参照」では、案内中の routeLine ロックを使わず単純に最寄り駅を取る
 function nearestStationForReference(lat, lng) {
     let best = null;
@@ -7162,6 +7467,7 @@ function getCurrentGpsPositionForReference() {
 
         navigator.geolocation.getCurrentPosition(
             (pos) => {
+                rememberMeasuredPosition(pos);
                 resolve({
                     lat: pos.coords.latitude,
                     lng: pos.coords.longitude,
@@ -8141,6 +8447,9 @@ function startGpsWatch() {
 
     gpsWatchId = navigator.geolocation.watchPosition(
         (pos) => {
+            // 「開始駅→現在地」は鮮度を問わず最後の有効な測位を使う。
+            // 案内中の10秒鮮度フィルタは、この後に従来どおり適用する。
+            rememberMeasuredPosition(pos);
             // ★ ① 精度チェック（accuracyが大きすぎるものは破棄）
             const acc = pos.coords.accuracy ?? 9999;
             if (acc > 200) {
@@ -8189,6 +8498,20 @@ function startGuidance() {
 
     // ★ runtime のショートカット
     const rt = state.runtime;
+    const undergroundStart = rt.undergroundMode &&
+        rt.undergroundSource === "downButton";
+    const startContext = undergroundStart
+        ? {
+            plan: buildGuidePlanFromStation(
+                "小竹向原", state.config.dest, state.config.direction,
+            ),
+            afterChange: false,
+        }
+        : getSelectedStartGuideContext();
+    if (!startContext?.plan) {
+        alert("開始駅から案内経路を判定できません。駅・行先・方向を確認してください。");
+        return false;
+    }
 
     clearAutomaticVoiceRearmSchedule();
     voiceLifecycleSuspended = false;
@@ -8210,25 +8533,15 @@ function startGuidance() {
     rt.guideMidChangeRouteApplied = false;
     clearGuidePlan();
 
-    let preserveGuidePlanForStartup = false;
+    let preserveGuidePlanForStartup = applyGuidePlan(
+        startContext.plan,
+        undergroundStart ? GUIDE_UNDERGROUND_SEGMENT_ID : null,
+    );
 
     // 地下モード中は有楽町線として固定
     if (rt.undergroundMode) {
         rt.routeLocked = true;
         rt.routeLine = "yuraku";
-
-        // 下りの地下起動では、小竹向原を仮想的な開始地点として経路を確定する。
-        if (rt.undergroundSource === "downButton") {
-            const undergroundPlan = buildGuidePlanFromStation(
-                "小竹向原",
-                state.config.dest,
-                state.config.direction,
-            );
-            preserveGuidePlanForStartup = applyGuidePlan(
-                undergroundPlan,
-                GUIDE_UNDERGROUND_SEGMENT_ID,
-            );
-        }
 
         setGpsStatus("地下モード");
     }
@@ -8266,6 +8579,11 @@ function startGuidance() {
     // ★ 追加停車駅：スタート時は 1本目を有効に
     rt.nonPassengerExtraStops = new Set(rt.nonPassengerExtraStops || []);
     // （2本目用の nonPassengerExtraStopsSecond は midChange で適用）    
+
+    // 開始駅が変更駅より先なら、GPSを待たず後半列車へ追いつかせる。
+    if (startContext.afterChange && applyMidTrainChange("startup-after-change-station")) {
+        rt.guideMidChangeRouteApplied = true;
+    }
 
     // ★ 起動モード開始（現在地から「現在駅＋次駅」を判定する）
     startStartupLocationDetection({ preserveGuidePlan: preserveGuidePlanForStartup });
@@ -8363,6 +8681,8 @@ function stopGuidance() {
 
     // ★ GPSも停止
     stopGpsWatch();
+    rt.lastGpsUpdate = 0;
+    rt.lastPosition = null;
 
     // ★ 遅延情報更新も停止
     stopDelayWatch();
@@ -8388,6 +8708,14 @@ function stopGuidance() {
 
     // 案内開始前に選択した基準番線は、この運用限りとする。
     clearInitialPlatformPlan();
+
+    // 次の運用で古い開始駅・駅間測位を誤用しないよう、入力し直してもらう。
+    state.config.startStation = "";
+    rt.startStationPosition = null;
+    const startStationSelect = document.getElementById("startStation");
+    if (startStationSelect) startStationSelect.value = "";
+    const startStationStatus = document.getElementById("startStationStatus");
+    if (startStationStatus) startStationStatus.textContent = "";
 
 }
 
@@ -8605,8 +8933,7 @@ function computeCurrentSegmentPair(lat, lng) {
         : { prev: best.b, next: best.a };
 }
 
-// 右側ナビだけが使う線路上の距離。駅・踏切の座標は stationdata.csv を参照し、
-// nav_geometry.json は分岐ごとの通過順だけを指定する。
+// 右側ナビだけが使う線路上の距離。駅・踏切の座標と順序は stationdata.csv を参照する。
 const NAV_DISPLAY_RANGE_METERS = 600;
 
 function getNavSegmentPoints(segmentId) {
@@ -10666,7 +10993,7 @@ function screenPreStartRoute() {
     const status = el("p", {
         class: "prestart-route-status",
         role: "status",
-    }, "GPSから案内経路を確認しています…");
+    }, "開始駅から案内経路を確認しています…");
     const retry = el("button", {
         class: "btn secondary", type: "button", id: "prestartRouteRetry",
     }, "再試行");
@@ -10682,7 +11009,6 @@ function screenPreStartRoute() {
     root._retry = retry;
     retry.onclick = requestPreStartOperatingStopRoute;
     back.onclick = () => {
-        operatingStopRouteRequestSerial++;
         root.classList.remove("active");
         document.getElementById("screen-settings").classList.add("active");
     };

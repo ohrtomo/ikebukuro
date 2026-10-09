@@ -5,14 +5,16 @@ const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
 const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
-const stationCsv = new TextDecoder("shift_jis").decode(
-    fs.readFileSync(path.join(root, "data", "stationdata.csv")),
-);
-const navGeometry = JSON.parse(
-    fs.readFileSync(path.join(root, "data", "nav_geometry.json"), "utf8"),
-);
+const stationCsvBytes = fs.readFileSync(path.join(root, "data", "stationdata.csv"));
+let stationCsv;
+try {
+    stationCsv = new TextDecoder("utf-8", { fatal: true }).decode(stationCsvBytes);
+} catch {
+    stationCsv = new TextDecoder("shift_jis").decode(stationCsvBytes);
+}
 
-function createHarness() {
+function createHarness(csvText = stationCsv) {
+    const warnings = [];
     const document = {
         body: { appendChild() {} },
         head: { appendChild() {} },
@@ -30,7 +32,11 @@ function createHarness() {
     const context = vm.createContext({
         TextDecoder,
         URL,
-        console,
+        console: {
+            log: console.log.bind(console),
+            error: console.error.bind(console),
+            warn(...args) { warnings.push(args); },
+        },
         document,
         window: { addEventListener() {}, speechSynthesis: { cancel() {} } },
         navigator: {},
@@ -41,19 +47,44 @@ function createHarness() {
         fetch() { throw new Error("ナビ線形テストでは通信しません。"); },
     });
     vm.runInContext(appSource, context, { filename: "app.js" });
-    context.stationCsv = stationCsv;
-    context.navGeometryData = navGeometry;
+    context.warnings = warnings;
+    context.stationCsv = csvText;
     vm.runInContext(`
         const navTestData = parseStationDataCsv(stationCsv);
         state.datasets.stations = navTestData.stations;
         state.datasets.navSpots = navTestData.navSpots;
-        state.datasets.navGeometry = navGeometryData;
+        state.datasets.navGeometry = buildNavGeometryFromStationRows(parseCsvText(stationCsv));
     `, context);
     return context;
 }
 
 function read(context, expression) {
     return JSON.parse(vm.runInContext(`JSON.stringify(${expression})`, context));
+}
+
+function findUnusedRankBetween(lines, header, segmentId, beforeName, afterName) {
+    const nameIndex = header.indexOf("名称");
+    const segmentIndex = header.indexOf("案内区間");
+    const rankIndex = header.indexOf("ナビ順");
+    const ranks = new Map();
+    for (const line of lines.slice(1)) {
+        const fields = line.split(",");
+        const ids = fields[segmentIndex].split("|");
+        if (!ids.includes(segmentId)) continue;
+        const cell = fields[rankIndex];
+        const rank = ids.length === 1
+            ? Number(cell)
+            : Number(cell.split("|").find((part) => part.startsWith(`${segmentId}=`))
+                ?.split("=")[1]);
+        ranks.set(fields[nameIndex], rank);
+    }
+    const before = ranks.get(beforeName);
+    const after = ranks.get(afterName);
+    const used = new Set(ranks.values());
+    for (let rank = before + 1; rank < after; rank++) {
+        if (!used.has(rank)) return rank;
+    }
+    throw new Error(`${segmentId} の試験用スポットを挿入する順位がありません。`);
 }
 
 function testEverySegmentHasValidOrderedGeometry() {
@@ -76,6 +107,94 @@ function testEverySegmentHasValidOrderedGeometry() {
     }
     assert.equal(result.find((segment) => segment.id === "池袋3").pointCount, 7);
     assert.equal(result.find((segment) => segment.id === "有楽").pointCount, 3);
+}
+
+function testCsvAloneControlsSpotAdditionAndDeletion() {
+    const lines = stationCsv.trimEnd().split(/\r?\n/);
+    const header = lines[0].split(",");
+    const baselineCount = read(createHarness(), `getNavSegmentPoints("池袋3")?.length`);
+    const crossing = Array(header.length).fill("");
+    for (const [column, value] of Object.entries({
+        "種類": "踏切", "名称": "試験追加踏切", "緯度": "35.786", "経度": "139.476",
+        "案内区間": "池袋3", "ナビ順": String(findUnusedRankBetween(
+            lines, header, "池袋3", "東村山7号", "所沢3号")),
+    })) {
+        crossing[header.indexOf(column)] = value;
+    }
+
+    const added = createHarness([...lines, crossing.join(",")].join("\r\n"));
+    const addedRefs = read(added, `state.datasets.navGeometry.segments["池袋3"]`);
+    assert.ok(addedRefs.indexOf("踏切:東村山7号") <
+        addedRefs.indexOf("踏切:試験追加踏切"));
+    assert.ok(addedRefs.indexOf("踏切:試験追加踏切") <
+        addedRefs.indexOf("踏切:所沢3号"));
+    assert.equal(read(added, `getNavSegmentPoints("池袋3")?.length`), baselineCount + 1);
+
+    const removed = createHarness(lines.filter((line) =>
+        !line.startsWith("踏切,東村山7号,")).join("\r\n"));
+    const removedRefs = read(removed, `state.datasets.navGeometry.segments["池袋3"]`);
+    assert.ok(!removedRefs.includes("踏切:東村山7号"));
+    assert.equal(read(removed, `getNavSegmentPoints("池袋3")?.length`), baselineCount - 1);
+}
+
+function testCsvRowReorderingDoesNotChangeGeometry() {
+    const lines = stationCsv.trimEnd().split(/\r?\n/);
+    const original = createHarness();
+    const reordered = createHarness([lines[0], ...lines.slice(1).reverse()].join("\r\n"));
+    assert.deepEqual(
+        read(reordered, `state.datasets.navGeometry`),
+        read(original, `state.datasets.navGeometry`),
+    );
+}
+
+function testCurveHelperPointUsesCsvWithoutBecomingStartSpot() {
+    const lines = stationCsv.trimEnd().split(/\r?\n/);
+    const header = lines[0].split(",");
+    const baselineCount = read(createHarness(), `getNavSegmentPoints("池袋3")?.length`);
+    const helper = Array(header.length).fill("");
+    for (const [column, value] of Object.entries({
+        "種類": "線形補助点", "緯度": "35.786", "経度": "139.476",
+        "案内区間": "池袋3", "ナビ順": String(findUnusedRankBetween(
+            lines, header, "池袋3", "東村山7号", "所沢3号")),
+        "案内しない": "1",
+    })) {
+        helper[header.indexOf(column)] = value;
+    }
+    const context = createHarness([...lines, helper.join(",")].join("\r\n"));
+    assert.equal(read(context, `state.datasets.navSpots.some((spot) => spot.kind === "線形補助点")`), false);
+    assert.equal(read(context, `getNavSegmentPoints("池袋3")?.length`), baselineCount + 1);
+}
+
+function testInvalidNavOrderAffectsOnlyItsSegment() {
+    const lines = stationCsv.trimEnd().split(/\r?\n/);
+    const header = lines[0].split(",");
+    const rankIndex = header.indexOf("ナビ順");
+    const changed = lines.map((line) => {
+        if (!line.startsWith("踏切,東村山7号,")) return line;
+        const fields = line.split(",");
+        fields[rankIndex] = "";
+        return fields.join(",");
+    });
+    const context = createHarness(changed.join("\r\n"));
+    assert.equal(read(context, `getNavSegmentPoints("池袋3")`), null);
+    assert.ok(read(context, `getNavSegmentPoints("池袋2")?.length`) > 2);
+    assert.ok(context.warnings.length > 0);
+}
+
+function testDuplicateNavOrderIsRejected() {
+    const lines = stationCsv.trimEnd().split(/\r?\n/);
+    const header = lines[0].split(",");
+    const rankIndex = header.indexOf("ナビ順");
+    const later = lines.find((line) => line.startsWith("踏切,所沢3号,")).split(",")[rankIndex];
+    const changed = lines.map((line) => {
+        if (!line.startsWith("踏切,東村山7号,")) return line;
+        const fields = line.split(",");
+        fields[rankIndex] = later;
+        return fields.join(",");
+    });
+    const context = createHarness(changed.join("\r\n"));
+    assert.equal(read(context, `getNavSegmentPoints("池袋3")`), null);
+    assert.ok(context.warnings.length > 0);
 }
 
 function testConnectedRoutesInBothDirections() {
@@ -275,11 +394,41 @@ function testRenderedCrossingMovesThroughTrainWithoutReversing() {
     assert.ok(!result[0].stationNames.includes("東飯能"), "他区間の駅は表示されない。");
 }
 
-testEverySegmentHasValidOrderedGeometry();
-testConnectedRoutesInBothDirections();
-testAllGeometryPointsRemainOrderedWhenMatched();
-testTokorozawaCurveKeepsPhysicalOrder();
-testUpboundAndGuideSegmentSwitch();
-testNearbyParallelArmDoesNotCauseFarJump();
-testRenderedCrossingMovesThroughTrainWithoutReversing();
-console.log("navigation geometry tests passed");
+async function testLoadDataFetchesOnlyCsvForSpotGeometry() {
+    const context = createHarness();
+    const requests = [];
+    context.fetch = async (url, options) => {
+        requests.push({ url, options });
+        if (url === "./data/stationdata.csv") {
+            return { arrayBuffer: async () => stationCsvBytes };
+        }
+        return { json: async () => [] };
+    };
+    await vm.runInContext(`loadData()`, context);
+    assert.ok(!requests.some((request) => request.url.includes("nav_geometry")));
+    assert.equal(requests.find((request) =>
+        request.url === "./data/stationdata.csv").options.cache, "no-store");
+    assert.equal(read(context, `getNavSegmentPoints("有楽")?.length`), 3);
+}
+
+async function main() {
+    testEverySegmentHasValidOrderedGeometry();
+    testCsvAloneControlsSpotAdditionAndDeletion();
+    testCsvRowReorderingDoesNotChangeGeometry();
+    testCurveHelperPointUsesCsvWithoutBecomingStartSpot();
+    testInvalidNavOrderAffectsOnlyItsSegment();
+    testDuplicateNavOrderIsRejected();
+    testConnectedRoutesInBothDirections();
+    testAllGeometryPointsRemainOrderedWhenMatched();
+    testTokorozawaCurveKeepsPhysicalOrder();
+    testUpboundAndGuideSegmentSwitch();
+    testNearbyParallelArmDoesNotCauseFarJump();
+    testRenderedCrossingMovesThroughTrainWithoutReversing();
+    await testLoadDataFetchesOnlyCsvForSpotGeometry();
+    console.log("navigation geometry tests passed");
+}
+
+main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+});
