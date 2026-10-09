@@ -2764,7 +2764,7 @@ function buildTokorozawaKotesashiDeadheadPreset(input) {
 // ==== Screens ====
 function screenSettings() {
 	const root = el("div", { class: "screen active", id: "screen-settings" });
-	const c = el("div", { class: "container" });
+	const c = el("div", { class: "container settings-content" });
 
 	// 列車番号（前）
 	const trainNo = el("input", {
@@ -2786,7 +2786,7 @@ function screenSettings() {
 	// ---- 上り/下り（方向ボタン） ----
 	let selectedDir = ""; // 初期値
 
-	const dirButtons = el("div", { class: "grid2" }, [
+	const dirButtons = el("div", { class: "settings-direction-buttons" }, [
 		(() => {
 			const btn = el(
 				"button",
@@ -2973,7 +2973,7 @@ function screenSettings() {
 
 	const carsButtons = el(
 		"div",
-		{ class: "grid2" },
+		{ class: "settings-cars-buttons" },
 		carsValues.map((v) => {
 			const btn = el(
 				"button",
@@ -3553,38 +3553,38 @@ function screenSettings() {
 
     // ---- 画面にパーツを配置 ----
     c.append(
-        el("div", { class: "row" }, [
+        el("div", { class: "row settings-train-row" }, [
             el("label", {}, "列車番号"),
-            trainNo,
-            el("div", { class: "setting-train-buttons" }, [
+            el("div", { class: "settings-train-controls" }, [
+                trainNo,
                 btnSearch,
                 btnReference,
             ]),
         ]),
-        el("div", { class: "grid2" }, [
+        el("div", { class: "settings-direction-cars" }, [
             el("div", [el("label", {}, "上り/下り"), dirButtons]),
             el("div", [el("label", {}, "両数"), carsButtons]),
         ]),
-        el("div", { class: "grid2" }, [
+        el("div", { class: "settings-type-dest-row" }, [
             el("div", [el("label", {}, "種別"), typeSel]),
             el("div", [el("label", {}, "行先"), destSel]),
         ]),
-        el("div", { class: "row" }, [
-            el("label", { for: "startStation" }, "開始駅"),
-            el("div", { class: "setting-start-station-row" }, [
-                startStationSel,
-                btnCurrentStation,
+        el("div", { class: "settings-start-day-row" }, [
+            el("div", { class: "settings-start-field" }, [
+                el("label", { for: "startStation" }, "開始駅"),
+                el("div", { class: "setting-start-station-row" }, [
+                    startStationSel,
+                    btnCurrentStation,
+                ]),
+                startStationStatus,
+                el("div", { class: "small start-station-hint" },
+                    "GPS履歴のない駅間では、進行方向で直前に通過した駅を選択してください。"),
             ]),
-            startStationStatus,
-            el("div", { class: "small start-station-hint" },
-                "GPS履歴のない駅間では、進行方向で直前に通過した駅を選択してください。"),
+            el("div", { class: "settings-day-field" }, [
+                el("label", {}, "運転日"),
+                dayTypeSel,
+            ]),
         ]),
-        // ★ ここから追加: 運転日
-        el("div", { class: "row" }, [
-            el("label", {}, "運転日"),
-            dayTypeSel,
-        ]),
-        // ★ ここまで追加
         el("div", { class: "row endchange-row" }, [
             el("label", { class: "endchange-option" }, [
                 endChange,
@@ -3597,10 +3597,10 @@ function screenSettings() {
         ]),
         deadheadSummary,
         secondWrap,
-        execBtn,
     );
 
-    root.append(c, refModal);
+    const settingsActions = el("div", { class: "settings-actions" }, execBtn);
+    root.append(c, settingsActions, refModal);
     return root;
 }
 

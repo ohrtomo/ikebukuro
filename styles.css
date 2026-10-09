@@ -44,22 +44,133 @@ input[type="text"], select, input[type="number"] {
 .btn.warn { background: #c92a2a; }
 .btn:active { opacity: .85; }
 
-.setting-start-station-row {
+/* iPad mini の横向き・分割表示で、設定の実行ボタンを常時見える位置に置く。 */
+#screen-settings.active {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+#screen-settings .settings-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 12px 4px;
+}
+
+#screen-settings .settings-content > .row,
+#screen-settings .settings-content > .settings-direction-cars,
+#screen-settings .settings-content > .settings-type-dest-row,
+#screen-settings .settings-content > .settings-start-day-row {
+  margin-bottom: 8px;
+}
+
+#screen-settings .settings-content label {
+  margin-bottom: 3px;
+}
+
+#screen-settings .settings-content input[type="text"],
+#screen-settings .settings-content select {
+  min-width: 0;
+  height: 40px;
+  padding: 7px 8px;
+}
+
+#screen-settings .settings-content .btn {
+  min-height: 40px;
+  padding: 7px 8px;
+  white-space: nowrap;
+}
+
+.settings-train-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+}
+
+.settings-direction-cars {
+  display: grid;
+  grid-template-columns: minmax(6em, .8fr) minmax(0, 2fr);
   gap: 8px;
 }
 
-.start-station-status {
-  margin-top: 6px;
-  color: #ddd;
-  line-height: 1.4;
+.settings-direction-cars > div,
+.settings-type-dest-row > div,
+.settings-start-day-row > div {
+  min-width: 0;
 }
 
+.settings-direction-buttons {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.settings-cars-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.settings-type-dest-row {
+  display: grid;
+  grid-template-columns: minmax(7em, 1fr) minmax(9em, 1.2fr);
+  gap: 8px;
+}
+
+.settings-start-day-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6.5em;
+  gap: 8px;
+}
+
+.settings-actions {
+  flex: 0 0 auto;
+  padding: 6px 12px max(6px, env(safe-area-inset-bottom));
+  border-top: 1px solid #333;
+  background: #111;
+}
+
+.settings-actions .btn {
+  width: 100%;
+  min-height: 44px;
+}
+
+.setting-start-station-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.start-station-status {
+  margin-top: 4px;
+  color: #ddd;
+  line-height: 1.3;
+}
+
+.start-station-status:empty { display: none; }
+
 .start-station-hint {
-  margin-top: 6px;
+  margin-top: 4px;
   color: #aaa;
-  line-height: 1.4;
+  line-height: 1.3;
+}
+
+#screen-settings .endchange-row {
+  margin-top: 0;
+  margin-bottom: 8px;
+  gap: 6px 12px;
+}
+
+@media (max-width: 359px) {
+  .settings-start-day-row { grid-template-columns: 1fr; }
+  .settings-day-field { display: flex; align-items: center; gap: 8px; }
+  .settings-day-field label { margin: 0; }
+  .settings-day-field select { width: 7em; }
 }
 
 .btn.voice-cache-waiting {
@@ -1064,13 +1175,6 @@ input[type="text"], select, input[type="number"] {
 /* =========================
    設定画面：列車参照
 ========================= */
-
-.setting-train-buttons {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 8px;
-}
 
 .train-ref-panel {
   display: flex;
