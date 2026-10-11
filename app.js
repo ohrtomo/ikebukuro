@@ -2769,9 +2769,31 @@ function screenSettings() {
 	// 列車番号（前）
 	const trainNo = el("input", {
 		type: "text",
-		placeholder: "4桁の列車番号",
+		inputmode: "numeric",
+		autocapitalize: "characters",
+		autocorrect: "off",
+		spellcheck: "false",
+		autocomplete: "off",
+		size: "5",
+		placeholder: "列番",
 		id: "trainNo",
 	});
+	const btnTrainNoKeyboard = el("button", {
+		class: "btn secondary settings-train-keyboard-toggle",
+		type: "button",
+		"aria-label": "英字キーボードに切り替え",
+	}, "英字");
+	btnTrainNoKeyboard.onclick = () => {
+		const nextMode = trainNo.getAttribute("inputmode") === "numeric"
+			? "text" : "numeric";
+		trainNo.setAttribute("inputmode", nextMode);
+		btnTrainNoKeyboard.textContent = nextMode === "text" ? "数字" : "英字";
+		btnTrainNoKeyboard.setAttribute("aria-label",
+			`${btnTrainNoKeyboard.textContent}キーボードに切り替え`);
+		// iPadOSで入力中のキーボードにも切替を反映させる。
+		trainNo.blur();
+		trainNo.focus();
+	};
 
 	// 検索ボタン（前半用）
 	const btnSearch = el("button", { class: "btn" }, "検索");
@@ -3232,17 +3254,24 @@ function screenSettings() {
         state.runtime.startStationPosition = null;
         startStationStatus.textContent = "";
 
+        // 一覧で確定したAPI優先の値を使い、選択時に列番表で上書きしない。
+        // 未登録の値では、直前に入力していた別列車の情報も残さない。
+        const unregistered = [];
+        for (const [label, selectEl, value] of [
+            ["種別", typeSel, item.type],
+            ["行先", destSel, item.dest],
+        ]) {
+            if (!setSelectValueIfExists(selectEl, value)) {
+                selectEl.value = "";
+                if (value) unregistered.push(`${label}「${value}」`);
+            }
+        }
+
         const res = parseTrainNo(trainNo.value.trim());
 
         if (res) {
-            typeSel.value = res.type;
-            destSel.value = res.dest;
             setDirectionButton(res.direction);
         } else {
-            // 列番表で引けない場合は、API側の種別・行先を可能な範囲で入れる
-            setSelectValueIfExists(typeSel, item.type);
-            setSelectValueIfExists(destSel, item.dest);
-
             if (item.directionApi === "up") {
                 setDirectionButton("上り");
             } else if (item.directionApi === "down") {
@@ -3251,6 +3280,9 @@ function screenSettings() {
         }
 
         refModal.classList.remove("active");
+        if (unregistered.length) {
+            alert(`${unregistered.join("・")}は選択肢に未登録です。案内に使用する内容を手動で選択してください。`);
+        }
     }
 
     async function loadReferenceList(mode) {
@@ -3554,9 +3586,12 @@ function screenSettings() {
     // ---- 画面にパーツを配置 ----
     c.append(
         el("div", { class: "row settings-train-row" }, [
-            el("label", {}, "列車番号"),
+            el("label", { for: "trainNo" }, "列車番号"),
             el("div", { class: "settings-train-controls" }, [
-                trainNo,
+                el("div", { class: "settings-train-input-wrap" }, [
+                    trainNo,
+                    btnTrainNoKeyboard,
+                ]),
                 btnSearch,
                 btnReference,
             ]),
@@ -7537,6 +7572,61 @@ function readAnyField(obj, keys) {
     return "";
 }
 
+// 発車情報APIの trainType コード。ユーザー提供の対応表（2026-10-11）。
+// 未定義コードは登録せず、名称を取得できない場合の列番表補完へ回す。
+const REFERENCE_API_TRAIN_TYPES = Object.freeze({
+    "1": "回送", "2": "快速急行", "3": "拝島快速", "4": "急行",
+    "5": "快速", "6": "通勤急行", "7": "通勤準急", "8": "準急",
+    "9": "特急", "10": "地下快急", "11": "通勤快速", "12": "区間準急",
+    "14": "貨物", "15": "各駅停車", "16": "試運転",
+    "17": "ＳトレインＡ", "18": "ＳトレインＢ", "19": "拝島ライナー",
+    "20": "地下特急", "21": "地下特急Ａ", "22": "地下特急Ｂ",
+    "23": "特急Ｃ", "24": "特急Ｄ",
+    "51": "快速Ａ", "52": "快速Ｂ", "53": "快速Ｃ", "54": "快速Ｄ",
+    "56": "準急Ａ", "58": "準急Ｃ", "59": "準急Ｄ", "60": "各停Ｄ",
+    "61": "各停Ａ", "62": "各停Ｂ", "63": "地快Ａ", "64": "地快Ｂ",
+    "65": "地快Ｃ", "66": "地快Ｄ", "67": "地快Ｅ",
+    "68": "ＳトレインＡ副", "69": "ＳトレインＡ有",
+    "70": "ＳトレインＢ副", "71": "ＳトレインＢ有",
+    "80": "臨時A", "81": "臨時B", "82": "臨時C", "83": "臨時D",
+    "84": "臨時E", "85": "臨時F", "86": "臨時G", "87": "臨時H",
+    "88": "臨時I", "89": "臨時J",
+    "90": "回送A", "91": "回送B", "92": "回送C", "93": "回送D",
+    "94": "回送E", "95": "回送F", "96": "回送G", "97": "回送H",
+    "98": "回送I", "99": "回送J",
+});
+
+function getReferenceTypeFromApi(src, directionApi) {
+    // 名称フィールドを先に調べ、数値コードが名称を隠さないようにする。
+    for (const key of [
+        "typeName", "trainTypeName", "種別", "列車種別", "type", "trainType",
+    ]) {
+        const raw = readAnyField(src, [key]);
+        if (!raw) continue;
+
+        const name = /^\d+$/.test(raw)
+            ? REFERENCE_API_TRAIN_TYPES[raw]
+            : raw;
+        if (!name || name === "(未定義)") continue;
+
+        let type = normalizeTypeName({
+            "各駅停車": "各停",
+            "ＳトレインＡ": "SトレA",
+            "ＳトレインＢ": "SトレB",
+        }[name] || name);
+
+        // APIの回送A～Jも、既存の方向別正式名称へ同じ規則で変換する。
+        if (/^回送[A-J]$/.test(type) &&
+            (directionApi === "up" || directionApi === "down")) {
+            type = resolveNonPassengerDisplayType(
+                type, directionApi === "up" ? "上り" : "下り",
+            );
+        }
+        return type;
+    }
+    return "";
+}
+
 function normalizeReferenceDirection(v) {
     const s = String(v || "").trim();
 
@@ -7637,23 +7727,15 @@ async function fetchReferenceDepartures(stationName, mode) {
             const hms = extractDepartureHms(src);
             if (!hms) continue;
 
-            // ★ train_number_table.json 由来の列車情報を優先
+            // 方向の既存判定と、APIに情報がない項目の補完だけに列番表を使う。
             const parsed = parseTrainNo(trainNo);
-
-            // ★ 種別は必ず列車番号表を優先
-            const typeFromTable = parsed && parsed.type
-                ? normalizeTypeName(parsed.type)
-                : "";
-
-
-            const typeFromApi = normalizeTypeName(readAnyField(src, [
-                "type",
-                "typeName",
-                "trainType",
-                "trainTypeName",
-                "種別",
-                "列車種別",
-            ]));
+            const directionApi =
+                parsed && parsed.direction === "上り"
+                    ? "up"
+                    : parsed && parsed.direction === "下り"
+                        ? "down"
+                        : normalizeReferenceDirection(directionRaw);
+            const typeFromApi = getReferenceTypeFromApi(src, directionApi);
 
             const destFromApi = readAnyField(src, [
                 "dest",
@@ -7665,16 +7747,9 @@ async function fetchReferenceDepartures(stationName, mode) {
                 "行先駅名",
             ]);
 
-            // ★ 種別は列車番号表を優先、行先はAPI側を使用
-            const type = typeFromTable || typeFromApi || "";
-            const dest = destFromApi || "";
-
-            const directionApi =
-                parsed && parsed.direction === "上り"
-                    ? "up"
-                    : parsed && parsed.direction === "下り"
-                        ? "down"
-                        : normalizeReferenceDirection(directionRaw);
+            // 種別・行先を項目ごとにAPI優先で確定し、一覧と入力で共用する。
+            const type = typeFromApi || normalizeTypeName(parsed?.type || "");
+            const dest = destFromApi || parsed?.dest || "";
 
             // 同一列車が重複して返る場合の重複排除
             const key = `${trainNo}_${hms}_${directionApi || ""}`;
