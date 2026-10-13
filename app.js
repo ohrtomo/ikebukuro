@@ -43,6 +43,7 @@ function computeHeadingRad(lat1, lng1, lat2, lng2) {
 // ・state.datasets.stationIds   : 旧 stationID.json 相当の駅ID一覧
 // ・state.datasets.stationIdMap : 駅名 → 駅ID の高速検索用Map
 // ・state.datasets.navSpots     : 旧 station.csv 相当の右側ナビ用スポット
+// ・state.datasets.referenceOnlyDestinations : 参照からだけ選べる座標なし行先
 
 const STATIONDATA_META_COLUMNS = new Set([
     "種類",
@@ -56,6 +57,7 @@ const STATIONDATA_META_COLUMNS = new Set([
     "所属路線2",
     "所属路線3",
     "駅ID",
+    "参照用駅ID",
     "案内区間",
     "案内しない",
     "ナビ順",
@@ -188,6 +190,7 @@ function buildNavGeometryFromStationRows(rows) {
     const invalid = new Set();
 
     for (const row of rows) {
+        if (row["種類"] === "行先専用") continue;
         const guideSegmentIds = parseGuideSegmentIds(row["案内区間"]);
         const navOrder = String(row["ナビ順"] ?? "").trim();
         if (!guideSegmentIds.length) {
@@ -253,11 +256,14 @@ function parseStationDataCsv(csvText) {
     const navSpots = [];
     const stationIds = {};
     const stationIdMap = {};
+    const stationNameById = {};
+    const referenceOnlyDestinations = [];
 
     for (const row of rows) {
         const kind = row["種類"] || "";
         const name = row["名称"] || "";
         if (!name) continue;
+        if (kind === "行先専用") referenceOnlyDestinations.push(name);
 
         const lat = parseFloat(row["緯度"]);
         const lng = parseFloat(row["経度"]);
@@ -269,7 +275,7 @@ function parseStationDataCsv(csvText) {
 
         // 旧 station.csv 相当：右側ナビ用スポット
         // 緯度・経度がある行だけ使用する。
-        if (hasLatLng && kind !== "線形補助点") {
+        if (hasLatLng && kind !== "線形補助点" && kind !== "行先専用") {
             navSpots.push({ kind, name, lat, lng, guideSegmentIds, guidanceDisabled });
         }
 
@@ -278,6 +284,7 @@ function parseStationDataCsv(csvText) {
         const stationId = parseNullableText(row["駅ID"]);
         if (stationId) {
             stationIdMap[name] = stationId;
+            stationNameById[stationId] = name;
 
             [row["所属路線1"], row["所属路線2"], row["所属路線3"]]
                 .map((v) => String(v || "").trim())
@@ -297,6 +304,8 @@ function parseStationDataCsv(csvText) {
                     }
                 });
         }
+        const referenceStationId = parseNullableText(row["参照用駅ID"]);
+        if (referenceStationId) stationNameById[referenceStationId] = name;
 
         // 旧 stations.json 相当：駅座標・停留場・8両位置・停車パターン。
         // 踏切などのスポットは navSpots と案内開始時の区間判定だけに使用し、
@@ -328,8 +337,23 @@ function parseStationDataCsv(csvText) {
         stations,
         stationIds,
         stationIdMap,
+        stationNameById,
+        referenceOnlyDestinations,
         navSpots,
     };
+}
+
+function parseTrainTypeConversionCsv(csvText) {
+    const conversions = {};
+    for (const row of parseCsvText(csvText)) {
+        const code = String(row.trainType || "").trim();
+        if (!/^\d+$/.test(code) || conversions[code]) continue;
+        conversions[code] = {
+            apiName: String(row.API種別名 || "").trim(),
+            guidanceType: String(row.案内種別 || "").trim(),
+        };
+    }
+    return conversions;
 }
 
 async function fetchCsvText(path) {
@@ -357,7 +381,9 @@ const state = {
       platforms: null,          // ★ 発着番線データ
       stationIds: null,         // ★ 駅IDマスタ
       stationIdMap: {},         // ★ 駅名 → 駅ID
-      nonPassengerTypes: null,  // ★ 回送/臨時の細分類
+      stationNameById: {},      // ★ API駅ID → 駅名（参照用IDも含む）
+      referenceOnlyDestinations: [], // ★ 「参照」専用行先
+      trainTypeConversions: {}, // ★ API種別コード → 案内種別
       navSpots: [],             // ★ 追加: カーナビ用スポット一覧（station.csv）
       navGeometry: null,        // CSVのナビ順から生成した右側ナビ用の線路順序
     },
@@ -486,7 +512,7 @@ async function loadData() {
         ttable,
         carIcons,
         platforms,
-        nonPassengerTypes,
+        trainTypeConversionCsvText,
     ] = await Promise.all([
         fetchCsvText("./data/stationdata.csv"),
         fetch("./data/types.json").then((r) => r.json()),
@@ -494,7 +520,7 @@ async function loadData() {
         fetch("./data/train_number_table.json").then((r) => r.json()),
         fetch("./data/car_icons.json").then((r) => r.json()),
         fetch("./data/platform.json").then((r) => r.json()),
-        fetch("./data/nonpassenger_types.json").then((r) => r.json()),
+        fetchCsvText("./data/train_type_conversion.csv"),
     ]);
 
     const stationData = parseStationDataCsv(stationDataCsvText);
@@ -503,6 +529,8 @@ async function loadData() {
     state.datasets.stations     = stationData.stations;
     state.datasets.stationIds   = stationData.stationIds;
     state.datasets.stationIdMap = stationData.stationIdMap;
+    state.datasets.stationNameById = stationData.stationNameById;
+    state.datasets.referenceOnlyDestinations = stationData.referenceOnlyDestinations;
     state.datasets.navSpots     = stationData.navSpots;
     state.datasets.navGeometry  = buildNavGeometryFromStationRows(
         parseCsvText(stationDataCsvText),
@@ -514,7 +542,9 @@ async function loadData() {
     state.datasets.trainTable        = ttable;
     state.datasets.carIcons          = carIcons;
     state.datasets.platforms         = platforms;
-    state.datasets.nonPassengerTypes = nonPassengerTypes;
+    state.datasets.trainTypeConversions = parseTrainTypeConversionCsv(
+        trainTypeConversionCsvText,
+    );
 }
 
 
@@ -2425,43 +2455,6 @@ function speakOnce(key, text) {
         });
 }
 
-// ★ 列車番号と運転日区分から「回送A」「臨時B」などを取得
-function getNonPassengerTypeByTrainNo(trainNo) {
-    const map = state.datasets.nonPassengerTypes;
-    if (!map) return null;
-
-    const dayType = state.config.dayType || "平日";  // 「平日」「土休日」
-    const table = map[dayType];
-    if (!table) return null;
-
-    const key = String(trainNo).trim();
-    return table[key] || null;  // 該当なしなら null
-}
-
-// ★ 「回送A」＋方向 → 種別一覧にある正式名称へ変換
-//    例: base="回送A", direction="上り" → "回送A上"（types.json に存在する場合）
-function resolveNonPassengerDisplayType(base, direction) {
-    if (!base) return null;
-    const typesList = state.datasets.types || [];
-    const dirSuffix = direction === "上り" ? "上" : "下";
-
-    // 回送系：まず「回送A上/下」が types にあるか確認
-    if (/^回送/.test(base)) {
-        const cand = base + dirSuffix;          // 例: 回送A上
-        if (typesList.includes(cand)) {
-            return cand;
-        }
-    }
-
-    // 「臨時A」や「回送I」「回送J」など、方向を付けないもの
-    if (typesList.includes(base)) {
-        return base;
-    }
-
-    // どうしても見つからなければ、そのまま返す（安全側）
-    return base;
-}
-
 // ==== Train number parser ====
 // 対応: 「開始〜終了」範囲 && 奇数→右 / 偶数→左 行先
 // 偶数→上り / 奇数→下り
@@ -2487,16 +2480,7 @@ function parseTrainNo(trainNo) {
             // 偶数→上り / 奇数→下り
             const direction = n % 2 === 0 ? "上り" : "下り";
 
-            // ★ 回送／臨時／試運転なら、別表４から細分類を取得して種別名を上書き
-            if (/(回送|臨時|試運転)/.test(type)) {
-                const baseSub = getNonPassengerTypeByTrainNo(n); // 例: "回送A", "臨時B"
-                if (baseSub) {
-                    // 「種別一覧(types.json)に存在する正式名称」に変換
-                    type = resolveNonPassengerDisplayType(baseSub, direction);
-                }
-            }
-
-            // ★ 最終的に表示・判定に使う種別名を正規化
+            // 回送・臨時は列車番号に関係なく区分なし。個別停車駅は既存の設定で扱う。
             type = normalizeTypeName(type);
 
             found = { type, dest, direction };
@@ -3238,6 +3222,22 @@ function screenSettings() {
         return false;
     }
 
+    function setReferenceDestinationValue(value) {
+        const name = String(value || "").trim();
+        if ((state.datasets.referenceOnlyDestinations || []).includes(name)) {
+            // 表示用の選択状態だけを作り、手動の選択肢からは除外する。
+            if (!Array.from(destSel.options).some((opt) => opt.value === name)) {
+                destSel.appendChild(el("option", {
+                    value: name, disabled: "",
+                    "data-reference-only": "",
+                }, name));
+            }
+            destSel.value = name;
+            return true;
+        }
+        return setSelectValueIfExists(destSel, name);
+    }
+
     function resetReferenceModal() {
         refStatus.textContent = "上り・下り・地下のいずれかを選択してください。";
         refList.innerHTML = "";
@@ -3257,14 +3257,13 @@ function screenSettings() {
         // 一覧で確定したAPI優先の値を使い、選択時に列番表で上書きしない。
         // 未登録の値では、直前に入力していた別列車の情報も残さない。
         const unregistered = [];
-        for (const [label, selectEl, value] of [
-            ["種別", typeSel, item.type],
-            ["行先", destSel, item.dest],
-        ]) {
-            if (!setSelectValueIfExists(selectEl, value)) {
-                selectEl.value = "";
-                if (value) unregistered.push(`${label}「${value}」`);
-            }
+        if (!setSelectValueIfExists(typeSel, item.type)) {
+            typeSel.value = "";
+            if (item.type) unregistered.push(`種別「${item.type}」`);
+        }
+        if (!setReferenceDestinationValue(item.dest)) {
+            destSel.value = "";
+            if (item.dest) unregistered.push(`行先「${item.dest}」`);
         }
 
         const res = parseTrainNo(trainNo.value.trim());
@@ -3901,6 +3900,9 @@ function screenStart() {
 function normalizeTypeName(t) {
     if (!t) return t;
     const s = String(t).trim();
+
+    if (/^回送[A-JＡ-Ｊ](?:上|下)?$/.test(s)) return "回送";
+    if (/^臨時[A-JＡ-Ｊ]$/.test(s)) return "臨時";
 
     // ★ SトレBの旧表記を統一
     if (s === "SトレB上" || s === "SトレB下") return "SトレB";
@@ -4772,7 +4774,9 @@ function validateOperationAdjustmentInput(input) {
     if (!(state.datasets.types || []).includes(type)) {
         return { error: `種別「${type}」は登録されていません。` };
     }
-    if (!(state.datasets.dests || []).includes(dest)) {
+    if (!(state.datasets.dests || []).includes(dest) &&
+        !(dest === state.config.dest &&
+          (state.datasets.referenceOnlyDestinations || []).includes(dest))) {
         return { error: `行先「${dest}」は登録されていません。` };
     }
 
@@ -5004,11 +5008,17 @@ function openOperationAdjustment() {
     const destSelect = el("select", { "aria-label": "変更後の行先" });
     const destValues = Array.from(state.datasets.dests || []);
     const currentDest = String(state.config.dest || "").trim();
+    const currentReferenceOnly = (state.datasets.referenceOnlyDestinations || [])
+        .includes(currentDest);
     if (currentDest && !destValues.includes(currentDest)) {
         destValues.unshift(currentDest);
     }
     destValues.forEach((value) => {
-        destSelect.appendChild(el("option", { value }, value));
+        destSelect.appendChild(el("option", {
+            value,
+            ...(currentReferenceOnly && value === currentDest
+                ? { disabled: "" } : {}),
+        }, value));
     });
     destSelect.value = currentDest;
 
@@ -6492,16 +6502,20 @@ function getGuideTerminalNameForDestination(dest) {
     if (!destination) return null;
 
     const registeredDestinations = state.datasets.dests;
+    const referenceOnlyDestinations = state.datasets.referenceOnlyDestinations || [];
     if (
         Array.isArray(registeredDestinations) &&
         registeredDestinations.length > 0 &&
-        !registeredDestinations.includes(destination)
+        !registeredDestinations.includes(destination) &&
+        !referenceOnlyDestinations.includes(destination)
     ) {
         return null;
     }
 
     const terminalName =
-        GUIDE_DESTINATION_TERMINAL_ALIASES[destination] || destination;
+        referenceOnlyDestinations.includes(destination)
+            ? "小竹向原"
+            : GUIDE_DESTINATION_TERMINAL_ALIASES[destination] || destination;
 
     return GUIDE_SEGMENT_IDS_BY_STATION.has(terminalName)
         ? terminalName
@@ -7222,6 +7236,7 @@ const DEST_MAIN = [
 
 // 行先がどのカテゴリかざっくり判定（必要に応じて利用）
 function getDestCategory(dest) {
+	if ((state.datasets.referenceOnlyDestinations || []).includes(dest)) return "yuraku";
 	if (DEST_YURAKU.includes(dest)) return "yuraku";
 	if (DEST_TOSHIMA.includes(dest)) return "toshima";
 	if (DEST_SAYAMA.includes(dest)) return "sayama";
@@ -7572,32 +7587,15 @@ function readAnyField(obj, keys) {
     return "";
 }
 
-// 発車情報APIの trainType コード。ユーザー提供の対応表（2026-10-11）。
-// 未定義コードは登録せず、名称を取得できない場合の列番表補完へ回す。
-const REFERENCE_API_TRAIN_TYPES = Object.freeze({
-    "1": "回送", "2": "快速急行", "3": "拝島快速", "4": "急行",
-    "5": "快速", "6": "通勤急行", "7": "通勤準急", "8": "準急",
-    "9": "特急", "10": "地下快急", "11": "通勤快速", "12": "区間準急",
-    "14": "貨物", "15": "各駅停車", "16": "試運転",
-    "17": "ＳトレインＡ", "18": "ＳトレインＢ", "19": "拝島ライナー",
-    "20": "地下特急", "21": "地下特急Ａ", "22": "地下特急Ｂ",
-    "23": "特急Ｃ", "24": "特急Ｄ",
-    "51": "快速Ａ", "52": "快速Ｂ", "53": "快速Ｃ", "54": "快速Ｄ",
-    "56": "準急Ａ", "58": "準急Ｃ", "59": "準急Ｄ", "60": "各停Ｄ",
-    "61": "各停Ａ", "62": "各停Ｂ", "63": "地快Ａ", "64": "地快Ｂ",
-    "65": "地快Ｃ", "66": "地快Ｄ", "67": "地快Ｅ",
-    "68": "ＳトレインＡ副", "69": "ＳトレインＡ有",
-    "70": "ＳトレインＢ副", "71": "ＳトレインＢ有",
-    "80": "臨時A", "81": "臨時B", "82": "臨時C", "83": "臨時D",
-    "84": "臨時E", "85": "臨時F", "86": "臨時G", "87": "臨時H",
-    "88": "臨時I", "89": "臨時J",
-    "90": "回送A", "91": "回送B", "92": "回送C", "93": "回送D",
-    "94": "回送E", "95": "回送F", "96": "回送G", "97": "回送H",
-    "98": "回送I", "99": "回送J",
-});
+function getReferenceTypeFromApi(src) {
+    // CSVに案内種別が記入されたコードだけ、その読み替えを最優先する。
+    const code = readAnyField(src, ["trainType", "type"]);
+    const conversions = state.datasets.trainTypeConversions || {};
+    if (/^\d+$/.test(code) && conversions[code]?.guidanceType) {
+        return normalizeTypeName(conversions[code].guidanceType);
+    }
 
-function getReferenceTypeFromApi(src, directionApi) {
-    // 名称フィールドを先に調べ、数値コードが名称を隠さないようにする。
+    // 空欄のコードは従来どおり名称フィールド、API種別名、列番表の順で補完する。
     for (const key of [
         "typeName", "trainTypeName", "種別", "列車種別", "type", "trainType",
     ]) {
@@ -7605,26 +7603,36 @@ function getReferenceTypeFromApi(src, directionApi) {
         if (!raw) continue;
 
         const name = /^\d+$/.test(raw)
-            ? REFERENCE_API_TRAIN_TYPES[raw]
+            ? conversions[raw]?.apiName
             : raw;
         if (!name || name === "(未定義)") continue;
 
-        let type = normalizeTypeName({
+        return normalizeTypeName({
             "各駅停車": "各停",
             "ＳトレインＡ": "SトレA",
             "ＳトレインＢ": "SトレB",
         }[name] || name);
-
-        // APIの回送A～Jも、既存の方向別正式名称へ同じ規則で変換する。
-        if (/^回送[A-J]$/.test(type) &&
-            (directionApi === "up" || directionApi === "down")) {
-            type = resolveNonPassengerDisplayType(
-                type, directionApi === "up" ? "上り" : "下り",
-            );
-        }
-        return type;
     }
     return "";
+}
+
+function getReferenceDestinationFromApi(src) {
+    const namesById = state.datasets.stationNameById || {};
+    const referenceOnly = state.datasets.referenceOnlyDestinations || [];
+    // 同名駅（例: 地下鉄の池袋）があるため、参照専用の駅IDは名称より優先する。
+    for (const key of [
+        "destinationStationId", "toStationId", "destStationId",
+        "destinationId", "toStation", "destination", "dest",
+    ]) {
+        const name = namesById[readAnyField(src, [key])];
+        if (name && referenceOnly.includes(name)) return name;
+    }
+
+    const raw = readAnyField(src, [
+        "dest", "destination", "destinationName", "toStationName",
+        "toStation", "toStationId", "destinationStationId", "行先", "行先駅名",
+    ]);
+    return namesById[raw] || raw;
 }
 
 function normalizeReferenceDirection(v) {
@@ -7735,17 +7743,9 @@ async function fetchReferenceDepartures(stationName, mode) {
                     : parsed && parsed.direction === "下り"
                         ? "down"
                         : normalizeReferenceDirection(directionRaw);
-            const typeFromApi = getReferenceTypeFromApi(src, directionApi);
+            const typeFromApi = getReferenceTypeFromApi(src);
 
-            const destFromApi = readAnyField(src, [
-                "dest",
-                "destination",
-                "destinationName",
-                "toStationName",
-                "toStation",
-                "行先",
-                "行先駅名",
-            ]);
+            const destFromApi = getReferenceDestinationFromApi(src);
 
             // 種別・行先を項目ごとにAPI優先で確定し、一覧と入力で共用する。
             const type = typeFromApi || normalizeTypeName(parsed?.type || "");
@@ -8380,7 +8380,7 @@ function updateRouteLock(ns) {
 
     if (ns.name === "練馬" && ns.distance <= 200) {
         if (dir === "上り") {
-            if (dest === "小竹向原") {
+            if (getDestCategory(dest) === "yuraku") {
                 newRoute = "yuraku";
             } else {
                 newRoute = "main";

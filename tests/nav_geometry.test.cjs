@@ -402,12 +402,18 @@ async function testLoadDataFetchesOnlyCsvForSpotGeometry() {
         if (url === "./data/stationdata.csv") {
             return { arrayBuffer: async () => stationCsvBytes };
         }
+        if (url === "./data/train_type_conversion.csv") {
+            return { arrayBuffer: async () =>
+                fs.readFileSync(path.join(root, "data", "train_type_conversion.csv")) };
+        }
         return { json: async () => [] };
     };
     await vm.runInContext(`loadData()`, context);
     assert.ok(!requests.some((request) => request.url.includes("nav_geometry")));
     assert.equal(requests.find((request) =>
         request.url === "./data/stationdata.csv").options.cache, "no-store");
+    assert.equal(requests.find((request) =>
+        request.url === "./data/train_type_conversion.csv").options.cache, "no-store");
     assert.equal(read(context, `getNavSegmentPoints("有楽")?.length`), 3);
 }
 

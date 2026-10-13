@@ -229,9 +229,10 @@ navigator.audioSession.type = "transient-solo"
 - `data/types.json`
 - `data/destinations.json`
 - `data/train_number_table.json`
+- `data/train_type_conversion.csv`
 - `data/car_icons.json`
 - `data/platform.json`
-- `data/nonpassenger_types.json`
+- `data/nonpassenger_types.json`（旧細分類の保存資料。現行ランタイムは読み込まない）
 - `data/voice/*.mp3`
 
 ### stationdata.csv
@@ -248,6 +249,7 @@ navigator.audioSession.type = "transient-solo"
 
 `destinations.json` は **統合保留中**。
 Codex の判断で `stationdata.csv` に統合しない。
+ただし `種類=行先専用` の座標なし駅は、発車情報 API の「参照」で取得した行先表示に限って `stationdata.csv` から読み込む。通常の手動選択肢は引き続き `destinations.json` に置く。
 
 ### 文字コード
 `stationdata.csv` は UTF-8 と Shift-JIS / CP932 の両方を読める設計を維持する。

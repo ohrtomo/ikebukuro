@@ -7,6 +7,12 @@ const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
 const types = JSON.parse(fs.readFileSync(
     path.join(__dirname, "..", "data", "types.json"), "utf8",
 ));
+const trainTypeCsv = fs.readFileSync(
+    path.join(__dirname, "..", "data", "train_type_conversion.csv"), "utf8",
+);
+const stationCsv = new TextDecoder("shift_jis").decode(fs.readFileSync(
+    path.join(__dirname, "..", "data", "stationdata.csv"),
+));
 
 // 設定画面の実際のイベントを実行するための最小DOM。
 // select.value は実ブラウザ同様、未登録の値を保持しない。
@@ -110,8 +116,14 @@ function createHarness(payload) {
     });
     vm.runInContext(appSource, context, { filename: "app.js" });
     context.fixtureTypes = types;
+    context.fixtureTrainTypeCsv = trainTypeCsv;
+    context.fixtureStationCsv = stationCsv;
     vm.runInContext(`
         state.datasets.types = fixtureTypes;
+        state.datasets.trainTypeConversions = parseTrainTypeConversionCsv(fixtureTrainTypeCsv);
+        const stationDataFixture = parseStationDataCsv(fixtureStationCsv);
+        state.datasets.referenceOnlyDestinations = stationDataFixture.referenceOnlyDestinations;
+        state.datasets.stationNameById = stationDataFixture.stationNameById;
         state.datasets.dests = ["池袋", "所沢", "飯能", "小竹向原"];
         state.datasets.stations = { "池袋": {}, "所沢": {}, "飯能": {}, "小竹向原": {} };
         state.datasets.stationIdMap = { "所沢": "S0140TK", "小竹向原": "S0315KT" };
@@ -129,6 +141,49 @@ function payloadFor(detail, direction = "down") {
 
 function train(fields = {}) {
     return { trainNo: "2001", trainType: "15", destination: "所沢", departureHms: "120500", ...fields };
+}
+
+function testCsvMasters() {
+    const harness = createHarness(payloadFor([]));
+    const actual = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+        const stationData = parseStationDataCsv(fixtureStationCsv);
+        const typeRows = parseCsvText(fixtureTrainTypeCsv);
+        return {
+            referenceOnly: stationData.referenceOnlyDestinations,
+            hasThroughStation: !!stationData.stations["元町・中華街"],
+            hasThroughNavSpot: stationData.navSpots.some(
+                (spot) => spot.name === "元町・中華街"
+            ),
+            throughIdName: stationData.stationNameById["S7340MC"],
+            kotakeNormalId: stationData.stationIdMap["小竹向原"],
+            kotakeReferenceIdName: stationData.stationNameById["S5315KT"],
+            rinjiStopNames: Object.entries(stationData.stations)
+                .filter(([, station]) => station.stopPatterns["臨時"])
+                .map(([name]) => name),
+            hasLegacyStopPattern: Object.prototype.hasOwnProperty.call(
+                stationData.stations["池袋"].stopPatterns, "臨時A"
+            ),
+            typeCodes: typeRows.map((row) => row.trainType),
+            mapped80: typeRows.find((row) => row.trainType === "80")?.案内種別,
+            mapped90: typeRows.find((row) => row.trainType === "90")?.案内種別,
+        };
+    })())`, harness.context));
+    for (const name of ["和光市", "（有）池袋", "（副）池袋", "羽田空港", "元町・中華街"]) {
+        assert.ok(actual.referenceOnly.includes(name), `${name}を参照専用行先へ登録する。`);
+    }
+    assert.equal(actual.hasThroughStation, false);
+    assert.equal(actual.hasThroughNavSpot, false);
+    assert.equal(actual.throughIdName, "元町・中華街");
+    assert.equal(actual.kotakeNormalId, "S0315KT");
+    assert.equal(actual.kotakeReferenceIdName, "小竹向原");
+    assert.deepEqual(actual.rinjiStopNames.sort(),
+        ["池袋", "飯能", "西武秩父", "豊島園", "西武球場前", "小竹向原"].sort());
+    assert.equal(actual.hasLegacyStopPattern, false);
+    assert.equal(actual.typeCodes.length, 99);
+    assert.equal(new Set(actual.typeCodes).size, 99);
+    assert.equal(actual.mapped80, "臨時");
+    assert.equal(actual.mapped90, "回送");
+    assert.ok(!types.some((type) => /^(回送|臨時)[A-J]/.test(type)));
 }
 
 async function fetchItems(harness, mode = "down") {
@@ -221,10 +276,64 @@ async function testCodeMappingAndKeyCompatibility() {
     ] }] });
     const items = await fetchItems(harness);
     assert.deepEqual(items.map((item) => item.type), [
-        "SトレA", "SトレB", "各停", "回送A下", "回送B上",
-        "回送", "特急", "臨時A", "拝島ライナー", "ＳトレインＡ副",
+        "SトレA", "SトレB", "各停", "回送", "回送",
+        "回送", "特急", "臨時", "拝島ライナー", "ＳトレインＡ副",
     ]);
     assert.ok(items.every((item) => item.dest === "所沢" && item.hms === "12:05:00"));
+}
+
+async function testCsvGuidanceTypeOverridesApiName() {
+    const harness = createHarness(payloadFor([
+        train({ trainType: "15", typeName: "各駅停車" }),
+    ]));
+    vm.runInContext(`
+        state.datasets.trainTypeConversions["15"].guidanceType = "急行";
+    `, harness.context);
+    const items = await fetchItems(harness);
+    assert.equal(items[0].type, "急行", "入力済みCSVの読み替えはAPI名より優先する。");
+}
+
+async function testReferenceOnlyDestination() {
+    const harness = createHarness(payloadFor([
+        train({ trainNo: "2002", trainType: "15", destination: "S7340MC" }),
+    ], "up"));
+    const screen = await openReference(harness, "up");
+    const destinationSelect = screen.querySelector("#dest");
+    assert.equal(destinationSelect.options.some((option) =>
+        option.value === "元町・中華街"), false,
+    "参照前の手動選択肢には出さない。");
+    const item = screen.querySelector(".train-ref-item");
+    assert.equal(item.querySelector(".train-ref-dest").textContent, "元町・中華街");
+    item.onclick();
+    assert.equal(destinationSelect.value, "元町・中華街");
+    const referenceOption = destinationSelect.options.find((option) =>
+        option.value === "元町・中華街");
+    assert.equal(referenceOption.getAttribute("disabled"), "");
+    assert.equal(harness.context.getGuideTerminalNameForDestination("元町・中華街"),
+        "小竹向原", "案内経路だけ小竹向原で終端とする。");
+    assert.equal(harness.context.getDestCategory("元町・中華街"), "yuraku");
+    const plan = JSON.parse(vm.runInContext(
+        'JSON.stringify(buildGuidePlanFromStation("所沢", "元町・中華街", "上り"))',
+        harness.context,
+    ));
+    assert.equal(plan.terminalName, "小竹向原");
+    assert.ok(plan.segmentIds.includes("有楽"));
+    executeSettings(screen);
+    const config = JSON.parse(vm.runInContext("JSON.stringify(state.config)", harness.context));
+    assert.equal(config.dest, "元町・中華街", "表示上の行先名は維持する。");
+    assert.equal(harness.continued, true);
+    assert.deepEqual(harness.alerts, []);
+}
+
+async function testSameNameReferenceDestinationUsesStationId() {
+    const harness = createHarness(payloadFor([
+        train({
+            trainNo: "2002", destination: "池袋",
+            toStationId: "S5304YI",
+        }),
+    ], "up"));
+    const items = await fetchItems(harness, "up");
+    assert.equal(items[0].dest, "（有）池袋", "同名駅はAPIの駅IDで区別する。");
 }
 
 async function testUnregisteredOrMissingValuesCannotReusePreviousInputs() {
@@ -243,9 +352,10 @@ async function testUnregisteredOrMissingValuesCannotReusePreviousInputs() {
         }
         item.onclick();
         assert.equal(screen.querySelector("#type").value, "");
-        assert.equal(screen.querySelector("#dest").value, "");
+        assert.equal(screen.querySelector("#dest").value,
+            detail.trainType === "19" ? "元町・中華街" : "");
         if (detail.trainType === "19") {
-            assert.match(harness.alerts[0], /種別「拝島ライナー」.*行先「元町・中華街」.*手動/);
+            assert.match(harness.alerts[0], /種別「拝島ライナー」.*手動/);
         }
         executeSettings(screen);
         assert.equal(harness.alerts.at(-1), "種別を選択してください。");
@@ -288,9 +398,13 @@ async function testManualSearchRemainsTableBased() {
 }
 
 (async () => {
+    testCsvMasters();
     await testApiValuesReachGuidanceConfig();
     await testFallbackIsPerField();
     await testCodeMappingAndKeyCompatibility();
+    await testCsvGuidanceTypeOverridesApiName();
+    await testReferenceOnlyDestination();
+    await testSameNameReferenceDestinationUsesStationId();
     await testUnregisteredOrMissingValuesCannotReusePreviousInputs();
     await testFilteringDedupeSortingAndLimitStayUnchanged();
     await testManualSearchRemainsTableBased();
